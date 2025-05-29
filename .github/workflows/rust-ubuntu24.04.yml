@@ -11,20 +11,12 @@ env:
 
 jobs:
   build:
+    uses: ./.github/workflows/build.yml
+    with:
+      runner: ubuntu-24.04
 
-    runs-on: ubuntu-24.04
-
-    steps:
-    - uses: actions/checkout@v4
-      with:
-          submodules: recursive
-    
-    - name: Build
-      run: |
-        cd kataglyphis-rustprojecttemplate
-        cargo build --verbose
-
-    - name: Run tests
-      run: |
-        cd kataglyphis-rustprojecttemplate
-        cargo test --verbose
+  test:
+    uses: ./.github/workflows/test.yml
+    with:
+      runner: ubuntu-24.04
+        
