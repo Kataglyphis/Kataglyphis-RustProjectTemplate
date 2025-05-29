@@ -1,0 +1,21 @@
+name: Rust workflow on Ubuntu-24.04-arm
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+    with:
+      runner: ubuntu-24.04-arm
+
+  test:
+    uses: ./.github/workflows/test.yml
+    with:
+      runner: ubuntu-24.04-arm        
