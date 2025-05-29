@@ -1,4 +1,4 @@
-name: Rust
+name: Rust workflow on Ubuntu-24.04
 
 on:
   push:
@@ -12,10 +12,13 @@ env:
 jobs:
   build:
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
     - uses: actions/checkout@v4
+      with:
+          submodules: recursive
+    
     - name: Build
       run: |
         cd kataglyphis-rustprojecttemplate
