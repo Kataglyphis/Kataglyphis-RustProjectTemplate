@@ -1,4 +1,4 @@
-# .github/workflows/test.yml
+# .github/workflows/rust-build.yml
 name: Build app
 
 on:
@@ -10,13 +10,14 @@ on:
 
 jobs:
   build-app:
-    name: Testing
+    name: Build app
     runs-on: ${{ inputs.runner }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
 
-      - name: Run tests
+      # Equivalent of .common_steps_per_job_on_linux
+      - name: Debug build
         run: |
           cd kataglyphis-rustprojecttemplate
-          cargo test --verbose
+          cargo build --verbose

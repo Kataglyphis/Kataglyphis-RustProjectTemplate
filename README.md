@@ -113,6 +113,7 @@ This enumeration also includes submodules.
 
 ### Useful tools
 
+* [cargo-outdated](https://github.com/kbknapp/cargo-outdated)
 <!-- * [cppcheck](https://cppcheck.sourceforge.io/) -->
 
 <!-- GETTING STARTED -->
@@ -130,6 +131,16 @@ This enumeration also includes submodules.
 ## Tests
 
 <!-- ROADMAP -->
+## Run
+```bash
+cargo run -- read --path ../README.md
+```
+
+## Docs
+```bash
+cargo doc --open
+```
+
 ## Roadmap
 Upcoming :)
 <!-- See the [open issues](https://github.com/othneildrew/Best-README-Template/issues) for a list of proposed features (and known issues). -->
