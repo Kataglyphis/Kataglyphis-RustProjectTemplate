@@ -36,6 +36,7 @@ jobs:
         run: |
           cd kataglyphis-rustprojecttemplate
           cargo doc --no-deps
+          cd ..
           cp ./resources/web/redirect/index.html ./kataglyphis-rustprojecttemplate/target/docs-build/doc
 
       - name: 📂 Sync files to domain
