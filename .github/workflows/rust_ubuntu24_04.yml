@@ -36,7 +36,7 @@ jobs:
         run: |
           cd kataglyphis-rustprojecttemplate
           cargo doc --no-deps
-          cp resources/web/redirect/index.html kataglyphis-rustprojecttemplate/target/docs-build/doc
+          cp ./resources/web/redirect/index.html ./kataglyphis-rustprojecttemplate/target/docs-build/doc
 
       - name: 📂 Sync files to domain
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
