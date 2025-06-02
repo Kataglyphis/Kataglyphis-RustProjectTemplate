@@ -35,7 +35,8 @@ jobs:
       - name: Create docs
         run: |
           cd kataglyphis-rustprojecttemplate
-          cargo doc
+          cargo doc --no-deps
+          cp resources/web/redirect/index.html kataglyphis-rustprojecttemplate/target/docs-build/doc
 
       - name: 📂 Sync files to domain
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
@@ -43,5 +44,5 @@ jobs:
           server: ${{ secrets.SERVER }}
           username: ${{ secrets.USERNAME }}
           password: ${{ secrets.PW }}
-          local-dir: "./kataglyphis-rustprojecttemplate/target/doc/kataglyphis_rustprojecttemplate/"
+          local-dir: "./kataglyphis-rustprojecttemplate/target/doc/"
         
