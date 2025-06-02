@@ -20,18 +20,22 @@ jobs:
     with:
       runner: ubuntu-24.04
 
-  docs:
-    uses: ./.github/workflows/rust_doc.yml
-    with:
-      runner: ubuntu-24.04
+  # docs:
+  #   uses: ./.github/workflows/rust_doc.yml
+  #   with:
+  #     runner: ubuntu-24.04
 
   deploy-docs:
     name: 📂 Sync files to domain
     runs-on: ubuntu-24.04
-    needs: docs
     steps:
       - name: 📥 Checkout repository
         uses: actions/checkout@v4
+
+      - name: Create docs
+        run: |
+          cd kataglyphis-rustprojecttemplate
+          cargo doc
 
       - name: 📂 Sync files to domain
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
