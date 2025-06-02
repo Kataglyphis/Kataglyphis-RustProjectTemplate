@@ -25,11 +25,19 @@ jobs:
     with:
       runner: ubuntu-24.04
 
-  Sync_files:
-    uses: SamKirkland/FTP-Deploy-Action@v4.3.5
-    with:
-      server: ${{ secrets.SERVER }}
-      username: ${{ secrets.USERNAME }}
-      password: ${{ secrets.PW }}
-      local-dir: "./kataglyphis-rustprojecttemplate/target/doc/kataglyphis_rustprojecttemplate/"
+  deploy-docs:
+    name: 📂 Sync files to domain
+    runs-on: ubuntu-24.04
+    needs: docs
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 📂 Sync files to domain
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.SERVER }}
+          username: ${{ secrets.USERNAME }}
+          password: ${{ secrets.PW }}
+          local-dir: "./docs/build/html/"
         
