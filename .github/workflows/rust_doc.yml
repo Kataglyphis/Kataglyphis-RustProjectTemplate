@@ -10,13 +10,13 @@ on:
 
 jobs:
   build-app:
-    name: Testing
+    name: Generate docs
     runs-on: ${{ inputs.runner }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4.2.2
 
-      - name: Run tests
+      - name: Run doc gen
         run: |
           cd kataglyphis-rustprojecttemplate
           cargo doc

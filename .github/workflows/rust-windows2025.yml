@@ -11,12 +11,12 @@ env:
 
 jobs:
   build:
-    uses: ./.github/workflows/build.yml
+    uses: ./.github/workflows/rust_build.yml
     with:
       runner: windows-2025
 
   test:
-    uses: ./.github/workflows/test.yml
+    uses: ./.github/workflows/rust_test.yml
     with:
       runner: windows-2025
         

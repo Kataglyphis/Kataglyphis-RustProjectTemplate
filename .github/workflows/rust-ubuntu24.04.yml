@@ -11,12 +11,25 @@ env:
 
 jobs:
   build:
-    uses: ./.github/workflows/build.yml
+    uses: ./.github/workflows/rust_build.yml
     with:
       runner: ubuntu-24.04
 
   test:
-    uses: ./.github/workflows/test.yml
+    uses: ./.github/workflows/rust_test.yml
     with:
       runner: ubuntu-24.04
+
+  docs:
+    uses: ./.github/workflows/rust_doc.yml
+    with:
+      runner: ubuntu-24.04
+
+  Sync_files:
+    uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+    with:
+      server: ${{ secrets.SERVER }}
+      username: ${{ secrets.USERNAME }}
+      password: ${{ secrets.PW }}
+      local-dir: "./kataglyphis-rustprojecttemplate/target/doc/kataglyphis_rustprojecttemplate/"
         
