@@ -1,0 +1,72 @@
+# ===========================
+# rustfmt.toml (Starter)
+# ===========================
+
+# 1) Rust edition (used for alignment rules, indentation, etc.)
+edition = "2024"
+
+# 2) Maximum line width before wrapping
+#    Common choices: 100 or 120. Adjust to taste, but keep it consistent team-wide.
+max_width = 100
+
+# 3) How many spaces to use for each indent level
+#    (Tabs are discouraged in most Rust projects—use spaces.)
+hard_tabs = false
+tab_spaces = 4
+
+# 4) Use Block‐style indentation (rather than visual)
+#    "Block" means a new indent level adds exactly `tab_spaces` spaces.
+indent_style = "Block"
+
+# 5) Control spacing around comments and blank lines
+normalize_comments = true
+blank_lines_upper_bound = 1
+
+# 6) Controls how imports are grouped and ordered
+#    `reorder_imports = true` will sort `use` statements alphabetically, grouping
+#    by leading crate name. If you prefer to group imports manually, set to false.
+reorder_imports = true
+combine_imports = true
+
+# 7) Trailing commas in multi‐line constructs
+#    When set to "Always", rustfmt will add a trailing comma in any multi‐line list
+#    (e.g., function args, struct fields, array literals). This helps minimize diffs
+#    when you append new items.
+trailing_comma = "Always"
+
+# 8) Where to break function arguments and match arms
+#    "Visual" tries to align things in a visually neat way; "Tall" uses fewer aligned columns.
+fn_args_layout = "Visual"
+struct_lit_single_line = false
+
+# 9) Control how macros are formatted
+#    e.g. keep `println!(...)` on a single line if it fits, but break if too long.
+format_macro_matchers = true
+
+# 10) Control how to handle `where` clauses
+#     For functions or types with many generic bounds, this will put each bound on its own line.
+#     Other options: "Inline" (all on one line), "Vertical" (everything stacked), etc.
+where_style = "AlwaysVertical"
+
+# 11) Controls whether chained method calls can stay on one line
+#     "Visual" aligns method chains under each other; "Tall" forces a break after each `.`.
+chain_indent = "Visual"
+
+# 12) Brace style for control‐flow (`if/else`, `match`, loops)
+brace_style = "AlwaysNextLine"
+
+# 13) Maximum number of items per import group (before splitting)
+#     If you have more than `imports_granularity` items in a single `use … { … }`,
+#     rustfmt will break them into multiple lines.
+imports_granularity = "Crate"
+
+# 14) Merge consecutive single‐line `use` statements into a multi‐use group
+#     e.g. turn
+#        use foo::bar;
+#        use foo::baz;
+#     into
+#        use foo::{bar, baz};
+merge_imports = true
+
+# 15) Skip formatting generated code (e.g. code under the 'generated' directory)
+skip_children = ["generated/*"]
