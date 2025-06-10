@@ -36,7 +36,7 @@ trailing_comma = "Always"
 
 # 8) Where to break function arguments and match arms
 #    "Visual" tries to align things in a visually neat way; "Tall" uses fewer aligned columns.
-fn_args_layout = "Visual"
+fn_args_layout = "Tall"
 struct_lit_single_line = false
 
 # 9) Control how macros are formatted
