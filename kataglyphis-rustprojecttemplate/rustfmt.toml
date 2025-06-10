@@ -50,7 +50,7 @@ where_style = "AlwaysVertical"
 
 # 11) Controls whether chained method calls can stay on one line
 #     "Visual" aligns method chains under each other; "Tall" forces a break after each `.`.
-chain_indent = "Visual"
+chain_indent = "Block"
 
 # 12) Brace style for control‐flow (`if/else`, `match`, loops)
 brace_style = "AlwaysNextLine"
