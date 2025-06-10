@@ -67,6 +67,3 @@ imports_granularity = "Crate"
 #     into
 #        use foo::{bar, baz};
 merge_imports = true
-
-# 15) Skip formatting generated code (e.g. code under the 'generated' directory)
-skip_children = ["generated/*"]
