@@ -142,6 +142,16 @@ cargo run -- read --path ../README.md
 ```bash
 cargo doc --open
 ```
+## Updates
+
+How to update all installed packages:
+
+1. Install updater:
+
+   cargo install cargo-update
+2. Now update all packages:
+
+   cargo install-update -a
 
 ## Roadmap
 Upcoming :)
