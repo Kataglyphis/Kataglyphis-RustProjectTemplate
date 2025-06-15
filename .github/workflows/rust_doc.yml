@@ -18,5 +18,4 @@ jobs:
 
       - name: Run doc gen
         run: |
-          cd kataglyphis-rustprojecttemplate
           cargo doc

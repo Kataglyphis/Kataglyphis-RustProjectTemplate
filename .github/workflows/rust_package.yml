@@ -6,9 +6,6 @@ on:
       runner:
         required: true
         type: string         # e.g. 'ubuntu-24.04'
-      project_dir:
-        required: true
-        type: string         # path to your Rust project, e.g. 'kataglyphis-rustprojecttemplate'
       binary_name:
         required: true
         type: string         # name of the built binary, e.g. 'kataglyphis-rustprojecttemplate'
@@ -18,7 +15,6 @@ jobs:
     name: Build and package ${{ inputs.binary_name }}
     runs-on: ${{ inputs.runner }}
     env:
-      PROJECT_DIR: ${{ inputs.project_dir }}
       BINARY: ${{ inputs.binary_name }}
       VERSION: ${{ github.ref_name }}
 
@@ -28,7 +24,6 @@ jobs:
 
       - name: 🛠️ Build release binary
         run: |
-          cd "$PROJECT_DIR"
           cargo build --release
 
       - name: 📦 Prepare archive variables
@@ -40,7 +35,6 @@ jobs:
       - name: 📦 Create archive
         shell: bash
         run: |
-          cd "$PROJECT_DIR"
           mkdir -p dist
           cp "target/release/$BINARY" dist/
           tar czvf "dist/${{ steps.vars.outputs.archive_name }}" -C dist "$BINARY"
@@ -49,4 +43,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ inputs.binary_name }}-${{ github.ref_name }}-${{ inputs.runner }}
-          path: ${{ inputs.project_dir }}/dist/${{ steps.vars.outputs.archive_name }}
+          path: ./dist/${{ steps.vars.outputs.archive_name }}

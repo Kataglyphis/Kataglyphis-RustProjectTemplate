@@ -19,5 +19,4 @@ jobs:
       # Equivalent of .common_steps_per_job_on_linux
       - name: Debug build
         run: |
-          cd kataglyphis-rustprojecttemplate
           cargo build --verbose

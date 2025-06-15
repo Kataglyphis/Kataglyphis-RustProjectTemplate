@@ -24,7 +24,6 @@ jobs:
     uses: ./.github/workflows/rust_package.yml
     with:
       runner: ubuntu-24.04
-      project_dir: kataglyphis-rustprojecttemplate
       binary_name: kataglyphis-rustprojecttemplate
 
   deploy-docs:
@@ -36,10 +35,8 @@ jobs:
 
       - name: Create docs
         run: |
-          cd kataglyphis-rustprojecttemplate
           cargo doc --no-deps
-          cd ..
-          cp ./resources/web/redirect/index.html ./kataglyphis-rustprojecttemplate/target/doc
+          cp ./resources/web/redirect/index.html ./target/doc
 
       - name: 📂 Sync files to domain
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
@@ -47,5 +44,5 @@ jobs:
           server: ${{ secrets.SERVER }}
           username: ${{ secrets.USERNAME }}
           password: ${{ secrets.PW }}
-          local-dir: "./kataglyphis-rustprojecttemplate/target/doc/"
+          local-dir: "./target/doc/"
         

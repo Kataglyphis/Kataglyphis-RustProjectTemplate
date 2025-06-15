@@ -18,12 +18,11 @@ jobs:
   test:
     uses: ./.github/workflows/rust_test.yml
     with:
-      runner: ubuntu-24.04-arm   
+      runner: ubuntu-24.04-arm
 
   package:
     uses: ./.github/workflows/rust_package.yml
     with:
       runner: ubuntu-24.04-arm
-      project_dir: kataglyphis-rustprojecttemplate
       binary_name: kataglyphis-rustprojecttemplate
 

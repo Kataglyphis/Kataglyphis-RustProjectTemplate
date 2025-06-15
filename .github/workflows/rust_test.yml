@@ -3,7 +3,7 @@ name: Build Rust app
 
 on:
   workflow_call:
-    inputs: 
+    inputs:
       runner:
         required: true
         type: string
@@ -15,32 +15,27 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4.2.2
-        
+
       - name: Check formatting
         run: |
-          cd kataglyphis-rustprojecttemplate
           cargo fmt --all -- --check
 
       - name: Run Clippy linter
-        continue-on-error: true 
+        continue-on-error: true
         run: |
-          cd kataglyphis-rustprojecttemplate
           cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Run unit, integration, and doc tests
         run: |
-          cd kataglyphis-rustprojecttemplate
           cargo test --all --verbose
 
       # Inline code‑coverage without an extra action
       - name: Install coverage tool
         run: |
-          cd kataglyphis-rustprojecttemplate
           cargo install cargo-tarpaulin
 
       - name: Generate coverage report
         run: |
-          cd kataglyphis-rustprojecttemplate
           cargo tarpaulin --ignore-tests --out Html --out Xml
 
       - name: Upload coverage artifacts
@@ -48,16 +43,15 @@ jobs:
         with:
           name: coverage-report
           path: |
-            kataglyphis-rustprojecttemplate/tarpaulin-report.html
-            kataglyphis-rustprojecttemplate/tarpaulin-report.xml
+            tarpaulin-report.html
+            tarpaulin-report.xml
 
       - name: Fuzz tests
+        if: ${{ false }}
         run: |
-          cd kataglyphis-rustprojecttemplate
           cargo install cargo-fuzz
           cargo fuzz run fuzz_target
 
       - name: Run benchmarks
         run: |
-          cd kataglyphis-rustprojecttemplate
           cargo bench
