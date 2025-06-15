@@ -20,3 +20,7 @@ jobs:
     with:
       runner: windows-2025
         
+  package:
+    uses: ./.github/workflows/rust_package.yml
+    with:
+      runner: windows-2025
