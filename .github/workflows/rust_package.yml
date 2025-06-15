@@ -27,6 +27,7 @@ jobs:
           cargo build --release
 
       - name: 📦 Prepare archive variables
+        shell: bash 
         id: vars
         run: |
           ARCHIVE_NAME="${BINARY}-${VERSION}-${RUNNER_OS}.tar.gz"
