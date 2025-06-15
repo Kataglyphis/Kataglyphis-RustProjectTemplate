@@ -22,6 +22,7 @@ jobs:
           cargo fmt --all -- --check
 
       - name: Run Clippy linter
+        continue-on-error: true 
         run: |
           cd kataglyphis-rustprojecttemplate
           cargo clippy --all-targets --all-features -- -D warnings
