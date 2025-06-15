@@ -17,19 +17,22 @@ jobs:
         uses: actions/checkout@v4.2.2  
 
       - name: 🛠️ Build release binary
-        run: cargo build --release
+        run: |
+          cd kataglyphis-rustprojecttemplate
+          cargo build --release
 
       - name: 📦 Create archive
         shell: bash
         run: |
-          ARCH_NAME=kataglyphis-rustprojecttemplate-${{ github.ref_name }}-linux
+          cd kataglyphis-rustprojecttemplate
+          ARCH_NAME=kataglyphis-rustprojecttemplate-${{ github.ref_name }}-${{ inputs.runner }}
           mkdir -p dist
-          # copy your binary (replace `myproject` with your crate name)
-          cp target/release/myproject dist/
-          tar czvf dist/${ARCH_NAME}.tar.gz -C dist myproject
+          # copy your binary
+          cp target/release/kataglyphis-rustprojecttemplate dist/
+          tar czvf dist/${ARCH_NAME}.tar.gz -C dist kataglyphis-rustprojecttemplate
 
       - name: 📤 Upload build artifact
         uses: actions/upload-artifact@v4.6.2
         with:
-          name: myproject-${{ github.ref_name }}-linux
+          name: cd kataglyphis-rustprojecttemplate-${{ github.ref_name }}-${{ inputs.runner }}
           path: dist/*.tar.gz
