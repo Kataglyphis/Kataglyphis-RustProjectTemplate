@@ -24,6 +24,8 @@ jobs:
     uses: ./.github/workflows/rust_package.yml
     with:
       runner: ubuntu-24.04
+      project_dir: kataglyphis-rustprojecttemplate
+      binary_name: kataglyphis-rustprojecttemplate
 
   deploy-docs:
     name: 📂 Sync files to domain
