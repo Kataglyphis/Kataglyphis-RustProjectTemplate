@@ -24,3 +24,6 @@ jobs:
     uses: ./.github/workflows/rust_package.yml
     with:
       runner: windows-2025
+      project_dir: kataglyphis-rustprojecttemplate
+      binary_name: kataglyphis-rustprojecttemplate
+
