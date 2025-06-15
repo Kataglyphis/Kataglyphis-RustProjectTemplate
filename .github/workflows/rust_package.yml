@@ -1,0 +1,35 @@
+# .github/workflows/rust-package.yml
+name: Build app
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        required: true
+        type: string
+
+jobs:
+  build-app:
+    name: Build app
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2  
+
+      - name: 🛠️ Build release binary
+        run: cargo build --release
+
+      - name: 📦 Create archive
+        shell: bash
+        run: |
+          ARCH_NAME=kataglyphis-rustprojecttemplate-${{ github.ref_name }}-linux
+          mkdir -p dist
+          # copy your binary (replace `myproject` with your crate name)
+          cp target/release/myproject dist/
+          tar czvf dist/${ARCH_NAME}.tar.gz -C dist myproject
+
+      - name: 📤 Upload build artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: myproject-${{ github.ref_name }}-linux
+          path: dist/*.tar.gz
