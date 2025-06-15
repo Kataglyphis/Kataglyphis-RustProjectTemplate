@@ -20,10 +20,10 @@ jobs:
     with:
       runner: ubuntu-24.04
 
-  # docs:
-  #   uses: ./.github/workflows/rust_doc.yml
-  #   with:
-  #     runner: ubuntu-24.04
+  package:
+    uses: ./.github/workflows/rust_package.yml
+    with:
+      runner: ubuntu-24.04
 
   deploy-docs:
     name: 📂 Sync files to domain
