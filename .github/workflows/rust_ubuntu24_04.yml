@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: 📥 Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5.0.0
 
       - name: Create docs
         run: |
@@ -39,7 +39,7 @@ jobs:
           cp ./resources/web/redirect/index.html ./target/doc
 
       - name: 📂 Sync files to domain
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.6
         with:
           server: ${{ secrets.SERVER }}
           username: ${{ secrets.USERNAME }}
