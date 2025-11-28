@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 use log::info;
 
 mod utils;
+mod gui;
 
 #[derive(Parser)]
 #[command(name = "file_tool")]
@@ -23,6 +24,7 @@ enum Commands {
         #[arg(short, long)]
         path: String,
     },
+    Gui,
 }
 
 #[tokio::main]
@@ -42,6 +44,10 @@ async fn main() -> Result<()> {
                 "Lines: {}, Words: {}, Bytes: {}",
                 stats.lines, stats.words, stats.bytes
             );
+        }
+        Commands::Gui => {
+            // Run the GTK/GStreamer demo GUI (non-async)
+            gui::run();
         }
     }
     Ok(())

@@ -20,7 +20,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5.0.0
+        uses: actions/checkout@v6.0.0
 
       - name: 🛠️ Build release binary
         run: |
@@ -41,7 +41,7 @@ jobs:
           tar czvf "dist/${{ steps.vars.outputs.archive_name }}" -C dist "$BINARY"
 
       - name: 📤 Upload build artifact
-        uses: actions/upload-artifact@v4.6.2
+        uses: actions/upload-artifact@v5.0.0
         with:
           name: ${{ inputs.binary_name }}-${{ github.ref_name }}-${{ inputs.runner }}
           path: ./dist/${{ steps.vars.outputs.archive_name }}

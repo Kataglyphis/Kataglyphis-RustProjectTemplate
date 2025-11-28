@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+gtk = { version = "0.10", package = "gtk4", features = ["v4_10"] }
+gstreamer = "0.24.3"
+gstreamer-video = "0.24.3"
+glib = "0.21.4"
 tokio = { version = "1", features = ["fs", "macros", "rt-multi-thread"] }
 anyhow = "1"
 log = "0.4"
