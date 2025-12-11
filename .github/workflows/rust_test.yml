@@ -99,7 +99,7 @@ jobs:
             cargo test --all --verbose
             '
 
-      - name: Install coverage tool
+      - name: Install coverage tool and run coverage
         run: |
           docker run --rm \
             --platform ${{ inputs.platform }} \
@@ -110,17 +110,8 @@ jobs:
             set -e
             git config --global --add safe.directory /workspace || true
             cargo install cargo-tarpaulin
-            
-            # detect ARM (aarch64/arm64) inside the container and set tarpaulin flags accordingly
-            TARPAULIN_FLAGS=""
-            if uname -m | grep -Eiq "arm|aarch64"; then
-              echo "Detected ARM architecture: enabling --engine llvm for cargo-tarpaulin"
-              TARPAULIN_FLAGS="--engine llvm"
-            else
-              echo "Non-ARM architecture: running cargo-tarpaulin without --engine"
-            fi
 
-            cargo tarpaulin --ignore-tests --out Html --out Xml $TARPAULIN_FLAGS
+            cargo tarpaulin --ignore-tests --out Html --out Xml --engine llvm
 
             '
 
@@ -132,12 +123,31 @@ jobs:
             tarpaulin-report.html
             tarpaulin-report.xml
 
+      # for now no fuzzy on runner ...
       - name: Fuzz tests
         if: ${{ false }}
         run: |
-          cargo install cargo-fuzz
-          cargo fuzz run fuzz_target
+          docker run --rm \
+            --platform ${{ inputs.platform }} \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest \
+            bash -lc '
+            set -e
+            git config --global --add safe.directory /workspace || true
+            cargo install cargo-fuzz
+            cargo fuzz run fuzz_target
+            '
 
-      - name: Run benchmarks
+      - name: Run benchmarks (cargo bench)
         run: |
-          cargo bench
+          docker run --rm \
+            --platform ${{ inputs.platform }} \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest \
+            bash -lc '
+            set -e
+            git config --global --add safe.directory /workspace || true
+            cargo bench
+            '
