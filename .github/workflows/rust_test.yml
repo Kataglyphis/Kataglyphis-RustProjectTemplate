@@ -110,19 +110,7 @@ jobs:
             set -e
             git config --global --add safe.directory /workspace || true
             cargo install cargo-tarpaulin
-            '
-
-      - name: Generate coverage report
-        run: |
-          docker run --rm \
-            --platform ${{ inputs.platform }} \
-            -v ${{ github.workspace }}:/workspace \
-            -w /workspace \
-            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest \
-            bash -lc '
-            set -e
-            git config --global --add safe.directory /workspace || true
-
+            
             # detect ARM (aarch64/arm64) inside the container and set tarpaulin flags accordingly
             TARPAULIN_FLAGS=""
             if uname -m | grep -Eiq "arm|aarch64"; then
@@ -133,6 +121,7 @@ jobs:
             fi
 
             cargo tarpaulin --ignore-tests --out Html --out Xml $TARPAULIN_FLAGS
+
             '
 
       - name: Upload coverage artifacts
