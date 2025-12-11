@@ -36,7 +36,7 @@ jobs:
           swap-storage: true
 
       - name: Checkout
-        uses: actions/checkout@v6.0.0
+        uses: actions/checkout@v6.0.1
         with:
           fetch-depth: 0
           submodules: recursive
@@ -122,7 +122,17 @@ jobs:
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
-            cargo tarpaulin --ignore-tests --out Html --out Xml
+
+            # detect ARM (aarch64/arm64) inside the container and set tarpaulin flags accordingly
+            TARPAULIN_FLAGS=""
+            if uname -m | grep -Eiq "arm|aarch64"; then
+              echo "Detected ARM architecture: enabling --engine llvm for cargo-tarpaulin"
+              TARPAULIN_FLAGS="--engine llvm"
+            else
+              echo "Non-ARM architecture: running cargo-tarpaulin without --engine"
+            fi
+
+            cargo tarpaulin --ignore-tests --out Html --out Xml $TARPAULIN_FLAGS
             '
 
       - name: Upload coverage artifacts

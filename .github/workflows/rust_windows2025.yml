@@ -14,15 +14,21 @@ jobs:
     uses: ./.github/workflows/rust_build.yml
     with:
       runner: windows-2025
+    secrets:
+      GHCR_PAT: ${{ secrets.GHCR_PAT }}
 
   test:
     uses: ./.github/workflows/rust_test.yml
     with:
       runner: windows-2025
+    secrets:
+      GHCR_PAT: ${{ secrets.GHCR_PAT }}
 
   package:
     uses: ./.github/workflows/rust_package.yml
     with:
       runner: windows-2025
       binary_name: kataglyphis-rustprojecttemplate
+    secrets:
+      GHCR_PAT: ${{ secrets.GHCR_PAT }}
 
