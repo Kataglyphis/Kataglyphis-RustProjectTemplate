@@ -26,7 +26,7 @@ For **__official docs__** follow this [link](https://rust.jonasheinle.de).
 [![TopLang](https://img.shields.io/github/languages/top/Kataglyphis/GraphicsEngineVulkan)]() -->
 [![Donate](https://img.shields.io/badge/Donate-PayPal-green.svg)](https://www.paypal.com/paypalme/JonasHeinle)
 [![Twitter](https://img.shields.io/twitter/follow/Cataglyphis_?style=social)](https://twitter.com/Cataglyphis_)
-
+ 
 ## Table of Contents
 
 - [About The Project](#about-the-project)
