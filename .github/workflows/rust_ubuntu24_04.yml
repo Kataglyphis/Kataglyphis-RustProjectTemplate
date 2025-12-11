@@ -90,6 +90,10 @@ jobs:
             cp ./resources/web/redirect/index.html ./target/doc
             '
 
+      - name: Fix permissions on generated docs
+        run: |
+          sudo chown -R $USER:$USER ./target/doc
+
       - name: 📂 Sync files to domain
         uses: SamKirkland/FTP-Deploy-Action@v4.3.6
         with:
