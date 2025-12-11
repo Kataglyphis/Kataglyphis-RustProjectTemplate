@@ -68,7 +68,7 @@ jobs:
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
-            cargo fmt --all -- --check
+            rustup component add rustfmt && cargo fmt --all -- --check
             '
 
       - name: Run Clippy linter
