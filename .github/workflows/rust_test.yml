@@ -83,6 +83,7 @@ jobs:
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
+            rustup component add clippy
             cargo clippy --all-targets --all-features -- -D warnings
             '
 
