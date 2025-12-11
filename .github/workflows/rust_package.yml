@@ -17,6 +17,9 @@ on:
         required: false
         type: string
         default: x64
+    secrets:
+      GHCR_PAT:
+        required: true
 
 jobs:
   build-app:
