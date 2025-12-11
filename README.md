@@ -1,19 +1,19 @@
-<h1 align="center">
-  <br>
-  <a href="https://jonasheinle.de"><img src="images/logo.png" alt="logo" width="200"></a>
-  <br>
-  Kataglyphis-RustProjectTemplate
-  <br>
-</h1>
+<div align="center">
+  <a href="https://jonasheinle.de">
+    <img src="images/logo.png" alt="logo" width="200" />
+  </a>
 
-<!-- <h1 align="center">
-  <br>
-  <a href="https://jonasheinle.de"><img src="images/vulkan-logo.png" alt="VulkanEngine" width="200"></a>
-  <a href="https://jonasheinle.de"><img src="images/Engine_logo.png" alt="VulkanEngine" width="200"></a>
-  <a href="https://jonasheinle.de"><img src="images/glm_logo.png" alt="VulkanEngine" width="200"></a>
-</h1> -->
+  <h1>🦀 Kataglyphis-RustProjectTemplate 🦀</h1>
 
-<h4 align="center">A template <a href="https://jonasheinle.de" target="_blank"></a>.</h4>
+  <h4>Collecting Rust best practices.</h4>
+</div>
+
+<div align="center">
+  <a href="https://jonasheinle.de">
+    <img src="images/Rust.gif" alt="Rust" width="400" />
+  </a>
+</div>
+
 
 [![Rust workflow on Ubuntu-24.04](https://github.com/Kataglyphis/Kataglyphis-RustProjectTemplate/actions/workflows/rust_ubuntu24_04.yml/badge.svg)](https://github.com/Kataglyphis/Kataglyphis-RustProjectTemplate/actions/workflows/rust_ubuntu24_04.yml)
 [![Rust workflow on Ubuntu-24.04-arm](https://github.com/Kataglyphis/Kataglyphis-RustProjectTemplate/actions/workflows/rust_ubuntu_24_04_arm.yml/badge.svg)](https://github.com/Kataglyphis/Kataglyphis-RustProjectTemplate/actions/workflows/rust_ubuntu_24_04_arm.yml)
@@ -27,66 +27,33 @@ For **__official docs__** follow this [link](https://rust.jonasheinle.de).
 [![Donate](https://img.shields.io/badge/Donate-PayPal-green.svg)](https://www.paypal.com/paypalme/JonasHeinle)
 [![Twitter](https://img.shields.io/twitter/follow/Cataglyphis_?style=social)](https://twitter.com/Cataglyphis_)
 
-<p align="center">
-  <a href="#about-the-project">About The Project</a> •
-  <a href="#getting-started">Getting Started</a> •
-  <a href="#license">License</a> •
-  <a href="#literature">Literature</a>
-</p>
+## Table of Contents
 
-<!-- TABLE OF CONTENTS -->
-<details open="open">
-  <summary>Table of Contents</summary>
-  <ol>
-    <li>
-      <a href="#about-the-project">About The Project</a>
-      <ul>
-        <li><a href="#key-features">Key Features</a></li>
-      </ul>
-      <ul>
-        <li><a href="#dependencies">Dependencies</a></li>
-      </ul>
-      <ul>
-        <li><a href="#useful-tools">Useful tools</a></li>
-      </ul>
-    </li>
-    <li>
-      <a href="#getting-started">Getting Started</a>
-      <ul>
-        <li><a href="#prerequisites">Prerequisites</a></li>
-        <li><a href="#installation">Installation</a></li>
-      </ul>
-    </li>
-    <li><a href="#tests">Tests</a></li>
-    <li><a href="#roadmap">Roadmap</a></li>
-    <li><a href="#contributing">Contributing</a></li>
-    <li><a href="#license">License</a></li>
-    <li><a href="#contact">Contact</a></li>
-    <li><a href="#acknowledgements">Acknowledgements</a></li>
-    <li><a href="#literature">Literature</a></li>
-  </ol>
-</details>
+- [About The Project](#about-the-project)
+  - [Key Features](#key-features)
+  - [Dependencies](#dependencies)
+  - [Useful tools](#useful-tools)
+- [Getting Started](#getting-started)
+  - [Prerequisites](#prerequisites)
+  - [Installation](#installation)
+- [Tests](#tests)
+- [Run](#run)
+- [Docs](#docs)
+- [Updates](#updates)
+- [Roadmap](#roadmap)
+- [Contributing](#contributing)
+- [License](#license)
+- [Contact](#contact)
+- [Acknowledgements](#acknowledgements)
+- [Literature](#literature)
 
-<!-- ABOUT THE PROJECT -->
 ## About The Project
 
-<!-- <h1 align="center">
-  <br>
-  <a href="https://jonasheinle.de"><img src="images/Screenshot1.png" alt="VulkanEngine" width="400"></a>
-  <a href="https://jonasheinle.de"><img src="images/Screenshot2.png" alt="VulkanEngine" width="400"></a>
-  <a href="https://jonasheinle.de"><img src="images/Screenshot3.png" alt="VulkanEngine" width="700"></a>
-</h1> -->
-
-<!-- [![Kataglyphis Engine][product-screenshot1]](https://jonasheinle.de)
-[![Kataglyphis Engine][product-screenshot2]](https://jonasheinle.de)
-[![Kataglyphis Engine][product-screenshot3]](https://jonasheinle.de) -->
-
-This project is a template. 
+This project is about collecting experience in Rust.
 
 ### Key Features
 
 - Features are to be adjusted to your own project needs.
-
 
 <div align="center">
 
