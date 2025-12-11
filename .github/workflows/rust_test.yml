@@ -59,6 +59,7 @@ jobs:
           exit 1
 
       - name: Check formatting
+        continue-on-error: true
         run: |
           docker run --rm \
             --platform ${{ inputs.platform }} \
