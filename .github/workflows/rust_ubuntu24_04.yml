@@ -14,29 +14,75 @@ jobs:
     uses: ./.github/workflows/rust_build.yml
     with:
       runner: ubuntu-24.04
+      platform: linux/amd64
+      arch: x64
 
   test:
     uses: ./.github/workflows/rust_test.yml
     with:
       runner: ubuntu-24.04
+      platform: linux/amd64
+      arch: x64
 
   package:
     uses: ./.github/workflows/rust_package.yml
     with:
       runner: ubuntu-24.04
       binary_name: kataglyphis-rustprojecttemplate
+      platform: linux/amd64
+      arch: x64
 
   deploy-docs:
-    name: 📂 Sync files to domain
+    name: Generate and deploy docs
     runs-on: ubuntu-24.04
     steps:
+      - name: Free Disk Space on Host
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: false
+          swap-storage: true
+
       - name: 📥 Checkout repository
         uses: actions/checkout@v6.0.0
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Login to GitHub Container Registry
+        run: echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Pull container image
+        run: |
+          for i in 1 2 3; do
+            echo "Attempt $i to pull container..."
+            if timeout 900 docker pull ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest; then
+              echo "Successfully pulled container"
+              exit 0
+            fi
+            echo "Pull failed, waiting before retry..."
+            sleep 30
+          done
+          echo "Failed to pull container after 3 attempts"
+          exit 1
 
       - name: Create docs
         run: |
-          cargo doc --no-deps
-          cp ./resources/web/redirect/index.html ./target/doc
+          docker run --rm \
+            --platform linux/amd64 \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest \
+            bash -lc '
+            set -e
+            git config --global --add safe.directory /workspace || true
+            cargo doc --no-deps
+            cp ./resources/web/redirect/index.html ./target/doc
+            '
 
       - name: 📂 Sync files to domain
         uses: SamKirkland/FTP-Deploy-Action@v4.3.6

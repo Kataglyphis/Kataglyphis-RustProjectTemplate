@@ -7,36 +7,119 @@ on:
       runner:
         required: true
         type: string
+      platform:
+        required: false
+        type: string
+        default: linux/amd64
+      arch:
+        required: false
+        type: string
+        default: x64
 
 jobs:
   test-app:
     name: Testing
     runs-on: ${{ inputs.runner }}
     steps:
+      - name: Free Disk Space on Host
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: false
+          swap-storage: true
+
       - name: Checkout
         uses: actions/checkout@v6.0.0
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Login to GitHub Container Registry
+        run: echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Pull container image
+        run: |
+          for i in 1 2 3; do
+            echo "Attempt $i to pull container..."
+            if timeout 900 docker pull ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest; then
+              echo "Successfully pulled container"
+              exit 0
+            fi
+            echo "Pull failed, waiting before retry..."
+            sleep 30
+          done
+          echo "Failed to pull container after 3 attempts"
+          exit 1
 
       - name: Check formatting
         run: |
-          cargo fmt --all -- --check
+          docker run --rm \
+            --platform ${{ inputs.platform }} \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest \
+            bash -lc '
+            set -e
+            git config --global --add safe.directory /workspace || true
+            cargo fmt --all -- --check
+            '
 
       - name: Run Clippy linter
         continue-on-error: true
         run: |
-          cargo clippy --all-targets --all-features -- -D warnings
+          docker run --rm \
+            --platform ${{ inputs.platform }} \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest \
+            bash -lc '
+            set -e
+            git config --global --add safe.directory /workspace || true
+            cargo clippy --all-targets --all-features -- -D warnings
+            '
 
       - name: Run unit, integration, and doc tests
         run: |
-          cargo test --all --verbose
+          docker run --rm \
+            --platform ${{ inputs.platform }} \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest \
+            bash -lc '
+            set -e
+            git config --global --add safe.directory /workspace || true
+            cargo test --all --verbose
+            '
 
-      # Inline code‑coverage without an extra action
       - name: Install coverage tool
         run: |
-          cargo install cargo-tarpaulin
+          docker run --rm \
+            --platform ${{ inputs.platform }} \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest \
+            bash -lc '
+            set -e
+            git config --global --add safe.directory /workspace || true
+            cargo install cargo-tarpaulin
+            '
 
       - name: Generate coverage report
         run: |
-          cargo tarpaulin --ignore-tests --out Html --out Xml
+          docker run --rm \
+            --platform ${{ inputs.platform }} \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest \
+            bash -lc '
+            set -e
+            git config --global --add safe.directory /workspace || true
+            cargo tarpaulin --ignore-tests --out Html --out Xml
+            '
 
       - name: Upload coverage artifacts
         uses: actions/upload-artifact@v5.0.0
