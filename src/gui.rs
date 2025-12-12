@@ -11,16 +11,15 @@ pub fn run() -> glib::ExitCode {
 
     let app = Application::builder().application_id(APP_ID).build();
     app.connect_activate(build_ui);
-    app.run()
+    app.run_with_args::<&str>(&[])
 }
 
 fn build_ui(app: &Application) {
     let pipeline = gst::Pipeline::with_name("video-pipeline");
 
-    let src = gst::ElementFactory::make("videotestsrc")
-        .property_from_str("pattern", "smpte")
+    let src = gst::ElementFactory::make("autovideosrc")
         .build()
-        .expect("Failed to create videotestsrc");
+        .expect("Failed to create autovideosrc");
 
     let convert = gst::ElementFactory::make("videoconvert")
         .build()
@@ -164,16 +163,6 @@ fn make_video_sink() -> (gst::Element, Option<gtk::gdk::Paintable>) {
     if let Ok(sink) = gst::ElementFactory::make("gtk4paintablesink").build() {
         let paintable = sink.property::<gtk::gdk::Paintable>("paintable");
         return (sink, Some(paintable));
-    }
-
-    if let Ok(sink) = gst::ElementFactory::make("gtksink").build() {
-        if let Ok(widget) = sink.property::<gtk::Widget>("widget") {
-            if let Ok(Some(paintable)) = widget.property::<Option<gtk::gdk::Paintable>>("paintable")
-            {
-                return (sink, Some(paintable));
-            }
-        }
-        return (sink, None);
     }
 
     // Windows native sinks (render in their own window, no paintable to embed)

@@ -8,7 +8,11 @@ use std::rc::Rc;
 use wgpu::util::DeviceExt;
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::EventLoop;
-use winit::window::WindowBuilder;
+use winit::window::{Window, WindowBuilder};
+
+use egui::{Context as EguiContext, ViewportId};
+use egui_wgpu::{Renderer as EguiRenderer, ScreenDescriptor};
+use egui_winit::State as EguiWinitState;
 
 pub fn run() {
     gst::init().expect("Failed to initialize GStreamer");
@@ -37,10 +41,10 @@ struct Frame {
 fn build_pipeline(frame_tx: std::sync::mpsc::SyncSender<Frame>) -> gst::Pipeline {
     let pipeline = gst::Pipeline::new();
 
-    let src = gst::ElementFactory::make("videotestsrc")
-        .property_from_str("pattern", "smpte")
+    let src = gst::ElementFactory::make("mfvideosrc")
         .build()
-        .expect("Failed to create videotestsrc");
+        .or_else(|_| gst::ElementFactory::make("autovideosrc").build())
+        .expect("Failed to create a video source");
 
     let convert = gst::ElementFactory::make("videoconvert")
         .build()
@@ -106,7 +110,7 @@ fn start_window(frame_rx: Receiver<Frame>) {
         .expect("Failed to create window");
 
     let window = Rc::new(window);
-    let mut state = block_on(WgpuState::new(window.as_ref()));
+    let mut state = block_on(WgpuState::new(window.as_ref(), &event_loop));
     let mut latest_frame: Option<Frame> = None;
 
     let window_for_loop = Rc::clone(&window);
@@ -114,7 +118,9 @@ fn start_window(frame_rx: Receiver<Frame>) {
     let _ = event_loop.run(move |event, elwt| {
         let window = window_for_loop.as_ref();
         match event {
-            Event::WindowEvent { event, window_id } if window_id == window.id() => match event {
+            Event::WindowEvent { event, window_id } if window_id == window.id() => {
+                state.handle_window_event(window, &event);
+                match event {
                 WindowEvent::CloseRequested => elwt.exit(),
                 WindowEvent::Resized(size) => {
                     state.resize(size);
@@ -132,13 +138,14 @@ fn start_window(frame_rx: Receiver<Frame>) {
                     if let Some(frame) = latest_frame.as_ref() {
                         state.upload_frame(frame);
                     }
-                    if let Err(err) = state.render() {
+                    if let Err(err) = state.render(window) {
                         eprintln!("Render error: {err:?}");
                         elwt.exit();
                     }
                 }
                 _ => {}
-            },
+            }
+            }
             Event::AboutToWait => window.request_redraw(),
             _ => {}
         }
@@ -156,10 +163,15 @@ struct WgpuState<'w> {
     num_indices: u32,
     sampler: wgpu::Sampler,
     texture: Option<(wgpu::Texture, wgpu::TextureView, wgpu::BindGroup, u32, u32)>,
+    egui_ctx: EguiContext,
+    egui_state: EguiWinitState,
+    egui_renderer: EguiRenderer,
+    egui_screen: ScreenDescriptor,
+    overlay_enabled: bool,
 }
 
 impl<'w> WgpuState<'w> {
-    async fn new(window: &'w winit::window::Window) -> Self {
+    async fn new(window: &'w Window, event_loop: &EventLoop<()>) -> Self {
         let size = window.inner_size();
 
         // Prefer DX12 backend on Windows to avoid Vulkan validation noise.
@@ -283,12 +295,10 @@ impl<'w> WgpuState<'w> {
                 module: &shader,
                 entry_point: "vs_main",
                 buffers: &[Vertex::desc()],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: "fs_main",
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: config.format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
@@ -301,6 +311,20 @@ impl<'w> WgpuState<'w> {
             multiview: None,
         });
 
+        let egui_ctx = EguiContext::default();
+        let egui_state = EguiWinitState::new(
+            egui_ctx.clone(),
+            ViewportId::ROOT,
+            event_loop,
+            Some(window.scale_factor() as f32),
+            None,
+        );
+        let egui_renderer = EguiRenderer::new(&device, surface_format, None, 1);
+        let egui_screen = ScreenDescriptor {
+            size_in_pixels: [config.width, config.height],
+            pixels_per_point: window.scale_factor() as f32,
+        };
+
         Self {
             surface,
             device,
@@ -312,6 +336,11 @@ impl<'w> WgpuState<'w> {
             num_indices: index_data.len() as u32,
             sampler,
             texture: None,
+            egui_ctx,
+            egui_state,
+            egui_renderer,
+            egui_screen,
+            overlay_enabled: true,
         }
     }
 
@@ -320,6 +349,14 @@ impl<'w> WgpuState<'w> {
             self.config.width = new_size.width;
             self.config.height = new_size.height;
             self.surface.configure(&self.device, &self.config);
+            self.egui_screen.size_in_pixels = [new_size.width, new_size.height];
+        }
+    }
+
+    fn handle_window_event(&mut self, window: &Window, event: &winit::event::WindowEvent) {
+        let response = self.egui_state.on_window_event(window, event);
+        if response.repaint {
+            window.request_redraw();
         }
     }
 
@@ -388,7 +425,53 @@ impl<'w> WgpuState<'w> {
         }
     }
 
-    fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
+    fn render(&mut self, window: &Window) -> Result<(), wgpu::SurfaceError> {
+        self.egui_screen.pixels_per_point = window.scale_factor() as f32;
+        self.egui_screen.size_in_pixels = [self.config.width, self.config.height];
+
+        let raw_input = self.egui_state.take_egui_input(window);
+        let mut overlay_enabled = self.overlay_enabled;
+        let frame_dimensions = self
+            .texture
+            .as_ref()
+            .map(|(_, _, _, w, h)| (*w, *h))
+            .unwrap_or((0, 0));
+
+        let full_output = self.egui_ctx.run(raw_input, |ctx| {
+            if overlay_enabled {
+                egui::Window::new("Overlay")
+                    .default_pos(egui::pos2(12.0, 12.0))
+                    .resizable(false)
+                    .show(ctx, |ui| {
+                        ui.label("Dummy GUI overlay");
+                        ui.label(format!("Frame: {}x{}", frame_dimensions.0, frame_dimensions.1));
+                        if ui.button("Toggle overlay visibility").clicked() {
+                            overlay_enabled = false;
+                        }
+                    });
+            } else {
+                egui::Window::new("Overlay (hidden)")
+                    .default_pos(egui::pos2(12.0, 12.0))
+                    .resizable(false)
+                    .show(ctx, |ui| {
+                        ui.label("Overlay is hidden");
+                        if ui.button("Show overlay again").clicked() {
+                            overlay_enabled = true;
+                        }
+                    });
+            }
+        });
+        self.overlay_enabled = overlay_enabled;
+
+        let clipped_primitives = self
+            .egui_ctx
+            .tessellate(full_output.shapes, self.egui_screen.pixels_per_point);
+
+        for (id, image_delta) in &full_output.textures_delta.set {
+            self.egui_renderer
+                .update_texture(&self.device, &self.queue, *id, image_delta);
+        }
+
         let frame = self.surface.get_current_texture()?;
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
@@ -422,6 +505,40 @@ impl<'w> WgpuState<'w> {
 
             rpass.draw_indexed(0..self.num_indices, 0, 0..1);
         }
+
+        self.egui_renderer.update_buffers(
+            &self.device,
+            &self.queue,
+            &mut encoder,
+            &clipped_primitives,
+            &self.egui_screen,
+        );
+
+        {
+            let mut egui_rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("egui_render_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+
+            self.egui_renderer
+                .render(&mut egui_rpass, &clipped_primitives, &self.egui_screen);
+        }
+
+        for id in &full_output.textures_delta.free {
+            self.egui_renderer.free_texture(id);
+        }
+        self.egui_state
+            .handle_platform_output(window, full_output.platform_output);
 
         self.queue.submit(Some(encoder.finish()));
         frame.present();

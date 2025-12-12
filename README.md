@@ -116,7 +116,12 @@ cargo run -- read --path ../README.md
 
 ### Windows
 ```bash
- cargo run --features gui_windows -- gui
+cargo run --features gui_windows -- gui
+```
+
+### Linux
+```bash
+cargo run --features gui_unix -- gui
 ```
 
 ## Docs
@@ -133,6 +138,15 @@ How to update all installed packages:
 2. Now update all packages:
 
    cargo install-update -a
+
+## Cameras
+
+```bash
+sudo v4l2-ctl --list-formats-ext -d /dev/video0
+gst-launch-1.0 v4l2src device=/dev/video0 ! videoconvert ! autovideosink
+gst-launch-1.0 videotestsrc ! video/x-raw,width=640,height=480,framerate=30/1 ! autovideosink
+```
+
 
 ## Roadmap
 Upcoming :)

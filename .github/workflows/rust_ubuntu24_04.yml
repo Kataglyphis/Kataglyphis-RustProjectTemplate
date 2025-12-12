@@ -1,4 +1,4 @@
-name: Rust workflow on Ubuntu-24.04
+name: Rust workflow on Ubuntu-24.04 (x86_64/ARM)
 
 on:
   push:
@@ -10,37 +10,32 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-    uses: ./.github/workflows/rust_build.yml
-    with:
-      runner: ubuntu-24.04
-      platform: linux/amd64
-      arch: x64
-    secrets:
-      GHCR_PAT: ${{ secrets.GHCR_PAT }}
-
-  test:
-    uses: ./.github/workflows/rust_test.yml
-    with:
-      runner: ubuntu-24.04
-      platform: linux/amd64
-      arch: x64
-    secrets:
-      GHCR_PAT: ${{ secrets.GHCR_PAT }}
-
-  package:
-    uses: ./.github/workflows/rust_package.yml
-    with:
-      runner: ubuntu-24.04
-      binary_name: kataglyphis-rustprojecttemplate
-      platform: linux/amd64
-      arch: x64
-    secrets:
-      GHCR_PAT: ${{ secrets.GHCR_PAT }}
-
-  deploy-docs:
-    name: Generate and deploy docs
-    runs-on: ubuntu-24.04
+  linux-pipeline:
+    name: Build, test, package, and docs (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: amd64
+            runner: ubuntu-24.04
+            platform: linux/amd64
+            arch: x64
+            coverage_name: coverage-report
+            artifact_suffix: ubuntu-24.04-x64
+            docs: true
+          - name: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            arch: arm64
+            coverage_name: coverage-report-arm64
+            artifact_suffix: ubuntu-24.04-arm64
+            docs: false
+    env:
+      PLATFORM: ${{ matrix.platform }}
+      ARCH: ${{ matrix.arch }}
+      BINARY: kataglyphis-rustprojecttemplate
+      VERSION: ${{ github.ref_name }}
     steps:
       - name: Free Disk Space on Host
         uses: jlumbroso/free-disk-space@main
@@ -62,7 +57,7 @@ jobs:
       - name: Login to GitHub Container Registry
         run: echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-      - name: Pull container image
+      - name: Pull container image (once)
         run: |
           for i in 1 2 3; do
             echo "Attempt $i to pull container..."
@@ -76,10 +71,136 @@ jobs:
           echo "Failed to pull container after 3 attempts"
           exit 1
 
-      - name: Create docs
+      - name: Debug build
         run: |
           docker run --rm \
-            --platform linux/amd64 \
+            --platform ${{ env.PLATFORM }} \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest \
+            bash -lc '
+            set -e
+            git config --global --add safe.directory /workspace || true
+            cargo build --verbose
+            '
+
+      - name: Check formatting
+        continue-on-error: true
+        run: |
+          docker run --rm \
+            --platform ${{ env.PLATFORM }} \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest \
+            bash -lc '
+            set -e
+            git config --global --add safe.directory /workspace || true
+            rustup component add rustfmt && cargo fmt --all -- --check
+            '
+
+      - name: Run Clippy linter
+        continue-on-error: true
+        run: |
+          docker run --rm \
+            --platform ${{ env.PLATFORM }} \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest \
+            bash -lc '
+            set -e
+            git config --global --add safe.directory /workspace || true
+            rustup component add clippy
+            cargo clippy --all-targets --all-features -- -D warnings
+            '
+
+      - name: Run unit, integration, and doc tests
+        run: |
+          docker run --rm \
+            --platform ${{ env.PLATFORM }} \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest \
+            bash -lc '
+            set -e
+            git config --global --add safe.directory /workspace || true
+            cargo test --all --verbose
+            '
+
+      - name: Install coverage tool and run coverage
+        run: |
+          docker run --rm \
+            --platform ${{ env.PLATFORM }} \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest \
+            bash -lc '
+            set -e
+            git config --global --add safe.directory /workspace || true
+            cargo install cargo-tarpaulin
+
+            cargo tarpaulin --ignore-tests --out Html --out Xml --engine llvm
+
+            '
+
+      - name: Upload coverage artifacts
+        uses: actions/upload-artifact@v5.0.0
+        with:
+          name: ${{ matrix.coverage_name }}
+          path: |
+            tarpaulin-report.html
+            tarpaulin-report.xml
+
+      - name: Run benchmarks (cargo bench)
+        run: |
+          docker run --rm \
+            --platform ${{ env.PLATFORM }} \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest \
+            bash -lc '
+            set -e
+            git config --global --add safe.directory /workspace || true
+            cargo bench
+            '
+
+      - name: 🛠️ Build release binary
+        run: |
+          docker run --rm \
+            --platform ${{ env.PLATFORM }} \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest \
+            bash -lc '
+            set -e
+            git config --global --add safe.directory /workspace || true
+            cargo build --release
+            '
+
+      - name: 📦 Prepare archive variables
+        shell: bash
+        id: vars
+        run: |
+          ARCHIVE_NAME="${BINARY}-${VERSION}-${{ matrix.runner }}-${ARCH}.tar.gz"
+          echo "archive_name=$ARCHIVE_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: 📦 Create archive
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp "target/release/$BINARY" dist/
+          tar czvf "dist/${{ steps.vars.outputs.archive_name }}" -C dist "$BINARY"
+
+      - name: 📤 Upload build artifact
+        uses: actions/upload-artifact@v5.0.0
+        with:
+          name: ${{ env.BINARY }}-${{ github.ref_name }}-${{ matrix.artifact_suffix }}
+          path: ./dist/${{ steps.vars.outputs.archive_name }}
+
+      - name: Create docs
+        if: matrix.docs
+        run: |
+          docker run --rm \
+            --platform ${{ env.PLATFORM }} \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
             ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest \
@@ -91,10 +212,12 @@ jobs:
             '
 
       - name: Fix permissions on generated docs
+        if: matrix.docs
         run: |
           sudo chown -R $USER:$USER ./target/doc
 
       - name: 📂 Sync files to domain
+        if: matrix.docs
         uses: SamKirkland/FTP-Deploy-Action@v4.3.6
         with:
           server: ${{ secrets.SERVER }}
