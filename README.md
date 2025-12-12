@@ -102,7 +102,7 @@ cargo upgrade --dry-run --verbose
 ### Installation
 
 1. Clone the repo
-   ```sh
+   ```bash
    git clone --recurse-submodules git@github.com:Kataglyphis/Kataglyphis-RustProjectTemplate.git
    ```
 
@@ -112,6 +112,11 @@ cargo upgrade --dry-run --verbose
 ## Run
 ```bash
 cargo run -- read --path ../README.md
+```
+
+### Windows
+```bash
+ cargo run --features gui_windows -- gui
 ```
 
 ## Docs

@@ -3,16 +3,28 @@ name = "kataglyphis-rustprojecttemplate"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+# CLI-only by default to avoid GTK/GStreamer on Windows.
+default = []
+gui = ["dep:gstreamer", "dep:gstreamer-video", "dep:glib"]
+gui_unix = ["gui", "dep:gtk"]
+gui_windows = ["gui", "dep:gstreamer-app", "dep:winit", "dep:wgpu", "dep:pollster", "dep:bytemuck"]
+
 [dependencies]
-gtk = { version = "0.10", package = "gtk4", features = ["v4_10"] }
-gstreamer = "0.24.3"
-gstreamer-video = "0.24.3"
-glib = "0.21.4"
 tokio = { version = "1", features = ["fs", "macros", "rt-multi-thread"] }
 anyhow = "1"
 log = "0.4"
 env_logger = "0.11.8"
 clap = { version = "4", features = ["derive"] }
+gtk = { version = "0.10", package = "gtk4", features = ["v4_10"], optional = true }
+gstreamer = { version = "0.24.3", optional = true }
+gstreamer-video = { version = "0.24.3", optional = true }
+glib = { version = "0.21.4", optional = true }
+gstreamer-app = { version = "0.24.3", optional = true }
+winit = { version = "0.29", optional = true }
+wgpu = { version = "0.20", optional = true }
+pollster = { version = "0.3", optional = true }
+bytemuck = { version = "1.16", features = ["derive"], optional = true }
 
 [dev-dependencies]
 assert_cmd = "2"

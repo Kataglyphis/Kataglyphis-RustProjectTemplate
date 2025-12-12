@@ -1,5 +1,5 @@
 use gtk::prelude::*;
-use gtk::{glib, Application, ApplicationWindow, Box, Button, Picture};
+use gtk::{glib, Application, ApplicationWindow, Box, Button, Label, Picture};
 use gstreamer as gst;
 use gstreamer::prelude::*;
 use std::sync::{Arc, Mutex};
@@ -26,33 +26,13 @@ fn build_ui(app: &Application) {
         .build()
         .expect("Failed to create videoconvert");
 
-    let (sink, paintable) = if let Ok(sink) = gst::ElementFactory::make("gtk4paintablesink").build()
-    {
-        let paintable = sink.property::<gtk::gdk::Paintable>("paintable");
-        (sink, paintable)
-    } else {
-        let sink = gst::ElementFactory::make("gtksink")
-            .build()
-            .expect("Failed to create gtksink - please install gstreamer1.0-gtk3");
-        let widget: gtk::Widget = sink.property("widget");
-        let paintable = widget
-            .property::<Option<gtk::gdk::Paintable>>("paintable")
-            .expect("gtksink widget doesn't have a paintable");
-        (sink, paintable)
-    };
+    let (sink, paintable) = make_video_sink();
 
     pipeline
         .add_many([&src, &convert, &sink])
         .expect("Failed to add elements to pipeline");
 
     gst::Element::link_many([&src, &convert, &sink]).expect("Failed to link elements");
-
-    let picture = Picture::builder()
-        .paintable(&paintable)
-        .width_request(640)
-        .height_request(480)
-        .can_shrink(false)
-        .build();
 
     let play_button = Button::with_label("Play");
     let pause_button = Button::with_label("Pause");
@@ -76,7 +56,23 @@ fn build_ui(app: &Application) {
         .orientation(gtk::Orientation::Vertical)
         .build();
 
-    main_box.append(&picture);
+    if let Some(paintable) = paintable {
+        let picture = Picture::builder()
+            .paintable(&paintable)
+            .width_request(640)
+            .height_request(480)
+            .can_shrink(false)
+            .build();
+        main_box.append(&picture);
+    } else {
+        // Native Windows sinks create their own window; inform the user.
+        let info = Label::new(Some(
+            "Using a native video sink window (not embedded in GTK).",
+        ));
+        info.set_margin_top(6);
+        info.set_margin_bottom(6);
+        main_box.append(&info);
+    }
     main_box.append(&button_box);
 
     let window = ApplicationWindow::builder()
@@ -160,4 +156,39 @@ fn build_ui(app: &Application) {
     });
 
     window.present();
+}
+
+// Choose a sink that works on the current platform.
+fn make_video_sink() -> (gst::Element, Option<gtk::gdk::Paintable>) {
+    // Prefer GTK paintable sinks when available.
+    if let Ok(sink) = gst::ElementFactory::make("gtk4paintablesink").build() {
+        let paintable = sink.property::<gtk::gdk::Paintable>("paintable");
+        return (sink, Some(paintable));
+    }
+
+    if let Ok(sink) = gst::ElementFactory::make("gtksink").build() {
+        if let Ok(widget) = sink.property::<gtk::Widget>("widget") {
+            if let Ok(Some(paintable)) = widget.property::<Option<gtk::gdk::Paintable>>("paintable")
+            {
+                return (sink, Some(paintable));
+            }
+        }
+        return (sink, None);
+    }
+
+    // Windows native sinks (render in their own window, no paintable to embed)
+    #[cfg(target_os = "windows")]
+    {
+        for name in ["d3d11videosink", "direct3dsink"].iter() {
+            if let Ok(sink) = gst::ElementFactory::make(name).build() {
+                return (sink, None);
+            }
+        }
+    }
+
+    // Fallback that picks a platform default.
+    let sink = gst::ElementFactory::make("autovideosink")
+        .build()
+        .expect("Failed to create a video sink");
+    (sink, None)
 }

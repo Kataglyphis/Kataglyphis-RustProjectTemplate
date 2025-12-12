@@ -4,7 +4,10 @@ use clap::{Parser, Subcommand};
 use log::info;
 
 mod utils;
+#[cfg(all(feature = "gui_unix", not(windows)))]
 mod gui;
+#[cfg(all(feature = "gui_windows", target_os = "windows"))]
+mod gui_windows;
 
 #[derive(Parser)]
 #[command(name = "file_tool")]
@@ -46,8 +49,26 @@ async fn main() -> Result<()> {
             );
         }
         Commands::Gui => {
-            // Run the GTK/GStreamer demo GUI (non-async)
-            gui::run();
+            #[cfg(all(feature = "gui_unix", not(windows)))]
+            {
+                // GTK/GStreamer demo GUI (non-async)
+                gui::run();
+            }
+
+            #[cfg(all(feature = "gui_windows", target_os = "windows"))]
+            {
+                gui_windows::run();
+            }
+
+            #[cfg(not(any(
+                all(feature = "gui_unix", not(windows)),
+                all(feature = "gui_windows", target_os = "windows")
+            )))]
+            {
+                eprintln!(
+                    "GUI feature is disabled. Enable --features gui_unix (Linux/macOS) or gui_windows (Windows)."
+                );
+            }
         }
     }
     Ok(())
