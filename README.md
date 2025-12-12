@@ -105,7 +105,7 @@ cargo upgrade --dry-run --verbose
    ```bash
    git clone --recurse-submodules git@github.com:Kataglyphis/Kataglyphis-RustProjectTemplate.git
    ```
-
+ 
 ## Tests
 
 <!-- ROADMAP -->
