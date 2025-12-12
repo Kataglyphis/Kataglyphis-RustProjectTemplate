@@ -14,15 +14,27 @@ jobs:
     uses: ./.github/workflows/rust_build.yml
     with:
       runner: ubuntu-24.04-arm
+      platform: linux/arm64
+      arch: arm64
+    secrets:
+      GHCR_PAT: ${{ secrets.GHCR_PAT }}
 
   test:
     uses: ./.github/workflows/rust_test.yml
     with:
       runner: ubuntu-24.04-arm
+      platform: linux/arm64
+      arch: arm64
+    secrets:
+      GHCR_PAT: ${{ secrets.GHCR_PAT }}
 
   package:
     uses: ./.github/workflows/rust_package.yml
     with:
       runner: ubuntu-24.04-arm
       binary_name: kataglyphis-rustprojecttemplate
+      platform: linux/arm64
+      arch: arm64
+    secrets:
+      GHCR_PAT: ${{ secrets.GHCR_PAT }}
 
