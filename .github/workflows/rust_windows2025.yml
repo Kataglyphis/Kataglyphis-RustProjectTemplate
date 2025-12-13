@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 env:
-  CARGO_TERM_COLOR: always  
+  CARGO_TERM_COLOR: always
 
 jobs:
   windows-pipeline:
@@ -17,7 +17,7 @@ jobs:
     env:
       BINARY: kataglyphis-rustprojecttemplate
       VERSION: ${{ github.ref_name }}
-    
+
     steps:
       - name: Enable Git long paths
         run: git config --global core.longpaths true
@@ -46,37 +46,14 @@ jobs:
       - name: Run build inside container
         shell: pwsh
         run: |
-          # 1. Define the script exactly as you want it to run inside the container
-          $script = @'
-          $ErrorActionPreference = "Stop"
-          # Ensure Cargo/Rustup are in PATH (Scoop installation paths)
-          $env:PATH = "C:\Users\ContainerAdministrator\scoop\shims;$env:PATH"
-
-          Write-Host "Verifying Rust installation..."
-          rustup --version
-          cargo --version
-          Write-Host "Starting Build Process..."
-          rustup component add rustfmt
-          cargo fmt --all -- --check
-          rustup component add clippy
-          cargo clippy --all-targets --all-features -- -D warnings
-          cargo test --all --verbose
-          cargo bench
-          cargo build --release
-          '@
-
-          # 2. Base64 encode the script to avoid quoting/newline issues in Docker arguments
-          $bytes = [System.Text.Encoding]::Unicode.GetBytes($script)
-          $encodedCommand = [Convert]::ToBase64String($bytes)
-
-          # 3. Run Docker with EncodedCommand
+          # 1. Run Docker with EncodedCommand
           docker run --rm `
             --env BINARY="${{ env.BINARY }}" `
             --env VERSION="${{ env.VERSION }}" `
             --mount "type=bind,source=${{ github.workspace }},target=C:\workspace" `
             -w "C:\workspace" `
             ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64 `
-            powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand $encodedCommand
+            powershell -NoProfile -ExecutionPolicy Bypass -File "C:\workspace\scripts\windows\build-windows.ps1"
 
       - name: 📦 Prepare archive variables
         id: vars
