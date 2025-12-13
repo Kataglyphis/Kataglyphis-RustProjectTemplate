@@ -49,6 +49,12 @@ jobs:
           # 1. Define the script exactly as you want it to run inside the container
           $script = @'
           $ErrorActionPreference = "Stop"
+          # Ensure Cargo/Rustup are in PATH (Scoop installation paths)
+          $env:PATH = "C:\Users\ContainerAdministrator\scoop\shims;$env:PATH"
+
+          Write-Host "Verifying Rust installation..."
+          rustup --version
+          cargo --version
           Write-Host "Starting Build Process..."
           rustup component add rustfmt
           cargo fmt --all -- --check
