@@ -1,7 +1,7 @@
-use gtk::prelude::*;
-use gtk::{glib, Application, ApplicationWindow, Box, Button, Label, Picture};
 use gstreamer as gst;
 use gstreamer::prelude::*;
+use gtk::prelude::*;
+use gtk::{Application, ApplicationWindow, Box, Button, Label, Picture, glib};
 use std::sync::{Arc, Mutex};
 
 const APP_ID: &str = "com.example.GtkGstreamerDemo";

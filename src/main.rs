@@ -3,11 +3,11 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use log::info;
 
-mod utils;
 #[cfg(all(feature = "gui_unix", not(windows)))]
 mod gui;
 #[cfg(all(feature = "gui_windows", target_os = "windows"))]
 mod gui_windows;
+mod utils;
 
 #[derive(Parser)]
 #[command(name = "file_tool")]
@@ -27,7 +27,12 @@ enum Commands {
         #[arg(short, long)]
         path: String,
     },
-    Gui,
+    Gui {
+        /// WGPU backend to use on Windows (dx12 | vulkan | primary).
+        /// Ignored on non-Windows GUIs.
+        #[arg(long, default_value = "dx12")]
+        backend: String,
+    },
 }
 
 #[tokio::main]
@@ -48,16 +53,17 @@ async fn main() -> Result<()> {
                 stats.lines, stats.words, stats.bytes
             );
         }
-        Commands::Gui => {
+        Commands::Gui { backend } => {
             #[cfg(all(feature = "gui_unix", not(windows)))]
             {
                 // GTK/GStreamer demo GUI (non-async)
+                let _ = backend;
                 gui::run();
             }
 
             #[cfg(all(feature = "gui_windows", target_os = "windows"))]
             {
-                gui_windows::run();
+                gui_windows::run_with_backend(&backend);
             }
 
             #[cfg(not(any(
@@ -68,6 +74,7 @@ async fn main() -> Result<()> {
                 eprintln!(
                     "GUI feature is disabled. Enable --features gui_unix (Linux/macOS) or gui_windows (Windows)."
                 );
+                let _ = backend;
             }
         }
     }

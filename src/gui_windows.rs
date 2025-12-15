@@ -1,20 +1,38 @@
-use std::sync::mpsc::{sync_channel, Receiver};
+use std::sync::mpsc::{Receiver, sync_channel};
 
 use gstreamer as gst;
 use gstreamer::prelude::*;
 use gstreamer_app as gst_app;
 use pollster::block_on;
-use std::rc::Rc;
 use wgpu::util::DeviceExt;
-use winit::event::{Event, WindowEvent};
-use winit::event_loop::EventLoop;
-use winit::window::{Window, WindowBuilder};
+use winit::application::ApplicationHandler;
+use winit::event::WindowEvent;
+use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::window::{Window, WindowAttributes, WindowId};
 
 use egui::{Context as EguiContext, ViewportId};
 use egui_wgpu::{Renderer as EguiRenderer, ScreenDescriptor};
 use egui_winit::State as EguiWinitState;
 
-pub fn run() {
+fn parse_backends(backend: &str) -> wgpu::Backends {
+    match backend.trim().to_ascii_lowercase().as_str() {
+        "vulkan" | "vk" => wgpu::Backends::VULKAN,
+        "primary" | "auto" => wgpu::Backends::PRIMARY,
+        "dx12" | "d3d12" => wgpu::Backends::DX12,
+        other => {
+            eprintln!(
+                "Unknown --backend '{other}', falling back to dx12. Valid: dx12 | vulkan | primary"
+            );
+            wgpu::Backends::DX12
+        }
+    }
+}
+
+pub fn run_with_backend(backend: &str) {
+    run_inner(parse_backends(backend), backend);
+}
+
+fn run_inner(backends: wgpu::Backends, backend_label: &str) {
     gst::init().expect("Failed to initialize GStreamer");
 
     let (frame_tx, frame_rx) = sync_channel::<Frame>(2);
@@ -24,7 +42,7 @@ pub fn run() {
         .set_state(gst::State::Playing)
         .expect("Failed to start pipeline");
 
-    start_window(frame_rx);
+    start_window(frame_rx, backends, backend_label);
 
     pipeline
         .set_state(gst::State::Null)
@@ -69,8 +87,7 @@ fn build_pipeline(frame_tx: std::sync::mpsc::SyncSender<Frame>) -> gst::Pipeline
     pipeline
         .add_many([&src, &convert, &capsfilter, &sink])
         .expect("Failed to add elements");
-    gst::Element::link_many([&src, &convert, &capsfilter, &sink])
-        .expect("Failed to link elements");
+    gst::Element::link_many([&src, &convert, &capsfilter, &sink]).expect("Failed to link elements");
 
     let appsink = sink
         .clone()
@@ -82,13 +99,20 @@ fn build_pipeline(frame_tx: std::sync::mpsc::SyncSender<Frame>) -> gst::Pipeline
             .new_sample(move |sink| {
                 if let Some(sample) = sink.pull_sample().ok() {
                     if let Some(buffer) = sample.buffer() {
-                        let caps = sample.caps().and_then(|c| c.structure(0)).map(|s| s.to_owned());
+                        let caps = sample
+                            .caps()
+                            .and_then(|c| c.structure(0))
+                            .map(|s| s.to_owned());
                         if let Some(structure) = caps {
                             let width = structure.get::<i32>("width").unwrap_or(640) as u32;
                             let height = structure.get::<i32>("height").unwrap_or(480) as u32;
                             if let Ok(map) = buffer.map_readable() {
                                 let data = map.as_slice().to_vec();
-                                let _ = frame_tx.try_send(Frame { data, width, height });
+                                let _ = frame_tx.try_send(Frame {
+                                    data,
+                                    width,
+                                    height,
+                                });
                             }
                         }
                     }
@@ -101,27 +125,64 @@ fn build_pipeline(frame_tx: std::sync::mpsc::SyncSender<Frame>) -> gst::Pipeline
     pipeline
 }
 
-fn start_window(frame_rx: Receiver<Frame>) {
-    let event_loop = EventLoop::new().expect("Failed to create event loop");
-    let window = WindowBuilder::new()
-        .with_title("GStreamer + WGPU (Windows native)")
-        .with_inner_size(winit::dpi::LogicalSize::new(800.0, 600.0))
-        .build(&event_loop)
-        .expect("Failed to create window");
+fn start_window(frame_rx: Receiver<Frame>, backends: wgpu::Backends, backend_label: &str) {
+    struct GuiApp {
+        frame_rx: Receiver<Frame>,
+        backends: wgpu::Backends,
+        backend_label: String,
+        window: Option<&'static Window>,
+        state: Option<WgpuState<'static>>,
+        latest_frame: Option<Frame>,
+    }
 
-    let window = Rc::new(window);
-    let mut state = block_on(WgpuState::new(window.as_ref(), &event_loop));
-    let mut latest_frame: Option<Frame> = None;
+    impl ApplicationHandler for GuiApp {
+        fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+            if self.window.is_some() {
+                return;
+            }
 
-    let window_for_loop = Rc::clone(&window);
+            let window_attributes = WindowAttributes::default()
+                .with_title(format!(
+                    "GStreamer + WGPU (Windows native) [{}]",
+                    self.backend_label
+                ))
+                .with_inner_size(winit::dpi::LogicalSize::new(800.0, 600.0));
 
-    let _ = event_loop.run(move |event, elwt| {
-        let window = window_for_loop.as_ref();
-        match event {
-            Event::WindowEvent { event, window_id } if window_id == window.id() => {
-                state.handle_window_event(window, &event);
-                match event {
-                WindowEvent::CloseRequested => elwt.exit(),
+            let window = event_loop
+                .create_window(window_attributes)
+                .expect("Failed to create window");
+
+            // wgpu::Surface borrows the Window by lifetime; `run_app` stores the handler for the
+            // duration of the loop, so keep a stable Window reference for the app lifetime.
+            let window: &'static Window = Box::leak(Box::new(window));
+            let state = block_on(WgpuState::new(window, event_loop, self.backends));
+
+            self.window = Some(window);
+            self.state = Some(state);
+
+            window.request_redraw();
+        }
+
+        fn window_event(
+            &mut self,
+            event_loop: &ActiveEventLoop,
+            window_id: WindowId,
+            event: WindowEvent,
+        ) {
+            let Some(window) = self.window else {
+                return;
+            };
+            if window_id != window.id() {
+                return;
+            }
+            let Some(state) = self.state.as_mut() else {
+                return;
+            };
+
+            state.handle_window_event(window, &event);
+
+            match event {
+                WindowEvent::CloseRequested => event_loop.exit(),
                 WindowEvent::Resized(size) => {
                     state.resize(size);
                     window.request_redraw();
@@ -132,24 +193,41 @@ fn start_window(frame_rx: Receiver<Frame>) {
                     window.request_redraw();
                 }
                 WindowEvent::RedrawRequested => {
-                    if let Ok(frame) = frame_rx.try_recv() {
-                        latest_frame = Some(frame);
+                    if let Ok(frame) = self.frame_rx.try_recv() {
+                        self.latest_frame = Some(frame);
                     }
-                    if let Some(frame) = latest_frame.as_ref() {
+                    if let Some(frame) = self.latest_frame.as_ref() {
                         state.upload_frame(frame);
                     }
                     if let Err(err) = state.render(window) {
                         eprintln!("Render error: {err:?}");
-                        elwt.exit();
+                        event_loop.exit();
                     }
                 }
                 _ => {}
             }
-            }
-            Event::AboutToWait => window.request_redraw(),
-            _ => {}
         }
-    });
+
+        fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+            if let Some(window) = self.window {
+                window.request_redraw();
+            }
+        }
+    }
+
+    let event_loop = EventLoop::new().expect("Failed to create event loop");
+    let mut app = GuiApp {
+        frame_rx,
+        backends,
+        backend_label: backend_label.to_string(),
+        window: None,
+        state: None,
+        latest_frame: None,
+    };
+
+    event_loop
+        .run_app(&mut app)
+        .expect("Failed to run event loop");
 }
 
 struct WgpuState<'w> {
@@ -171,12 +249,17 @@ struct WgpuState<'w> {
 }
 
 impl<'w> WgpuState<'w> {
-    async fn new(window: &'w Window, event_loop: &EventLoop<()>) -> Self {
+    async fn new(
+        window: &'w Window,
+        display_target: &dyn wgpu::rwh::HasDisplayHandle,
+        backends: wgpu::Backends,
+    ) -> Self {
         let size = window.inner_size();
 
-        // Prefer DX12 backend on Windows to avoid Vulkan validation noise.
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::DX12,
+        // Backend selection is controlled via CLI (--backend) to make it easy to
+        // switch between DX12 and Vulkan without changing code.
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            backends,
             ..Default::default()
         });
         let surface = instance
@@ -197,8 +280,10 @@ impl<'w> WgpuState<'w> {
                     label: Some("device"),
                     required_features: wgpu::Features::empty(),
                     required_limits: wgpu::Limits::default(),
+                    memory_hints: wgpu::MemoryHints::default(),
+                    trace: wgpu::Trace::default(),
+                    experimental_features: wgpu::ExperimentalFeatures::default(),
                 },
-                None,
             )
             .await
             .expect("Failed to create device");
@@ -227,10 +312,22 @@ impl<'w> WgpuState<'w> {
 
         let vertex_data = [
             // pos       // uv
-            Vertex { position: [-1.0, -1.0], tex_coords: [0.0, 1.0] },
-            Vertex { position: [1.0, -1.0], tex_coords: [1.0, 1.0] },
-            Vertex { position: [1.0, 1.0], tex_coords: [1.0, 0.0] },
-            Vertex { position: [-1.0, 1.0], tex_coords: [0.0, 0.0] },
+            Vertex {
+                position: [-1.0, -1.0],
+                tex_coords: [0.0, 1.0],
+            },
+            Vertex {
+                position: [1.0, -1.0],
+                tex_coords: [1.0, 1.0],
+            },
+            Vertex {
+                position: [1.0, 1.0],
+                tex_coords: [1.0, 0.0],
+            },
+            Vertex {
+                position: [-1.0, 1.0],
+                tex_coords: [0.0, 0.0],
+            },
         ];
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("vertex_buffer"),
@@ -293,33 +390,37 @@ impl<'w> WgpuState<'w> {
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: "vs_main",
+                entry_point: Some("vs_main"),
                 buffers: &[Vertex::desc()],
+                compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point: "fs_main",
+                entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: config.format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
+                compilation_options: Default::default(),
             }),
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
             multiview: None,
+            cache: None,
         });
 
         let egui_ctx = EguiContext::default();
         let egui_state = EguiWinitState::new(
             egui_ctx.clone(),
             ViewportId::ROOT,
-            event_loop,
+            display_target,
             Some(window.scale_factor() as f32),
             None,
+            None,
         );
-        let egui_renderer = EguiRenderer::new(&device, surface_format, None, 1);
+        let egui_renderer = EguiRenderer::new(&device, surface_format, Default::default());
         let egui_screen = ScreenDescriptor {
             size_in_pixels: [config.width, config.height],
             pixels_per_point: window.scale_factor() as f32,
@@ -401,7 +502,7 @@ impl<'w> WgpuState<'w> {
         }
 
         if let Some((texture, _, _, _, _)) = &self.texture {
-            let layout = wgpu::ImageDataLayout {
+            let layout = wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(4 * frame.width),
                 rows_per_image: Some(frame.height),
@@ -412,7 +513,7 @@ impl<'w> WgpuState<'w> {
                 depth_or_array_layers: 1,
             };
             self.queue.write_texture(
-                wgpu::ImageCopyTexture {
+                wgpu::TexelCopyTextureInfo {
                     texture,
                     mip_level: 0,
                     origin: wgpu::Origin3d::ZERO,
@@ -444,7 +545,10 @@ impl<'w> WgpuState<'w> {
                     .resizable(false)
                     .show(ctx, |ui| {
                         ui.label("Dummy GUI overlay");
-                        ui.label(format!("Frame: {}x{}", frame_dimensions.0, frame_dimensions.1));
+                        ui.label(format!(
+                            "Frame: {}x{}",
+                            frame_dimensions.0, frame_dimensions.1
+                        ));
                         if ui.button("Toggle overlay visibility").clicked() {
                             overlay_enabled = false;
                         }
@@ -473,23 +577,30 @@ impl<'w> WgpuState<'w> {
         }
 
         let frame = self.surface.get_current_texture()?;
-        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
 
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("render_encoder"),
-        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("render_encoder"),
+            });
 
         {
+            let color_attachments = [Some(wgpu::RenderPassColorAttachment {
+                view: &view,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })];
+
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("render_pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
+                color_attachments: &color_attachments,
                 depth_stencil_attachment: None,
                 occlusion_query_set: None,
                 timestamp_writes: None,
@@ -515,20 +626,27 @@ impl<'w> WgpuState<'w> {
         );
 
         {
-            let mut egui_rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let color_attachments = [Some(wgpu::RenderPassColorAttachment {
+                view: &view,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })];
+
+            let egui_rpass = encoder
+                .begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("egui_render_pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
+                color_attachments: &color_attachments,
                 depth_stencil_attachment: None,
                 occlusion_query_set: None,
                 timestamp_writes: None,
-            });
+            })
+                .forget_lifetime();
+
+            let mut egui_rpass = egui_rpass;
 
             self.egui_renderer
                 .render(&mut egui_rpass, &clipped_primitives, &self.egui_screen);

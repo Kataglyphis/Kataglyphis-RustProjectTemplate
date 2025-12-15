@@ -86,6 +86,7 @@ cargo update
 Update versions in Cargo.toml
 cargo install cargo-edit
 cargo upgrade --dry-run --verbose
+cargo upgrade --incompatible
 
 ### Useful tools
 
@@ -114,7 +115,13 @@ cargo run -- read --path ../README.md
 
 ### Windows
 ```bash
-cargo run --features gui_windows -- gui
+cargo run --features gui_windows -- gui --backend dx12
+
+# Vulkan backend
+cargo run --features gui_windows -- gui --backend vulkan
+
+# Auto-select (wgpu PRIMARY)
+cargo run --features gui_windows -- gui --backend primary
 ```
 
 ### Linux
