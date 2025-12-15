@@ -126,6 +126,10 @@ cargo run --features gui_windows -- gui --backend primary
 
 ### Linux
 ```bash
+# WGPU (recommended)
+cargo run --features gui_linux -- gui --backend vulkan
+
+# GTK demo
 cargo run --features gui_unix -- gui
 ```
 

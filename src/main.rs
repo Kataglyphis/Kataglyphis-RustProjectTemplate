@@ -5,7 +5,7 @@ use log::info;
 
 #[cfg(all(feature = "gui_unix", not(windows)))]
 mod gui;
-#[cfg(all(feature = "gui_windows", target_os = "windows"))]
+#[cfg(feature = "gui_windows")]
 mod gui_windows;
 mod utils;
 
@@ -28,8 +28,8 @@ enum Commands {
         path: String,
     },
     Gui {
-        /// WGPU backend to use on Windows (dx12 | vulkan | primary).
-        /// Ignored on non-Windows GUIs.
+        /// WGPU backend to use (dx12 | vulkan | primary).
+        /// Note: dx12 is only available on Windows.
         #[arg(long, default_value = "dx12")]
         backend: String,
     },
@@ -54,25 +54,26 @@ async fn main() -> Result<()> {
             );
         }
         Commands::Gui { backend } => {
-            #[cfg(all(feature = "gui_unix", not(windows)))]
+            #[cfg(feature = "gui_windows")]
+            {
+                // WGPU/Winit GUI (cross-platform)
+                gui_windows::run_with_backend(&backend);
+            }
+
+            #[cfg(all(feature = "gui_unix", not(windows), not(feature = "gui_windows")))]
             {
                 // GTK/GStreamer demo GUI (non-async)
                 let _ = backend;
                 gui::run();
             }
 
-            #[cfg(all(feature = "gui_windows", target_os = "windows"))]
-            {
-                gui_windows::run_with_backend(&backend);
-            }
-
             #[cfg(not(any(
-                all(feature = "gui_unix", not(windows)),
-                all(feature = "gui_windows", target_os = "windows")
+                feature = "gui_windows",
+                all(feature = "gui_unix", not(windows))
             )))]
             {
                 eprintln!(
-                    "GUI feature is disabled. Enable --features gui_unix (Linux/macOS) or gui_windows (Windows)."
+                    "GUI feature is disabled. Enable --features gui_windows (WGPU) or gui_unix (GTK on non-Windows)."
                 );
                 let _ = backend;
             }

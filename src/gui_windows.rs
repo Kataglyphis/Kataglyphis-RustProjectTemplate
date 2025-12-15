@@ -18,12 +18,34 @@ fn parse_backends(backend: &str) -> wgpu::Backends {
     match backend.trim().to_ascii_lowercase().as_str() {
         "vulkan" | "vk" => wgpu::Backends::VULKAN,
         "primary" | "auto" => wgpu::Backends::PRIMARY,
-        "dx12" | "d3d12" => wgpu::Backends::DX12,
+        "dx12" | "d3d12" => {
+            #[cfg(target_os = "windows")]
+            {
+                wgpu::Backends::DX12
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                eprintln!(
+                    "--backend dx12 is only available on Windows; falling back to primary. Valid: vulkan | primary"
+                );
+                wgpu::Backends::PRIMARY
+            }
+        }
         other => {
-            eprintln!(
-                "Unknown --backend '{other}', falling back to dx12. Valid: dx12 | vulkan | primary"
-            );
-            wgpu::Backends::DX12
+            #[cfg(target_os = "windows")]
+            {
+                eprintln!(
+                    "Unknown --backend '{other}', falling back to dx12. Valid: dx12 | vulkan | primary"
+                );
+                wgpu::Backends::DX12
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                eprintln!(
+                    "Unknown --backend '{other}', falling back to primary. Valid: vulkan | primary"
+                );
+                wgpu::Backends::PRIMARY
+            }
         }
     }
 }
@@ -143,7 +165,7 @@ fn start_window(frame_rx: Receiver<Frame>, backends: wgpu::Backends, backend_lab
 
             let window_attributes = WindowAttributes::default()
                 .with_title(format!(
-                    "GStreamer + WGPU (Windows native) [{}]",
+                    "GStreamer + WGPU [{}]",
                     self.backend_label
                 ))
                 .with_inner_size(winit::dpi::LogicalSize::new(800.0, 600.0));
