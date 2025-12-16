@@ -1,7 +1,11 @@
 [package]
-name = "kataglyphis-rustprojecttemplate"
+name = "kataglyphis_rustprojecttemplate"
 version = "0.1.0"
 edition = "2024"
+
+[lib]
+name = "kataglyphis_rustprojecttemplate"
+crate-type = ["cdylib", "staticlib"]
 
 [features]
 # CLI-only by default to avoid GTK/GStreamer on Windows.
@@ -22,7 +26,8 @@ gui_windows = [
 ]
 
 [dependencies]
-tokio = { version = "1", features = ["fs", "macros", "rt-multi-thread"] }
+flutter_rust_bridge = "=2.11.1"
+tokio = { version = "1", features = ["fs", "macros", "rt-multi-thread", "time"] }
 anyhow = "1"
 log = "0.4"
 env_logger = "0.11.8"
@@ -39,6 +44,11 @@ bytemuck = { version = "1.24", features = ["derive"], optional = true }
 egui = { version = "0.33", optional = true }
 egui-winit = { version = "0.33", optional = true }
 egui-wgpu = { version = "0.33", optional = true }
+
+[lints.rust]
+# `flutter_rust_bridge::frb` uses `cfg(frb_expand)` internally; declare it so Rust's
+# `unexpected_cfgs` lint doesn't warn.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
 
 [dev-dependencies]
 assert_cmd = "2"
