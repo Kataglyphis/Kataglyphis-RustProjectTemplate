@@ -35,3 +35,11 @@ pub async fn async_heavy_work(input: i32) -> i32 {
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     input * 2
 }
+
+// ✅ Mit echter Async (WASM-kompatibel)
+#[cfg(target_family = "wasm")]
+#[flutter_rust_bridge::frb()]
+pub async fn async_heavy_work(input: i32) -> i32 {
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    input * 2
+}
