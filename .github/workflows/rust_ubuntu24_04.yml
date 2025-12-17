@@ -35,6 +35,7 @@ jobs:
       PLATFORM: ${{ matrix.platform }}
       ARCH: ${{ matrix.arch }}
       BINARY: kataglyphis-rustprojecttemplate
+      BINARY_FILE: kataglyphis_rustprojecttemplate
       VERSION: ${{ github.ref_name }}
     steps:
       - name: Free Disk Space on Host
@@ -187,7 +188,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          cp "target/release/$BINARY" dist/
+          cp "target/release/$BINARY_FILE" "dist/$BINARY"
           tar czvf "dist/${{ steps.vars.outputs.archive_name }}" -C dist "$BINARY"
 
       - name: 📤 Upload build artifact
