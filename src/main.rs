@@ -7,6 +7,9 @@ use log::info;
 mod gui;
 #[cfg(feature = "gui_windows")]
 mod gui_windows;
+
+#[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+mod person_detection;
 mod utils;
 
 #[derive(Parser)]

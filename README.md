@@ -81,12 +81,14 @@ This enumeration also includes submodules.
 If you just want the newest versions allowed by your current constraints (updates Cargo.lock only):
 
 Update all:
+```bash
 cargo update
 
 Update versions in Cargo.toml
 cargo install cargo-edit
 cargo upgrade --dry-run --verbose
 cargo upgrade --incompatible
+```
 
 ### Useful tools
 
@@ -142,11 +144,13 @@ cargo doc --open
 How to update all installed packages:
 
 1. Install updater:
-
-   cargo install cargo-update
+  ```bash
+  cargo install cargo-update
+  ```
 2. Now update all packages:
-
-   cargo install-update -a
+  ```bash
+  cargo install-update -a
+  ```
 
 ## Cameras
 

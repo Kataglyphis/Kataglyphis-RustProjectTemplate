@@ -1,4 +1,6 @@
-use std::sync::mpsc::{Receiver, sync_channel};
+use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
+
+use std::time::{Duration, Instant};
 
 use gstreamer as gst;
 use gstreamer::prelude::*;
@@ -7,12 +9,29 @@ use pollster::block_on;
 use wgpu::util::DeviceExt;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
-use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};
 
 use egui::{Context as EguiContext, ViewportId};
 use egui_wgpu::{Renderer as EguiRenderer, ScreenDescriptor};
 use egui_winit::State as EguiWinitState;
+
+#[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+use crate::person_detection::{default_model_path, Detection, PersonDetector};
+
+#[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+struct InferRequest {
+    rgba: Vec<u8>,
+    width: u32,
+    height: u32,
+    score_threshold: f32,
+}
+
+#[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+struct InferResult {
+    detections: Vec<Detection>,
+    error: Option<String>,
+}
 
 fn parse_backends(backend: &str) -> wgpu::Backends {
     match backend.trim().to_ascii_lowercase().as_str() {
@@ -155,6 +174,10 @@ fn start_window(frame_rx: Receiver<Frame>, backends: wgpu::Backends, backend_lab
         window: Option<&'static Window>,
         state: Option<WgpuState<'static>>,
         latest_frame: Option<Frame>,
+        latest_frame_id: u64,
+        uploaded_frame_id: u64,
+        next_redraw_deadline: Instant,
+        redraw_interval: Duration,
     }
 
     impl ApplicationHandler for GuiApp {
@@ -181,6 +204,8 @@ fn start_window(frame_rx: Receiver<Frame>, backends: wgpu::Backends, backend_lab
 
             self.window = Some(window);
             self.state = Some(state);
+
+            self.next_redraw_deadline = Instant::now();
 
             window.request_redraw();
         }
@@ -215,11 +240,17 @@ fn start_window(frame_rx: Receiver<Frame>, backends: wgpu::Backends, backend_lab
                     window.request_redraw();
                 }
                 WindowEvent::RedrawRequested => {
+                    // Never block the UI thread; if there is a new frame, upload it once.
                     if let Ok(frame) = self.frame_rx.try_recv() {
                         self.latest_frame = Some(frame);
+                        self.latest_frame_id = self.latest_frame_id.wrapping_add(1);
                     }
+
                     if let Some(frame) = self.latest_frame.as_ref() {
-                        state.upload_frame(frame);
+                        if self.uploaded_frame_id != self.latest_frame_id {
+                            state.upload_frame(frame);
+                            self.uploaded_frame_id = self.latest_frame_id;
+                        }
                     }
                     if let Err(err) = state.render(window) {
                         eprintln!("Render error: {err:?}");
@@ -230,10 +261,30 @@ fn start_window(frame_rx: Receiver<Frame>, backends: wgpu::Backends, backend_lab
             }
         }
 
-        fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-            if let Some(window) = self.window {
+        fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+            // Keep the UI responsive even if the video source is low-FPS.
+            // We upload new video frames only when they arrive, but we redraw at a steady cadence
+            // so egui interactions feel smooth.
+            let Some(window) = self.window else {
+                return;
+            };
+
+            let mut got_frame = false;
+            while let Ok(frame) = self.frame_rx.try_recv() {
+                self.latest_frame = Some(frame);
+                self.latest_frame_id = self.latest_frame_id.wrapping_add(1);
+                got_frame = true;
+            }
+
+            let now = Instant::now();
+            if now >= self.next_redraw_deadline {
+                self.next_redraw_deadline = now + self.redraw_interval;
+                window.request_redraw();
+            } else if got_frame {
                 window.request_redraw();
             }
+
+            event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_redraw_deadline));
         }
     }
 
@@ -245,6 +296,10 @@ fn start_window(frame_rx: Receiver<Frame>, backends: wgpu::Backends, backend_lab
         window: None,
         state: None,
         latest_frame: None,
+        latest_frame_id: 0,
+        uploaded_frame_id: 0,
+        next_redraw_deadline: Instant::now(),
+        redraw_interval: Duration::from_millis(16),
     };
 
     event_loop
@@ -268,6 +323,26 @@ struct WgpuState<'w> {
     egui_renderer: EguiRenderer,
     egui_screen: ScreenDescriptor,
     overlay_enabled: bool,
+
+    #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+    detector_error: Option<String>,
+    #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+    model_path: Option<String>,
+    #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+    score_threshold: f32,
+    #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+    infer_every: Duration,
+    #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+    last_infer: Instant,
+    #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+    last_detections: Vec<Detection>,
+
+    #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+    infer_tx: Option<SyncSender<InferRequest>>,
+    #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+    infer_rx: Option<Receiver<InferResult>>,
+    #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+    infer_in_flight: bool,
 }
 
 impl<'w> WgpuState<'w> {
@@ -448,6 +523,61 @@ impl<'w> WgpuState<'w> {
             pixels_per_point: window.scale_factor() as f32,
         };
 
+        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+        let (infer_tx, infer_rx, detector_error, model_path) = {
+            let env_override = std::env::var("KATAGLYPHIS_ONNX_MODEL").ok();
+            let path = env_override
+                .clone()
+                .unwrap_or_else(|| default_model_path().to_string_lossy().to_string());
+
+            let (req_tx, req_rx) = sync_channel::<InferRequest>(1);
+            let (res_tx, res_rx) = sync_channel::<InferResult>(1);
+
+            let detector = match PersonDetector::new(&path) {
+                Ok(detector) => Some(detector),
+                Err(e) => {
+                    let _ = res_tx.try_send(InferResult {
+                        detections: Vec::new(),
+                        error: Some(format!("Failed to load model '{path}': {e:#}")),
+                    });
+                    None
+                }
+            };
+
+            std::thread::spawn(move || {
+                let Some(detector) = detector else {
+                    return;
+                };
+
+                while let Ok(req) = req_rx.recv() {
+                    let result = match detector.infer_persons_rgba(
+                        &req.rgba,
+                        req.width,
+                        req.height,
+                        req.score_threshold,
+                    ) {
+                        Ok(dets) => InferResult {
+                            detections: dets,
+                            error: None,
+                        },
+                        Err(e) => InferResult {
+                            detections: Vec::new(),
+                            error: Some(format!("Inference failed: {e:#}")),
+                        },
+                    };
+
+                    let _ = res_tx.try_send(result);
+                }
+            });
+
+            (
+                Some(req_tx),
+                Some(res_rx),
+                None,
+                Some(path),
+            )
+        };
+
         Self {
             surface,
             device,
@@ -464,6 +594,26 @@ impl<'w> WgpuState<'w> {
             egui_renderer,
             egui_screen,
             overlay_enabled: true,
+
+            #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+            detector_error,
+            #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+            model_path,
+            #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+            score_threshold: 0.5,
+            #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+            infer_every: Duration::from_millis(250),
+            #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+            last_infer: Instant::now() - Duration::from_secs(1),
+            #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+            last_detections: Vec::new(),
+
+            #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+            infer_tx,
+            #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+            infer_rx,
+            #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+            infer_in_flight: false,
         }
     }
 
@@ -546,9 +696,51 @@ impl<'w> WgpuState<'w> {
                 size,
             );
         }
+
+        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+        self.maybe_infer(frame);
+    }
+
+    #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+    fn maybe_infer(&mut self, frame: &Frame) {
+        let Some(tx) = self.infer_tx.as_ref() else {
+            return;
+        };
+
+        if self.last_infer.elapsed() < self.infer_every {
+            return;
+        }
+
+        if self.infer_in_flight {
+            return;
+        }
+
+        // Clone only when we actually schedule inference (decimated by `infer_every`).
+        // This keeps the UI thread responsive even for heavy models.
+        if tx
+            .try_send(InferRequest {
+                rgba: frame.data.clone(),
+                width: frame.width,
+                height: frame.height,
+                score_threshold: self.score_threshold,
+            })
+            .is_ok()
+        {
+            self.last_infer = Instant::now();
+            self.infer_in_flight = true;
+        }
     }
 
     fn render(&mut self, window: &Window) -> Result<(), wgpu::SurfaceError> {
+        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+        if let Some(rx) = self.infer_rx.as_ref() {
+            while let Ok(res) = rx.try_recv() {
+                self.infer_in_flight = false;
+                self.last_detections = res.detections;
+                self.detector_error = res.error;
+            }
+        }
+
         self.egui_screen.pixels_per_point = window.scale_factor() as f32;
         self.egui_screen.size_in_pixels = [self.config.width, self.config.height];
 
@@ -560,21 +752,78 @@ impl<'w> WgpuState<'w> {
             .map(|(_, _, _, w, h)| (*w, *h))
             .unwrap_or((0, 0));
 
+        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+        let detections = self.last_detections.clone();
+        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+        let detector_error = self.detector_error.clone();
+        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+        let model_path = self.model_path.clone();
+        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+        let score_threshold = self.score_threshold;
+
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
             if overlay_enabled {
                 egui::Window::new("Overlay")
                     .default_pos(egui::pos2(12.0, 12.0))
                     .resizable(false)
                     .show(ctx, |ui| {
-                        ui.label("Dummy GUI overlay");
+                        ui.label("ONNX overlay");
                         ui.label(format!(
                             "Frame: {}x{}",
                             frame_dimensions.0, frame_dimensions.1
                         ));
+
+                        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+                        {
+                            if let Some(path) = model_path.as_deref() {
+                                ui.label(format!("Model: {path}"));
+                            } else {
+                                ui.label("Model: (not set)");
+                            }
+                            ui.label(format!("Score threshold: {score_threshold:.2}"));
+                            ui.label(format!("Persons: {}", detections.len()));
+                            if let Some(err) = detector_error.as_deref() {
+                                ui.separator();
+                                ui.label(err);
+                            }
+                        }
+
                         if ui.button("Toggle overlay visibility").clicked() {
                             overlay_enabled = false;
                         }
                     });
+
+                #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+                {
+                    // Draw bounding boxes in the foreground over the video.
+                    if frame_dimensions.0 > 0 && frame_dimensions.1 > 0 {
+                        let screen = ctx.content_rect();
+                        let sx = screen.width() / frame_dimensions.0 as f32;
+                        let sy = screen.height() / frame_dimensions.1 as f32;
+                        let painter = ctx.layer_painter(egui::LayerId::new(
+                            egui::Order::Foreground,
+                            egui::Id::new("detections"),
+                        ));
+
+                        for d in &detections {
+                            let x1 = screen.left() + d.x1 * sx;
+                            let y1 = screen.top() + d.y1 * sy;
+                            let x2 = screen.left() + d.x2 * sx;
+                            let y2 = screen.top() + d.y2 * sy;
+
+                            let rect = egui::Rect::from_min_max(
+                                egui::pos2(x1, y1),
+                                egui::pos2(x2, y2),
+                            );
+                            painter.rect_stroke(
+                                rect,
+                                0.0,
+                                egui::Stroke::new(2.0, egui::Color32::LIGHT_GREEN),
+                                egui::StrokeKind::Inside,
+                            );
+                        }
+                    }
+                }
             } else {
                 egui::Window::new("Overlay (hidden)")
                     .default_pos(egui::pos2(12.0, 12.0))
