@@ -19,10 +19,20 @@ pub fn detect_persons_rgba(
     height: u32,
     score_threshold: f32,
 ) -> Vec<PersonDetection> {
+    // Note: `person_detection` is feature-gated; keep this function compilable even when
+    // ONNX features are disabled (e.g. for WASM builds).
     let resolved_model_path = if model_path.trim().is_empty() {
-        crate::person_detection::default_model_path()
-            .to_string_lossy()
-            .to_string()
+        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+        {
+            crate::person_detection::default_model_path()
+                .to_string_lossy()
+                .to_string()
+        }
+
+        #[cfg(not(any(feature = "onnx_tract", feature = "onnxruntime")))]
+        {
+            String::new()
+        }
     } else {
         model_path
     };
