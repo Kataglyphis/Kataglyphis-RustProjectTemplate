@@ -2,6 +2,9 @@
 
 pub mod api;
 
+#[cfg(feature = "burn_demos")]
+pub mod burn_demos;
+
 #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
 mod person_detection;
 mod frb_generated;

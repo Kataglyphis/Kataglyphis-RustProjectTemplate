@@ -275,7 +275,7 @@ fn load_ort_session(model_path: &str) -> Result<(ort::session::Session, (u32, u3
 
     let mut builder = Session::builder().context("Failed to create ORT SessionBuilder")?;
 
-    #[cfg(feature = "onnxruntime_directml")]
+    #[cfg(all(feature = "onnxruntime_directml", windows))]
     {
         use ort::execution_providers::DirectMLExecutionProvider;
         builder = builder

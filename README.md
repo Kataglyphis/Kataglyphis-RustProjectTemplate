@@ -115,6 +115,29 @@ cargo upgrade --incompatible
 cargo run -- read --path ../README.md
 ```
 
+### Burn / PyTorch-Replacement Demos
+
+Diese Demos sind als separates Binary integriert und per Feature gated.
+
+```bash
+cargo run --features burn_demos --bin burn-demos -- --help
+```
+
+Beispiele:
+
+```bash
+cargo run --features burn_demos --bin burn-demos -- tensor-demo
+
+cargo run --features burn_demos --bin burn-demos -- linear-regression --epochs 50 --steps-per-epoch 50 --lr 0.02 --batch-size 256
+
+cargo run --features burn_demos --bin burn-demos -- xor --epochs 2000 --lr 0.05
+
+cargo run --features burn_demos --bin burn-demos -- two-moons --epochs 200 --steps-per-epoch 50 --lr 0.01 --batch-size 256
+
+# ONNX Runtime YOLOv10m Demo (Default model: models/yolov10m.onnx)
+cargo run --features burn_demos --bin burn-demos -- onnx-yolov10 --runs 1 --print-topk 3
+```
+
 ### Windows
 ```bash
 cargo run --features gui_windows -- gui --backend dx12
