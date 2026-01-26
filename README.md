@@ -115,6 +115,62 @@ cargo upgrade --incompatible
 cargo run -- read --path ../README.md
 ```
 
+### Windows: GStreamer + ONNX Overlay (WGPU)
+
+Build + Run (CPU via tract):
+
+```bash
+cargo run --bin kataglyphis_rustprojecttemplate --features gui_windows,onnx_tract -- gui --backend dx12
+```
+
+Build + Run (ONNX Runtime + DirectML):
+
+```bash
+cargo run --bin kataglyphis_rustprojecttemplate --features gui_windows,onnxruntime_directml -- gui --backend dx12
+```
+
+Build + Run (ONNX Runtime + CUDA, NVIDIA):
+
+```bash
+# PowerShell
+$env:KATAGLYPHIS_ORT_DEVICE="cuda"
+cargo run --bin kataglyphis_rustprojecttemplate --features gui_windows,onnxruntime_cuda -- gui --backend dx12
+
+# CMD
+set KATAGLYPHIS_ORT_DEVICE=cuda
+cargo run --bin kataglyphis_rustprojecttemplate --features gui_windows,onnxruntime_cuda -- gui --backend dx12
+```
+
+Optional environment variables:
+
+- `KATAGLYPHIS_ONNX_MODEL` – Pfad zum ONNX-Modell (Default: models/yolov10m.onnx)
+- `KATAGLYPHIS_ONNX_BACKEND` – `tract` oder `ort` (Default: automatisch)
+- `KATAGLYPHIS_ORT_DEVICE` – `cpu` | `auto` | `cuda` (Default: `cpu`)
+- `KATAGLYPHIS_PREPROCESS` – `letterbox` | `stretch` (Default: `stretch`)
+- `KATAGLYPHIS_SWAP_XY` – setze `1`, falls die Modell-Ausgabe X/Y vertauscht (Default: `0`)
+- `KATAGLYPHIS_SCORE_THRESHOLD` – Score-Schwelle für Erkennung (Default: `0.5`)
+- `KATAGLYPHIS_INFER_EVERY_MS` – Inferenz-Intervall in ms (Default: `100`, `0` = jedes Frame)
+
+CUDA Hinweise:
+- Benötigt NVIDIA-Treiber + CUDA/cuDNN Runtime auf dem System.
+- Wenn CUDA-Init fehlschlägt, kann `KATAGLYPHIS_ORT_DEVICE=auto` genutzt werden (fällt auf CPU zurück).
+
+Overlay:
+- Zeigt FPS, Inferenz-Latenz, CPU/RSS und eine CPU-Historie.
+- Inferenz kann im Overlay ein-/ausgeschaltet werden.
+
+### Resource usage logging (CPU/GPU/RAM)
+
+```bash
+cargo run --features gui_windows,onnxruntime_directml -- --resource-log --resource-log-interval-ms 1000 --resource-log-gpu=true gui
+```
+
+Optional: zusätzlich in Datei schreiben
+
+```bash
+cargo run --features gui_windows,onnxruntime_directml -- --resource-log --resource-log-file .\resource.log gui
+```
+
 ### Burn / PyTorch-Replacement Demos
 
 Diese Demos sind als separates Binary integriert und per Feature gated.

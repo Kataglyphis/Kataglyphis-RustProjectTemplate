@@ -30,8 +30,9 @@ gui_windows = [
 onnx_tract = ["dep:tract-onnx", "dep:image"]
 
 # Optional ONNX Runtime backend (Windows): enables GPU inference via DirectML when available.
-onnxruntime = ["dep:ort", "dep:image", "ort/std", "ort/ndarray", "ort/download-binaries"]
+onnxruntime = ["dep:ort", "dep:image", "ort/std", "ort/ndarray", "ort/download-binaries", "ort/tls-native"]
 onnxruntime_directml = ["onnxruntime", "ort/directml"]
+onnxruntime_cuda = ["onnxruntime", "ort/cuda"]
 
 # Prototyping playground: Burn demos + optional ONNX Runtime demo.
 # Kept behind a feature so the template stays lightweight by default.
@@ -49,7 +50,9 @@ flutter_rust_bridge = "=2.11.1"
 anyhow = "1"
 log = "0.4"
 env_logger = "0.11.8"
+chrono = "0.4"
 clap = { version = "4", features = ["derive"] }
+sysinfo = "0.33"
 gtk = { version = "0.10", package = "gtk4", features = ["v4_10"], optional = true }
 gstreamer = { version = "0.24.4", optional = true }
 gstreamer-video = { version = "0.24.4", optional = true }
@@ -67,7 +70,7 @@ egui-wgpu = { version = "0.33.3", optional = true }
 # ONNX inference (optional)
 tract-onnx = { version = "0.22", optional = true }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"], optional = true }
-ort = { version = "=2.0.0-rc.10", optional = true, default-features = false }
+ort = { version = "=2.0.0-rc.11", optional = true, default-features = false }
 
 # Burn demos (optional)
 burn = { version = "0.20.0", default-features = false, features = ["std", "ndarray", "autodiff"], optional = true }
@@ -82,6 +85,10 @@ tokio = { version = "1", features = ["fs", "macros", "rt-multi-thread", "time"] 
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 tokio = { version = "1", default-features = false, features = ["macros", "rt", "time", "sync"] }
+
+[target.'cfg(windows)'.dependencies]
+serde = { version = "1", features = ["derive"] }
+wmi = "0.14"
 
 [lints.rust]
 # `flutter_rust_bridge::frb` uses `cfg(frb_expand)` internally; declare it so Rust's

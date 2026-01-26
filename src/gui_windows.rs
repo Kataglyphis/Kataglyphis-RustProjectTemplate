@@ -1,5 +1,7 @@
-use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
-
+use std::collections::VecDeque;
+use std::sync::Arc;
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use gstreamer as gst;
@@ -15,13 +17,16 @@ use winit::window::{Window, WindowAttributes, WindowId};
 use egui::{Context as EguiContext, ViewportId};
 use egui_wgpu::{Renderer as EguiRenderer, ScreenDescriptor};
 use egui_winit::State as EguiWinitState;
+use sysinfo::{Pid, ProcessesToUpdate, System};
 
 #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
 use crate::person_detection::{default_model_path, Detection, PersonDetector};
+use crate::resource_monitor;
 
 #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
 struct InferRequest {
-    rgba: Vec<u8>,
+    frame_id: u64,
+    rgba: Arc<Vec<u8>>,
     width: u32,
     height: u32,
     score_threshold: f32,
@@ -29,6 +34,7 @@ struct InferRequest {
 
 #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
 struct InferResult {
+    frame_id: u64,
     detections: Vec<Detection>,
     error: Option<String>,
 }
@@ -92,13 +98,66 @@ fn run_inner(backends: wgpu::Backends, backend_label: &str) {
 
 #[derive(Clone)]
 struct Frame {
-    data: Vec<u8>,
+    id: u64,
+    data: Arc<Vec<u8>>,
     width: u32,
     height: u32,
 }
 
+fn rgba_tightly_packed_copy(src: &[u8], width: u32, height: u32) -> Option<Vec<u8>> {
+    if width == 0 || height == 0 {
+        return None;
+    }
+
+    let row_bytes = (width as usize).saturating_mul(4);
+    let expected_len = row_bytes.saturating_mul(height as usize);
+
+    if src.len() == expected_len {
+        return Some(src.to_vec());
+    }
+
+    // Many GStreamer buffers are padded per row (stride). We conservatively try to
+    // interpret the buffer as a single RGBA plane with a constant stride.
+    if src.len() < expected_len {
+        return None;
+    }
+
+    let h = height as usize;
+    let mut stride = src.len() / h;
+    if stride < row_bytes {
+        return None;
+    }
+
+    // If there is trailing padding after the last row, prefer a stride that still
+    // lets us safely read all rows.
+    while stride.saturating_mul(h) > src.len() {
+        if stride == 0 {
+            return None;
+        }
+        stride -= 1;
+    }
+
+    let mut out = vec![0u8; expected_len];
+    for y in 0..h {
+        let src_start = y.saturating_mul(stride);
+        let src_end = src_start.saturating_add(row_bytes).min(src.len());
+        let dst_start = y.saturating_mul(row_bytes);
+        let dst_end = dst_start.saturating_add(row_bytes).min(out.len());
+
+        if src_end <= src_start || dst_end <= dst_start {
+            return None;
+        }
+
+        out[dst_start..dst_end].copy_from_slice(&src[src_start..src_end]);
+    }
+
+    Some(out)
+}
+
 fn build_pipeline(frame_tx: std::sync::mpsc::SyncSender<Frame>) -> gst::Pipeline {
     let pipeline = gst::Pipeline::new();
+
+    let frame_id = AtomicU64::new(1);
 
     let src = gst::ElementFactory::make("mfvideosrc")
         .build()
@@ -148,12 +207,19 @@ fn build_pipeline(frame_tx: std::sync::mpsc::SyncSender<Frame>) -> gst::Pipeline
                             let width = structure.get::<i32>("width").unwrap_or(640) as u32;
                             let height = structure.get::<i32>("height").unwrap_or(480) as u32;
                             if let Ok(map) = buffer.map_readable() {
-                                let data = map.as_slice().to_vec();
-                                let _ = frame_tx.try_send(Frame {
-                                    data,
-                                    width,
-                                    height,
-                                });
+                                if let Some(data) = rgba_tightly_packed_copy(map.as_slice(), width, height) {
+                                    #[cfg(target_os = "windows")]
+                                    resource_monitor::record_camera_frame();
+
+                                    let id = frame_id.fetch_add(1, Ordering::Relaxed);
+
+                                    let _ = frame_tx.try_send(Frame {
+                                        id,
+                                        data: Arc::new(data),
+                                        width,
+                                        height,
+                                    });
+                                }
                             }
                         }
                     }
@@ -324,6 +390,23 @@ struct WgpuState<'w> {
     egui_screen: ScreenDescriptor,
     overlay_enabled: bool,
 
+    sysinfo: System,
+    pid: Pid,
+
+    overlay_last_sample_at: Instant,
+    overlay_last_cam_count: u64,
+    overlay_last_infer_count: u64,
+    overlay_last_infer_time_ns: u64,
+    overlay_last_infer_time_samples: u64,
+    overlay_cam_fps: f32,
+    overlay_infer_fps: f32,
+    overlay_infer_latency_ms: f32,
+    overlay_infer_capacity_fps: f32,
+    overlay_proc_cpu_pct: f32,
+    overlay_proc_rss_mib: f32,
+    overlay_cpu_history: VecDeque<f32>,
+    overlay_cpu_history_cap: usize,
+
     #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
     detector_error: Option<String>,
     #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
@@ -336,6 +419,10 @@ struct WgpuState<'w> {
     last_infer: Instant,
     #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
     last_detections: Vec<Detection>,
+    #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+    last_detections_frame_id: Option<u64>,
+
+    current_frame_id: Option<u64>,
 
     #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
     infer_tx: Option<SyncSender<InferRequest>>,
@@ -343,6 +430,8 @@ struct WgpuState<'w> {
     infer_rx: Option<Receiver<InferResult>>,
     #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
     infer_in_flight: bool,
+    #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+    infer_enabled: bool,
 }
 
 impl<'w> WgpuState<'w> {
@@ -525,7 +614,8 @@ impl<'w> WgpuState<'w> {
 
         #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
         let (infer_tx, infer_rx, detector_error, model_path) = {
-            let env_override = std::env::var("KATAGLYPHIS_ONNX_MODEL").ok();
+            let env_override = std::env::var("KATAGLYPHIS_ONNX_MODEL")
+                .ok();
             let path = env_override
                 .clone()
                 .unwrap_or_else(|| default_model_path().to_string_lossy().to_string());
@@ -537,6 +627,7 @@ impl<'w> WgpuState<'w> {
                 Ok(detector) => Some(detector),
                 Err(e) => {
                     let _ = res_tx.try_send(InferResult {
+                        frame_id: 0,
                         detections: Vec::new(),
                         error: Some(format!("Failed to load model '{path}': {e:#}")),
                     });
@@ -550,21 +641,31 @@ impl<'w> WgpuState<'w> {
                 };
 
                 while let Ok(req) = req_rx.recv() {
+                    let infer_start = Instant::now();
                     let result = match detector.infer_persons_rgba(
-                        &req.rgba,
+                        req.rgba.as_slice(),
                         req.width,
                         req.height,
                         req.score_threshold,
                     ) {
                         Ok(dets) => InferResult {
+                            frame_id: req.frame_id,
                             detections: dets,
                             error: None,
                         },
                         Err(e) => InferResult {
+                            frame_id: req.frame_id,
                             detections: Vec::new(),
                             error: Some(format!("Inference failed: {e:#}")),
                         },
                     };
+
+                    let infer_duration = infer_start.elapsed();
+                    #[cfg(target_os = "windows")]
+                    {
+                        resource_monitor::record_inference_duration(infer_duration);
+                        resource_monitor::record_inference_completion();
+                    }
 
                     let _ = res_tx.try_send(result);
                 }
@@ -577,6 +678,21 @@ impl<'w> WgpuState<'w> {
                 Some(path),
             )
         };
+
+        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+        let score_threshold = std::env::var("KATAGLYPHIS_SCORE_THRESHOLD")
+            .ok()
+            .and_then(|v| v.parse::<f32>().ok())
+            .unwrap_or(0.5);
+
+        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+        let infer_every_ms = std::env::var("KATAGLYPHIS_INFER_EVERY_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(0);
+
+        let pid = Pid::from_u32(std::process::id());
+        let sysinfo = System::new_all();
 
         Self {
             surface,
@@ -595,18 +711,42 @@ impl<'w> WgpuState<'w> {
             egui_screen,
             overlay_enabled: true,
 
+            sysinfo,
+            pid,
+
+            overlay_last_sample_at: Instant::now(),
+            overlay_last_cam_count: resource_monitor::CAMERA_FRAMES.load(Ordering::Relaxed),
+            overlay_last_infer_count: resource_monitor::INFERENCE_COMPLETIONS
+                .load(Ordering::Relaxed),
+            overlay_last_infer_time_ns: resource_monitor::INFERENCE_TIME_NS_TOTAL
+                .load(Ordering::Relaxed),
+            overlay_last_infer_time_samples: resource_monitor::INFERENCE_TIME_SAMPLES
+                .load(Ordering::Relaxed),
+            overlay_cam_fps: 0.0,
+            overlay_infer_fps: 0.0,
+            overlay_infer_latency_ms: 0.0,
+            overlay_infer_capacity_fps: 0.0,
+            overlay_proc_cpu_pct: 0.0,
+            overlay_proc_rss_mib: 0.0,
+            overlay_cpu_history: VecDeque::new(),
+            overlay_cpu_history_cap: 120,
+
             #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
             detector_error,
             #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
             model_path,
             #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-            score_threshold: 0.5,
+            score_threshold,
             #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-            infer_every: Duration::from_millis(250),
+            infer_every: Duration::from_millis(infer_every_ms),
             #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
             last_infer: Instant::now() - Duration::from_secs(1),
             #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
             last_detections: Vec::new(),
+            #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+            last_detections_frame_id: None,
+
+            current_frame_id: None,
 
             #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
             infer_tx,
@@ -614,6 +754,8 @@ impl<'w> WgpuState<'w> {
             infer_rx,
             #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
             infer_in_flight: false,
+            #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+            infer_enabled: true,
         }
     }
 
@@ -634,6 +776,8 @@ impl<'w> WgpuState<'w> {
     }
 
     fn upload_frame(&mut self, frame: &Frame) {
+        self.current_frame_id = Some(frame.id);
+        self.poll_inference();
         let needs_recreate = match &self.texture {
             Some((_, _, _, w, h)) => frame.width != *w || frame.height != *h,
             None => true,
@@ -701,11 +845,91 @@ impl<'w> WgpuState<'w> {
         self.maybe_infer(frame);
     }
 
+    fn poll_inference(&mut self) {
+        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+        if let Some(rx) = self.infer_rx.as_ref() {
+            while let Ok(res) = rx.try_recv() {
+                self.infer_in_flight = false;
+                self.last_detections = res.detections;
+                self.last_detections_frame_id = Some(res.frame_id);
+                self.detector_error = res.error;
+            }
+        }
+    }
+
+    fn update_overlay_stats(&mut self) {
+        let now = Instant::now();
+        if now.duration_since(self.overlay_last_sample_at) < Duration::from_millis(500) {
+            return;
+        }
+
+        let dt_s = now
+            .duration_since(self.overlay_last_sample_at)
+            .as_secs_f32()
+            .max(0.001);
+        self.overlay_last_sample_at = now;
+
+        self.sysinfo
+            .refresh_processes(ProcessesToUpdate::Some(&[self.pid]), true);
+        self.sysinfo.refresh_memory();
+
+        let (cpu_pct, rss_bytes) = self
+            .sysinfo
+            .process(self.pid)
+            .map(|p| (p.cpu_usage(), p.memory()))
+            .unwrap_or((0.0, 0));
+
+        self.overlay_proc_cpu_pct = cpu_pct;
+        self.overlay_proc_rss_mib = bytes_to_mib(rss_bytes);
+
+        let cam_count_now = resource_monitor::CAMERA_FRAMES.load(Ordering::Relaxed);
+        let cam_delta = cam_count_now.wrapping_sub(self.overlay_last_cam_count);
+        self.overlay_cam_fps = (cam_delta as f32) / dt_s;
+        self.overlay_last_cam_count = cam_count_now;
+
+        let infer_count_now = resource_monitor::INFERENCE_COMPLETIONS.load(Ordering::Relaxed);
+        let infer_delta = infer_count_now.wrapping_sub(self.overlay_last_infer_count);
+        self.overlay_infer_fps = (infer_delta as f32) / dt_s;
+        self.overlay_last_infer_count = infer_count_now;
+
+        let infer_time_ns_now = resource_monitor::INFERENCE_TIME_NS_TOTAL.load(Ordering::Relaxed);
+        let infer_time_samples_now =
+            resource_monitor::INFERENCE_TIME_SAMPLES.load(Ordering::Relaxed);
+        let infer_time_ns_delta =
+            infer_time_ns_now.wrapping_sub(self.overlay_last_infer_time_ns);
+        let infer_time_samples_delta =
+            infer_time_samples_now.wrapping_sub(self.overlay_last_infer_time_samples);
+        self.overlay_last_infer_time_ns = infer_time_ns_now;
+        self.overlay_last_infer_time_samples = infer_time_samples_now;
+
+        if infer_time_samples_delta > 0 {
+            self.overlay_infer_latency_ms =
+                (infer_time_ns_delta as f32 / infer_time_samples_delta as f32) / 1_000_000.0;
+        } else {
+            self.overlay_infer_latency_ms = 0.0;
+        }
+
+        self.overlay_infer_capacity_fps = if self.overlay_infer_latency_ms > 0.0 {
+            1000.0 / self.overlay_infer_latency_ms
+        } else {
+            0.0
+        };
+
+        self.overlay_cpu_history.push_back(cpu_pct);
+        while self.overlay_cpu_history.len() > self.overlay_cpu_history_cap {
+            self.overlay_cpu_history.pop_front();
+        }
+    }
+
     #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
     fn maybe_infer(&mut self, frame: &Frame) {
         let Some(tx) = self.infer_tx.as_ref() else {
             return;
         };
+
+        if !self.infer_enabled {
+            return;
+        }
 
         if self.last_infer.elapsed() < self.infer_every {
             return;
@@ -719,7 +943,8 @@ impl<'w> WgpuState<'w> {
         // This keeps the UI thread responsive even for heavy models.
         if tx
             .try_send(InferRequest {
-                rgba: frame.data.clone(),
+                frame_id: frame.id,
+                rgba: Arc::clone(&frame.data),
                 width: frame.width,
                 height: frame.height,
                 score_threshold: self.score_threshold,
@@ -732,20 +957,17 @@ impl<'w> WgpuState<'w> {
     }
 
     fn render(&mut self, window: &Window) -> Result<(), wgpu::SurfaceError> {
-        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-        if let Some(rx) = self.infer_rx.as_ref() {
-            while let Ok(res) = rx.try_recv() {
-                self.infer_in_flight = false;
-                self.last_detections = res.detections;
-                self.detector_error = res.error;
-            }
-        }
+        self.poll_inference();
 
         self.egui_screen.pixels_per_point = window.scale_factor() as f32;
         self.egui_screen.size_in_pixels = [self.config.width, self.config.height];
 
         let raw_input = self.egui_state.take_egui_input(window);
+        self.update_overlay_stats();
+
         let mut overlay_enabled = self.overlay_enabled;
+        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+        let mut infer_enabled = self.infer_enabled;
         let frame_dimensions = self
             .texture
             .as_ref()
@@ -753,7 +975,11 @@ impl<'w> WgpuState<'w> {
             .unwrap_or((0, 0));
 
         #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-        let detections = self.last_detections.clone();
+        let detections_count = if self.last_detections_frame_id.is_some() {
+            self.last_detections.len()
+        } else {
+            0
+        };
         #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
         let detector_error = self.detector_error.clone();
         #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
@@ -772,16 +998,60 @@ impl<'w> WgpuState<'w> {
                             "Frame: {}x{}",
                             frame_dimensions.0, frame_dimensions.1
                         ));
+                        ui.separator();
+                        ui.label(format!("Camera FPS: {:.2}", self.overlay_cam_fps));
+                        ui.label(format!("Infer FPS:  {:.2}", self.overlay_infer_fps));
+                        ui.label(format!("Infer ms:   {:.2}", self.overlay_infer_latency_ms));
+                        ui.label(format!(
+                            "Infer cap: {:.2} fps",
+                            self.overlay_infer_capacity_fps
+                        ));
+                        ui.label(format!(
+                            "CPU: {:.1}%   RSS: {:.1} MiB",
+                            self.overlay_proc_cpu_pct,
+                            self.overlay_proc_rss_mib
+                        ));
+                        draw_cpu_history(ui, &self.overlay_cpu_history);
 
                         #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
                         {
+                            // Draw bounding boxes in the foreground over the video.
+                            if frame_dimensions.0 > 0 && frame_dimensions.1 > 0 && !self.last_detections.is_empty() {
+                                let screen = ctx.content_rect();
+                                let sx = screen.width() / frame_dimensions.0 as f32;
+                                let sy = screen.height() / frame_dimensions.1 as f32;
+                                let painter = ctx.layer_painter(egui::LayerId::new(
+                                    egui::Order::Foreground,
+                                    egui::Id::new("detections"),
+                                ));
+
+                                for d in &self.last_detections {
+                                    let x1 = screen.left() + d.x1 * sx;
+                                    let y1 = screen.top() + d.y1 * sy;
+                                    let x2 = screen.left() + d.x2 * sx;
+                                    let y2 = screen.top() + d.y2 * sy;
+
+                                    let rect = egui::Rect::from_min_max(
+                                        egui::pos2(x1, y1),
+                                        egui::pos2(x2, y2),
+                                    );
+                                    painter.rect_stroke(
+                                        rect,
+                                        0.0,
+                                        egui::Stroke::new(2.0, egui::Color32::LIGHT_GREEN),
+                                        egui::StrokeKind::Inside,
+                                    );
+                                }
+                            }
+
                             if let Some(path) = model_path.as_deref() {
                                 ui.label(format!("Model: {path}"));
                             } else {
                                 ui.label("Model: (not set)");
                             }
                             ui.label(format!("Score threshold: {score_threshold:.2}"));
-                            ui.label(format!("Persons: {}", detections.len()));
+                            ui.label(format!("Persons: {}", detections_count));
+                            ui.checkbox(&mut infer_enabled, "Inference enabled");
                             if let Some(err) = detector_error.as_deref() {
                                 ui.separator();
                                 ui.label(err);
@@ -792,38 +1062,6 @@ impl<'w> WgpuState<'w> {
                             overlay_enabled = false;
                         }
                     });
-
-                #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-                {
-                    // Draw bounding boxes in the foreground over the video.
-                    if frame_dimensions.0 > 0 && frame_dimensions.1 > 0 {
-                        let screen = ctx.content_rect();
-                        let sx = screen.width() / frame_dimensions.0 as f32;
-                        let sy = screen.height() / frame_dimensions.1 as f32;
-                        let painter = ctx.layer_painter(egui::LayerId::new(
-                            egui::Order::Foreground,
-                            egui::Id::new("detections"),
-                        ));
-
-                        for d in &detections {
-                            let x1 = screen.left() + d.x1 * sx;
-                            let y1 = screen.top() + d.y1 * sy;
-                            let x2 = screen.left() + d.x2 * sx;
-                            let y2 = screen.top() + d.y2 * sy;
-
-                            let rect = egui::Rect::from_min_max(
-                                egui::pos2(x1, y1),
-                                egui::pos2(x2, y2),
-                            );
-                            painter.rect_stroke(
-                                rect,
-                                0.0,
-                                egui::Stroke::new(2.0, egui::Color32::LIGHT_GREEN),
-                                egui::StrokeKind::Inside,
-                            );
-                        }
-                    }
-                }
             } else {
                 egui::Window::new("Overlay (hidden)")
                     .default_pos(egui::pos2(12.0, 12.0))
@@ -837,6 +1075,10 @@ impl<'w> WgpuState<'w> {
             }
         });
         self.overlay_enabled = overlay_enabled;
+        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+        {
+            self.infer_enabled = infer_enabled;
+        }
 
         let clipped_primitives = self
             .egui_ctx
@@ -962,3 +1204,41 @@ impl Vertex {
         }
     }
 }
+
+fn bytes_to_mib(bytes: u64) -> f32 {
+    (bytes as f32) / (1024.0 * 1024.0)
+}
+
+fn draw_cpu_history(ui: &mut egui::Ui, history: &VecDeque<f32>) {
+    let desired = egui::vec2(160.0, 48.0);
+    let (rect, _response) = ui.allocate_exact_size(desired, egui::Sense::hover());
+
+    let painter = ui.painter();
+    painter.rect_stroke(
+        rect,
+        2.0,
+        egui::Stroke::new(1.0, egui::Color32::GRAY),
+        egui::StrokeKind::Inside,
+    );
+
+    if history.len() < 2 {
+        return;
+    }
+
+    let max_points = history.len().max(2) as f32 - 1.0;
+    let step_x = rect.width() / max_points;
+    let mut prev = None;
+
+    for (i, &value) in history.iter().enumerate() {
+        let x = rect.left() + (i as f32) * step_x;
+        let y_norm = (value / 100.0).clamp(0.0, 1.0);
+        let y = rect.bottom() - y_norm * rect.height();
+        let pos = egui::pos2(x, y);
+
+        if let Some(prev) = prev {
+            painter.line_segment([prev, pos], egui::Stroke::new(1.5, egui::Color32::LIGHT_BLUE));
+        }
+        prev = Some(pos);
+    }
+}
+
