@@ -7,7 +7,7 @@
 
   <h4>Collecting Rust best practices.</h4>
 </div>
-  
+
 <div align="center">
   <a href="https://jonasheinle.de">
     <img src="images/Rust.gif" alt="Rust" width="400" />
