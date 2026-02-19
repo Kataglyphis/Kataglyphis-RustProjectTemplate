@@ -52,6 +52,7 @@ no_llvm_build
 /dist/
 /unicode-downloads
 /target
+/target-msix
 /library/target
 /src/bootstrap/target
 /src/ci/citool/target

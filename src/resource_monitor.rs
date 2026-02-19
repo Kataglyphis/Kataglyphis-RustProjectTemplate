@@ -239,7 +239,7 @@ fn gpu_sample() -> Option<GpuSample> {
 #[cfg(target_os = "windows")]
 fn windows_gpu_sample() -> Option<GpuSample> {
     use serde::Deserialize;
-    use wmi::{COMLibrary, WMIConnection};
+    use wmi::WMIConnection;
 
     use std::sync::atomic::AtomicBool;
     static WARNED_WMI_GPU: AtomicBool = AtomicBool::new(false);
@@ -258,14 +258,7 @@ fn windows_gpu_sample() -> Option<GpuSample> {
         utilization_percentage: Option<u64>,
     }
 
-    let com = match COMLibrary::new() {
-        Ok(com) => com,
-        Err(_) => {
-            warn_wmi_once(&WARNED_WMI_GPU, "WMI COM init failed; GPU metrics disabled");
-            return None;
-        }
-    };
-    let wmi = match WMIConnection::new(com.into()) {
+    let wmi = match WMIConnection::new() {
         Ok(wmi) => wmi,
         Err(_) => {
             warn_wmi_once(&WARNED_WMI_GPU, "WMI connection failed; GPU metrics disabled");

@@ -22,7 +22,8 @@ For **__official docs__** follow this [link](https://rust.jonasheinle.de).
 
 <!-- [![Linux build](https://github.com/Kataglyphis/GraphicsEngineVulkan/actions/workflows/Linux.yml/badge.svg)](https://github.com/Kataglyphis/GraphicsEngineVulkan/actions/workflows/Linux.yml)
 [![Windows build](https://github.com/Kataglyphis/GraphicsEngineVulkan/actions/workflows/Windows.yml/badge.svg)](https://github.com/Kataglyphis/GraphicsEngineVulkan/actions/workflows/Windows.yml)
-[![TopLang](https://img.shields.io/github/languages/top/Kataglyphis/GraphicsEngineVulkan)]() -->
+-->
+[![TopLang](https://img.shields.io/github/languages/top/Kataglyphis/Kataglyphis-RustProjectTemplate)]() 
 [![Donate](https://img.shields.io/badge/Donate-PayPal-green.svg)](https://www.paypal.com/paypalme/JonasHeinle)
 [![Twitter](https://img.shields.io/twitter/follow/Cataglyphis_?style=social)](https://twitter.com/Cataglyphis_)
  
@@ -83,9 +84,9 @@ If you just want the newest versions allowed by your current constraints (update
 
 Update all:
 ```bash
+# update packages
 cargo update
-
-Update versions in Cargo.toml
+# update versions in Cargo.toml
 cargo install cargo-edit
 cargo upgrade --dry-run --verbose
 cargo upgrade --incompatible
@@ -204,6 +205,102 @@ cargo run --features gui_windows -- gui --backend vulkan
 
 # Auto-select (wgpu PRIMARY)
 cargo run --features gui_windows -- gui --backend primary
+```
+
+### Windows MSIX packaging
+
+Voraussetzungen:
+- Windows SDK (inkl. `makeappx` und `signtool`)
+- PowerShell 5.1+ oder PowerShell 7+
+
+MSIX bauen (inkl. Release-Build):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\New-MsixPackage.ps1
+```
+
+MSIX bauen und mit einer vorhandenen PFX signieren:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\New-MsixPackage.ps1 `
+  -CertificatePath .\certs\my-signing-cert.pfx `
+  -CertificatePassword "<PASSWORD>"
+```
+
+MSIX bauen und Testzertifikat automatisch erzeugen:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\New-MsixPackage.ps1 `
+  -CreateTestCertificate `
+  -CertificatePassword "<TEST_CERT_PASSWORD>"
+```
+
+Output:
+- Paket: `dist\msix\Kataglyphis.RustProjectTemplate_<VERSION>_x64.msix`
+- Staging-Inhalt: `dist\msix\staging\`
+
+Wichtige Parameter:
+- `-Binary` (Default: `kataglyphis_rustprojecttemplate`)
+- `-Features` (Default: `gui_windows,onnxruntime_directml`)
+- `-Version` (Format: `Major.Minor.Build[.Revision]`)
+- `-Publisher` (muss zum Signaturzertifikat passen, z. B. `CN=Kataglyphis`)
+- `-SkipBuild` (packt vorhandenen Release-Build erneut)
+
+MSIX installieren (mit Testzertifikat):
+
+1. PowerShell **als Administrator** öffnen.
+2. Zertifikat in vertrauenswürdige Stores importieren.
+3. Paket installieren.
+
+```powershell
+$certPath = "C:\\GitHub\\Kataglyphis-Inference-Engine\\ExternalLib\\Kataglyphis-RustProjectTemplate\\dist\\msix\\Kataglyphis.RustProjectTemplate.testcert.pfx"
+$msixPath = "C:\\GitHub\\Kataglyphis-Inference-Engine\\ExternalLib\\Kataglyphis-RustProjectTemplate\\dist\\msix\\Kataglyphis.RustProjectTemplate_0.1.0.0_x64.msix"
+$pwd = ConvertTo-SecureString "<TEST_CERT_PASSWORD>" -AsPlainText -Force
+
+Import-PfxCertificate -FilePath $certPath -Password $pwd -CertStoreLocation "Cert:\\LocalMachine\\Root"
+Import-PfxCertificate -FilePath $certPath -Password $pwd -CertStoreLocation "Cert:\\LocalMachine\\TrustedPeople"
+
+Add-AppxPackage -Path $msixPath
+```
+
+Installationsprüfung:
+
+```powershell
+Get-AppxPackage -Name "Kataglyphis.RustProjectTemplate" | Select-Object Name, PackageFullName, Status
+```
+
+Troubleshooting:
+- `0x800B0109`: Zertifikatskette ist nicht vertrauenswürdig. Zertifikat wie oben in `LocalMachine\\Root` und `LocalMachine\\TrustedPeople` importieren (Admin erforderlich).
+- `Import-PfxCertificate: Zugriff verweigert`: PowerShell nicht als Administrator gestartet.
+- Details zum letzten Deploy-Fehler anzeigen:
+
+```powershell
+Get-AppxLog -ActivityID <ACTIVITY_ID>
+```
+
+App nach Installation starten:
+
+- Über das Startmenü nach `Kataglyphis RustProjectTemplate` suchen und starten.
+- Oder per PowerShell:
+
+```powershell
+$pkg = Get-AppxPackage -Name "Kataglyphis.RustProjectTemplate"
+Start-Process "shell:AppsFolder\$($pkg.PackageFamilyName)!App"
+```
+
+MSIX Update / Reinstall:
+
+- Neue Version mit höherer `-Version` bauen und signieren.
+- Dann erneut installieren:
+
+```powershell
+Add-AppxPackage -Path "C:\\GitHub\\Kataglyphis-Inference-Engine\\ExternalLib\\Kataglyphis-RustProjectTemplate\\dist\\msix\\Kataglyphis.RustProjectTemplate_<NEW_VERSION>_x64.msix"
+```
+
+MSIX deinstallieren:
+
+```powershell
+Get-AppxPackage -Name "Kataglyphis.RustProjectTemplate" | Remove-AppxPackage
 ```
 
 ### Linux
