@@ -2,6 +2,11 @@
 name = "kataglyphis_rustprojecttemplate"
 version = "0.1.0"
 edition = "2024"
+license = "UNLICENSED"
+repository = "https://github.com/Kataglyphis/Kataglyphis-RustProjectTemplate"
+description = "Rust project template with optional GUI, ONNX backends, profiling, packaging, and CI workflows."
+readme = "README.md"
+rust-version = "1.85"
 
 [lib]
 name = "kataglyphis_rustprojecttemplate"

@@ -72,6 +72,21 @@ jobs:
           echo "Failed to pull container after 3 attempts"
           exit 1
 
+      - name: Security checks (cargo audit + cargo deny)
+        run: |
+          docker run --rm \
+            --platform ${{ env.PLATFORM }} \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest \
+            bash -lc '
+            set -e
+            git config --global --add safe.directory /workspace || true
+            cargo install --locked cargo-audit cargo-deny
+            cargo audit
+            cargo deny check advisories licenses bans sources
+            '
+
       - name: Debug build
         run: |
           docker run --rm \
