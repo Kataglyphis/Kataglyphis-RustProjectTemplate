@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use log::{debug, info, warn};
 
 pub fn default_model_path() -> std::path::PathBuf {
@@ -15,8 +15,7 @@ enum PreprocessMode {
 }
 
 fn preprocess_mode() -> PreprocessMode {
-    let raw = std::env::var("KATAGLYPHIS_PREPROCESS")
-        .unwrap_or_else(|_| "stretch".to_string());
+    let raw = std::env::var("KATAGLYPHIS_PREPROCESS").unwrap_or_else(|_| "stretch".to_string());
 
     match raw.trim().to_ascii_lowercase().as_str() {
         "letterbox" | "boxed" | "pad" => PreprocessMode::Letterbox,
@@ -41,6 +40,7 @@ pub struct Detection {
     pub y1: f32,
     pub x2: f32,
     pub y2: f32,
+    #[allow(dead_code)]
     pub score: f32,
     pub class_id: i64,
 }
@@ -67,10 +67,12 @@ type TractPlan = tract_onnx::prelude::SimplePlan<
 
 enum Backend {
     #[cfg(feature = "onnx_tract")]
-    Tract { model: TractPlan },
+    Tract { model: Box<TractPlan> },
 
     #[cfg(feature = "onnxruntime")]
-    Ort { session: std::sync::Mutex<ort::session::Session> },
+    Ort {
+        session: std::sync::Mutex<ort::session::Session>,
+    },
 }
 
 impl PersonDetector {
@@ -87,13 +89,13 @@ impl PersonDetector {
                     let (session, (input_w, input_h)) = load_ort_session(model_path)?;
                     info!("ONNX backend: ort ({}x{})", input_w, input_h);
                     debug!("Preprocess mode: {:?}", preprocess_mode());
-                    return Ok(Self {
+                    Ok(Self {
                         backend: Backend::Ort {
                             session: std::sync::Mutex::new(session),
                         },
                         input_w,
                         input_h,
-                    });
+                    })
                 }
 
                 #[cfg(not(feature = "onnxruntime"))]
@@ -107,11 +109,13 @@ impl PersonDetector {
                     let (model, (input_w, input_h)) = load_tract_model(model_path)?;
                     info!("ONNX backend: tract ({}x{})", input_w, input_h);
                     debug!("Preprocess mode: {:?}", preprocess_mode());
-                    return Ok(Self {
-                        backend: Backend::Tract { model },
+                    Ok(Self {
+                        backend: Backend::Tract {
+                            model: Box::new(model),
+                        },
                         input_w,
                         input_h,
-                    });
+                    })
                 }
 
                 #[cfg(not(feature = "onnx_tract"))]
@@ -119,9 +123,9 @@ impl PersonDetector {
                     bail!("Requested ONNX backend 'tract', but feature 'onnx_tract' is not enabled")
                 }
             }
-            Some(other) => bail!(
-                "Unsupported KATAGLYPHIS_ONNX_BACKEND='{other}'. Use 'tract' or 'ort'."
-            ),
+            Some(other) => {
+                bail!("Unsupported KATAGLYPHIS_ONNX_BACKEND='{other}'. Use 'tract' or 'ort'.")
+            }
             None => {
                 // Default: prefer ORT when available, fallback to tract.
                 #[cfg(feature = "onnxruntime")]
@@ -157,16 +161,20 @@ impl PersonDetector {
                     let (model, (input_w, input_h)) = load_tract_model(model_path)?;
                     info!("ONNX backend: tract ({}x{})", input_w, input_h);
                     debug!("Preprocess mode: {:?}", preprocess_mode());
-                    return Ok(Self {
-                        backend: Backend::Tract { model },
+                    Ok(Self {
+                        backend: Backend::Tract {
+                            model: Box::new(model),
+                        },
                         input_w,
                         input_h,
-                    });
+                    })
                 }
 
                 #[cfg(not(any(feature = "onnx_tract", feature = "onnxruntime")))]
                 {
-                    bail!("ONNX inference is disabled. Build with --features onnx_tract (or onnxruntime*)")
+                    bail!(
+                        "ONNX inference is disabled. Build with --features onnx_tract (or onnxruntime*)"
+                    )
                 }
             }
         }
@@ -180,20 +188,12 @@ impl PersonDetector {
         score_threshold: f32,
     ) -> Result<Vec<Detection>> {
         let (input, mapping) = match preprocess_mode() {
-            PreprocessMode::Letterbox => rgba_to_nchw_f32_letterboxed(
-                rgba,
-                width,
-                height,
-                self.input_w,
-                self.input_h,
-            )?,
-            PreprocessMode::Stretch => rgba_to_nchw_f32_stretched(
-                rgba,
-                width,
-                height,
-                self.input_w,
-                self.input_h,
-            )?,
+            PreprocessMode::Letterbox => {
+                rgba_to_nchw_f32_letterboxed(rgba, width, height, self.input_w, self.input_h)?
+            }
+            PreprocessMode::Stretch => {
+                rgba_to_nchw_f32_stretched(rgba, width, height, self.input_w, self.input_h)?
+            }
         };
 
         let (shape, data) = self
@@ -203,10 +203,7 @@ impl PersonDetector {
         let detections = parse_yolo_like_detections(&shape, &data, score_threshold, mapping)?;
 
         // Keep only class 0 (= person) by convention.
-        Ok(detections
-            .into_iter()
-            .filter(|d| d.class_id == 0)
-            .collect())
+        Ok(detections.into_iter().filter(|d| d.class_id == 0).collect())
     }
 
     fn infer_raw_nchw_f32(&self, input: Vec<f32>) -> Result<(Vec<usize>, Vec<f32>)> {
@@ -221,9 +218,7 @@ impl PersonDetector {
                     .run(tvec!(tensor.into()))
                     .context("Failed to run ONNX model (tract)")?;
 
-                let out = outputs
-                    .first()
-                    .context("Model returned no outputs")?;
+                let out = outputs.first().context("Model returned no outputs")?;
 
                 let shape = out.shape().to_vec();
                 let data = out
@@ -282,12 +277,7 @@ struct ImageMapping {
 }
 
 #[cfg(feature = "onnx_tract")]
-fn load_tract_model(
-    model_path: &str,
-) -> Result<(
-    TractPlan,
-    (u32, u32),
-)> {
+fn load_tract_model(model_path: &str) -> Result<(TractPlan, (u32, u32))> {
     use tract_onnx::prelude::*;
 
     let mut model = tract_onnx::onnx()
@@ -319,7 +309,10 @@ fn load_tract_model(
     // Force NCHW f32 input with fixed shape.
     model.set_input_fact(
         0,
-        InferenceFact::dt_shape(f32::datum_type(), tvec!(1, 3, input_h as usize, input_w as usize)),
+        InferenceFact::dt_shape(
+            f32::datum_type(),
+            tvec!(1, 3, input_h as usize, input_w as usize),
+        ),
     )?;
 
     let runnable = model.into_optimized()?.into_runnable()?;
@@ -374,8 +367,8 @@ fn load_ort_session(model_path: &str) -> Result<(ort::session::Session, (u32, u3
                         return Err(err);
                     }
                     warn!("ORT CUDA provider unavailable, falling back to CPU: {err:#}");
-                    builder = Session::builder()
-                        .context("Failed to recreate ORT SessionBuilder")?;
+                    builder =
+                        Session::builder().context("Failed to recreate ORT SessionBuilder")?;
                 }
             }
         }
@@ -387,7 +380,7 @@ fn load_ort_session(model_path: &str) -> Result<(ort::session::Session, (u32, u3
         builder = builder
             .with_execution_providers([DirectMLExecutionProvider::default().build()])
             .context("Failed to configure ORT DirectML execution provider")?;
-            info!("ORT DirectML execution provider enabled");
+        info!("ORT DirectML execution provider enabled");
     }
 
     let session = builder
@@ -441,7 +434,11 @@ fn ensure_ort_cuda_provider_dylibs_next_to_exe() -> Result<()> {
         }
 
         best.map(|(_, p)| p).with_context(|| {
-            format!("Could not locate '{}' under '{}'", file_name.to_string_lossy(), root.display())
+            format!(
+                "Could not locate '{}' under '{}'",
+                file_name.to_string_lossy(),
+                root.display()
+            )
         })
     }
 
@@ -539,21 +536,18 @@ fn rgba_to_nchw_f32_letterboxed(
         for dx in 0..dst_w {
             let dst_idx = (dy * dst_w + dx) as usize;
 
-            let (r, g, b) = if dx >= pad_x_i
-                && dx < pad_x_i + new_w
-                && dy >= pad_y_i
-                && dy < pad_y_i + new_h
-            {
-                let sx = ((dx - pad_x_i) * src_w) / new_w;
-                let sy = ((dy - pad_y_i) * src_h) / new_h;
-                let src_idx = ((sy * src_w + sx) * 4) as usize;
-                let r = rgba[src_idx] as f32 / 255.0;
-                let g = rgba[src_idx + 1] as f32 / 255.0;
-                let b = rgba[src_idx + 2] as f32 / 255.0;
-                (r, g, b)
-            } else {
-                (fill, fill, fill)
-            };
+            let (r, g, b) =
+                if dx >= pad_x_i && dx < pad_x_i + new_w && dy >= pad_y_i && dy < pad_y_i + new_h {
+                    let sx = ((dx - pad_x_i) * src_w) / new_w;
+                    let sy = ((dy - pad_y_i) * src_h) / new_h;
+                    let src_idx = ((sy * src_w + sx) * 4) as usize;
+                    let r = rgba[src_idx] as f32 / 255.0;
+                    let g = rgba[src_idx + 1] as f32 / 255.0;
+                    let b = rgba[src_idx + 2] as f32 / 255.0;
+                    (r, g, b)
+                } else {
+                    (fill, fill, fill)
+                };
 
             chw[dst_idx] = r;
             chw[plane + dst_idx] = g;
@@ -641,19 +635,28 @@ fn parse_yolo_like_detections(
             let n = output_shape[0];
             let stride = output_shape[1];
             if stride < 6 {
-                bail!("Unexpected output shape {:?}; need at least 6 columns", output_shape);
+                bail!(
+                    "Unexpected output shape {:?}; need at least 6 columns",
+                    output_shape
+                );
             }
             (n, stride)
         }
         3 => {
             let b = output_shape[0];
             if b != 1 {
-                bail!("Unexpected output shape {:?}; expected batch=1", output_shape);
+                bail!(
+                    "Unexpected output shape {:?}; expected batch=1",
+                    output_shape
+                );
             }
             let n = output_shape[1];
             let stride = output_shape[2];
             if stride < 6 {
-                bail!("Unexpected output shape {:?}; need at least 6 columns", output_shape);
+                bail!(
+                    "Unexpected output shape {:?}; need at least 6 columns",
+                    output_shape
+                );
             }
             (n, stride)
         }
@@ -670,7 +673,7 @@ fn parse_yolo_like_detections(
             break;
         }
 
-        let mut x1 = data[row_start + 0];
+        let mut x1 = data[row_start];
         let mut y1 = data[row_start + 1];
         let mut x2 = data[row_start + 2];
         let mut y2 = data[row_start + 3];

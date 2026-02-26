@@ -2,7 +2,7 @@ use anyhow::Context;
 use burn::module::Module;
 use burn::nn;
 use burn::optim::{AdamConfig, GradientsParams, Optimizer};
-use burn::tensor::{backend::AutodiffBackend, backend::Backend, Tensor, TensorData};
+use burn::tensor::{Tensor, TensorData, backend::AutodiffBackend, backend::Backend};
 use ndarray::{Array4, Axis};
 use ort::session::Session;
 use std::path::Path;
@@ -17,26 +17,26 @@ pub fn onnx_yolov10_demo<TrainB: AutodiffBackend>(
     lr: f64,
     train_device: &TrainB::Device,
 ) -> anyhow::Result<()> {
-    let mut builder = Session::builder().context("Failed to create ORT SessionBuilder")?;
+    let builder = Session::builder().context("Failed to create ORT SessionBuilder")?;
 
     #[cfg(all(feature = "onnxruntime_directml", windows))]
-    {
+    let builder = {
         use ort::execution_providers::DirectMLExecutionProvider;
-        builder = builder
+        builder
             .with_execution_providers([DirectMLExecutionProvider::default().build()])
-            .context("Failed to configure ORT DirectML execution provider")?;
-    }
+            .context("Failed to configure ORT DirectML execution provider")?
+    };
 
     let mut session = builder
         .commit_from_file(model_path)
         .with_context(|| format!("Failed to load ONNX model from {}", model_path.display()))?;
 
     println!("ONNX model loaded: {}", model_path.display());
-    for (i, input) in session.inputs.iter().enumerate() {
-        println!("input[{i}] name={} type={:?}", input.name, input.input_type);
+    for (i, input) in session.inputs().iter().enumerate() {
+        println!("input[{i}] name={:?}", input.name());
     }
-    for (i, output) in session.outputs.iter().enumerate() {
-        println!("output[{i}] name={} type={:?}", output.name, output.output_type);
+    for (i, output) in session.outputs().iter().enumerate() {
+        println!("output[{i}] name={:?}", output.name());
     }
 
     // Warmup.
@@ -58,7 +58,10 @@ pub fn onnx_yolov10_demo<TrainB: AutodiffBackend>(
     let elapsed = start.elapsed();
 
     if runs > 0 {
-        println!("runs={runs} elapsed={elapsed:?} per_run={:?}", elapsed / (runs as u32));
+        println!(
+            "runs={runs} elapsed={elapsed:?} per_run={:?}",
+            elapsed / (runs as u32)
+        );
     }
 
     let (shape, out) = last_output.context("missing output")?;
@@ -94,9 +97,7 @@ fn run_once(
 ) -> anyhow::Result<(Vec<usize>, ndarray::ArrayD<f32>)> {
     let input_tensor = ort::value::Tensor::from_array(input).context("create ORT input tensor")?;
 
-    let outputs = session
-        .run(ort::inputs![input_tensor])
-        .context("run ORT")?;
+    let outputs = session.run(ort::inputs![input_tensor]).context("run ORT")?;
 
     if outputs.len() == 0 {
         anyhow::bail!("model returned no outputs");
@@ -144,7 +145,10 @@ fn make_adapter_batch<B: Backend>(
     features_300x6: &ndarray::Array2<f32>,
 ) -> (Tensor<B, 2>, Tensor<B, 2>) {
     let flat: Vec<f32> = features_300x6.iter().copied().collect();
-    let x = Tensor::<B, 2>::from_data(TensorData::new(flat.clone(), [features_300x6.nrows(), 6]), device);
+    let x = Tensor::<B, 2>::from_data(
+        TensorData::new(flat.clone(), [features_300x6.nrows(), 6]),
+        device,
+    );
     let y = Tensor::<B, 2>::from_data(TensorData::new(flat, [features_300x6.nrows(), 6]), device);
     (x, y)
 }

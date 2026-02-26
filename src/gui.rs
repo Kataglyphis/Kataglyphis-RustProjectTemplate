@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use gstreamer as gst;
 use gstreamer::prelude::*;
 use gtk::prelude::*;

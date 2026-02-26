@@ -20,7 +20,7 @@ impl<B: Backend> YoloTiny<B> {
     ///
     /// Output tensor shape: [batch, anchors * (5 + num_classes), grid_h, grid_w]
     pub fn new(device: &B::Device, num_classes: usize, num_anchors: usize) -> Self {
-        let out_channels = (num_anchors * (5 + num_classes)) as usize;
+        let out_channels = num_anchors * (5 + num_classes);
 
         let c1 = nn::conv::Conv2dConfig::new([3, 16], [3, 3])
             .with_stride([2, 2])
@@ -64,7 +64,12 @@ impl<B: Backend> YoloTiny<B> {
         self.head.forward(x)
     }
 
-    pub fn demo_input(device: &B::Device, batch: usize, height: usize, width: usize) -> Tensor<B, 4> {
+    pub fn demo_input(
+        device: &B::Device,
+        batch: usize,
+        height: usize,
+        width: usize,
+    ) -> Tensor<B, 4> {
         let mut rng = Lcg::new(42);
         let mut data = Vec::with_capacity(batch * 3 * height * width);
         for _ in 0..(batch * 3 * height * width) {

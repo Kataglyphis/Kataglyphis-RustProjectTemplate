@@ -8,7 +8,7 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant};
 
-use log::{info, warn};
+use log::info;
 use sysinfo::{Pid, ProcessesToUpdate, System};
 
 #[derive(Clone, Debug)]
@@ -52,9 +52,7 @@ pub fn record_camera_frame() {
 
 #[cfg(all(feature = "gui_windows", target_os = "windows"))]
 pub fn record_inference_duration(duration: Duration) {
-    let ns = duration
-        .as_nanos()
-        .min(u128::from(u64::MAX)) as u64;
+    let ns = duration.as_nanos().min(u128::from(u64::MAX)) as u64;
     INFERENCE_TIME_NS_TOTAL.fetch_add(ns, Ordering::Relaxed);
     INFERENCE_TIME_SAMPLES.fetch_add(1, Ordering::Relaxed);
 }
@@ -89,13 +87,7 @@ fn run_monitor_loop(config: ResourceMonitorConfig, stop: Arc<AtomicBool>) {
     let mut file_writer = config
         .log_file
         .as_ref()
-        .and_then(|path| {
-            OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(path)
-                .ok()
-        })
+        .and_then(|path| OpenOptions::new().create(true).append(true).open(path).ok())
         .map(BufWriter::new);
 
     let mut next_tick = Instant::now();
@@ -261,7 +253,10 @@ fn windows_gpu_sample() -> Option<GpuSample> {
     let wmi = match WMIConnection::new() {
         Ok(wmi) => wmi,
         Err(_) => {
-            warn_wmi_once(&WARNED_WMI_GPU, "WMI connection failed; GPU metrics disabled");
+            warn_wmi_once(
+                &WARNED_WMI_GPU,
+                "WMI connection failed; GPU metrics disabled",
+            );
             return None;
         }
     };

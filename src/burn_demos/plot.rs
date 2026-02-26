@@ -44,11 +44,11 @@ fn render_loss_curve(path: &Path, losses: &[f32], title: &str) -> anyhow::Result
         ))
         .map_err(|e| anyhow::anyhow!("plotters error: {e:?}"))?
         .label("loss")
-        .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &RED));
+        .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
 
     chart
         .configure_series_labels()
-        .border_style(&BLACK)
+        .border_style(BLACK)
         .background_style(WHITE.mix(0.9))
         .draw()
         .map_err(|e| anyhow::anyhow!("plotters error: {e:?}"))?;
@@ -76,11 +76,11 @@ fn present(area: &DrawingArea<BitMapBackend<'_>, Shift>) -> anyhow::Result<()> {
 }
 
 fn ensure_parent_dir(path: &Path) -> anyhow::Result<()> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("create output directory {}", parent.display()))?;
-        }
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create output directory {}", parent.display()))?;
     }
     Ok(())
 }

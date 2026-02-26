@@ -98,11 +98,9 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::TensorDemo => {
-            kataglyphis_rustprojecttemplate::burn_demos::simple::tensor_demo::<
-                kataglyphis_rustprojecttemplate::burn_demos::InferenceBackend,
-            >()
-        }
+        Command::TensorDemo => kataglyphis_rustprojecttemplate::burn_demos::simple::tensor_demo::<
+            kataglyphis_rustprojecttemplate::burn_demos::InferenceBackend,
+        >(),
 
         Command::LinearRegression {
             epochs,

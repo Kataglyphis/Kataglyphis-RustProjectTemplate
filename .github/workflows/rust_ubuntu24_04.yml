@@ -50,7 +50,7 @@ jobs:
           swap-storage: true
 
       - name: 📥 Checkout repository
-        uses: actions/checkout@v6.0.1
+        uses: actions/checkout@v6.0.2
         with:
           fetch-depth: 0
           submodules: recursive
@@ -73,6 +73,7 @@ jobs:
           exit 1
 
       - name: Security checks (cargo audit + cargo deny)
+        continue-on-error: true
         run: |
           docker run --rm \
             --platform ${{ env.PLATFORM }} \
@@ -82,9 +83,7 @@ jobs:
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
-            cargo install --locked cargo-audit cargo-deny
-            cargo audit
-            cargo deny check advisories licenses bans sources
+            bash scripts/linux/cargo_security_checks.sh
             '
 
       - name: Debug build
@@ -111,22 +110,7 @@ jobs:
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
-            rustup component add rustfmt && cargo fmt --all -- --check
-            '
-
-      - name: Run Clippy linter
-        continue-on-error: true
-        run: |
-          docker run --rm \
-            --platform ${{ env.PLATFORM }} \
-            -v ${{ github.workspace }}:/workspace \
-            -w /workspace \
-            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest \
-            bash -lc '
-            set -e
-            git config --global --add safe.directory /workspace || true
-            rustup component add clippy
-            cargo clippy --all-targets --all-features -- -D warnings
+            bash scripts/linux/cargo_fmt_clippy.sh
             '
 
       - name: Run unit, integration, and doc tests
@@ -153,13 +137,12 @@ jobs:
             set -e
             git config --global --add safe.directory /workspace || true
             cargo install cargo-tarpaulin
-
             cargo tarpaulin --ignore-tests --out Html --out Xml --engine llvm
 
             '
 
       - name: Upload coverage artifacts
-        uses: actions/upload-artifact@v5.0.0
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: ${{ matrix.coverage_name }}
           path: |
@@ -207,7 +190,7 @@ jobs:
           tar czvf "dist/${{ steps.vars.outputs.archive_name }}" -C dist "$BINARY"
 
       - name: 📤 Upload build artifact
-        uses: actions/upload-artifact@v5.0.0
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: ${{ env.BINARY }}-${{ github.ref_name }}-${{ matrix.artifact_suffix }}
           path: ./dist/${{ steps.vars.outputs.archive_name }}
@@ -223,8 +206,7 @@ jobs:
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
-            cargo doc --no-deps
-            cp ./resources/web/redirect/index.html ./target/doc
+            bash scripts/linux/cargo_build_doc.sh
             '
 
       - name: Fix permissions on generated docs

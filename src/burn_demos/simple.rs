@@ -4,9 +4,9 @@ use burn::nn;
 use burn::optim::{AdamConfig, GradientsParams, Optimizer};
 use burn::record::{BinFileRecorder, FullPrecisionSettings, Recorder};
 use burn::tensor::activation::{relu, sigmoid};
-use burn::tensor::{backend::Backend, Tensor, TensorData};
+use burn::tensor::{Tensor, TensorData, backend::Backend};
 
-use crate::burn_demos::{plot, InferenceBackend, TrainingBackend};
+use crate::burn_demos::{InferenceBackend, TrainingBackend, plot};
 
 pub fn tensor_demo<B: Backend>() -> anyhow::Result<()> {
     let device = B::Device::default();
@@ -45,7 +45,11 @@ impl<B: Backend> LinearRegressor<B> {
     }
 }
 
-fn make_regression_batch<B: Backend>(device: &B::Device, batch: usize, step: usize) -> (Tensor<B, 2>, Tensor<B, 2>) {
+fn make_regression_batch<B: Backend>(
+    device: &B::Device,
+    batch: usize,
+    step: usize,
+) -> (Tensor<B, 2>, Tensor<B, 2>) {
     // y = 3x + 2 + noise
     let mut xs = Vec::with_capacity(batch);
     let mut ys = Vec::with_capacity(batch);
@@ -59,7 +63,8 @@ fn make_regression_batch<B: Backend>(device: &B::Device, batch: usize, step: usi
         let x = (r as f32) / (u32::MAX as f32) * 2.0 - 1.0;
 
         // small deterministic noise
-        let noise = (((i as f32) * 12.9898 + (step as f32) * 78.233).sin() * 43758.5453).fract() * 0.05;
+        let noise =
+            (((i as f32) * 12.9898 + (step as f32) * 78.233).sin() * 43_758.547).fract() * 0.05;
         let y = 3.0 * x + 2.0 + noise;
 
         xs.push(x);
@@ -87,7 +92,11 @@ pub fn linear_regression_demo(
     for epoch in 0..epochs {
         let mut loss_sum = 0.0f32;
         for step in 0..steps_per_epoch {
-            let (x, y) = make_regression_batch::<TrainingBackend>(&device, batch_size, epoch * steps_per_epoch + step);
+            let (x, y) = make_regression_batch::<TrainingBackend>(
+                &device,
+                batch_size,
+                epoch * steps_per_epoch + step,
+            );
             let pred = model.forward(x);
             let loss = (pred - y).powf_scalar(2.0).mean();
 
@@ -131,12 +140,7 @@ impl<B: Backend> XorNet<B> {
 }
 
 fn xor_dataset<B: Backend>(device: &B::Device) -> (Tensor<B, 2>, Tensor<B, 2>) {
-    let x = vec![
-        0.0, 0.0,
-        0.0, 1.0,
-        1.0, 0.0,
-        1.0, 1.0,
-    ];
+    let x = vec![0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0];
     let y = vec![0.0, 1.0, 1.0, 0.0];
 
     let x = Tensor::<B, 2>::from_data(TensorData::new(x, [4, 2]), device);
@@ -144,7 +148,11 @@ fn xor_dataset<B: Backend>(device: &B::Device) -> (Tensor<B, 2>, Tensor<B, 2>) {
     (x, y)
 }
 
-pub fn xor_demo(epochs: usize, lr: f64, plot_path: Option<std::path::PathBuf>) -> anyhow::Result<()> {
+pub fn xor_demo(
+    epochs: usize,
+    lr: f64,
+    plot_path: Option<std::path::PathBuf>,
+) -> anyhow::Result<()> {
     let device = <TrainingBackend as Backend>::Device::default();
     let mut model = XorNet::<TrainingBackend>::new(&device);
     let mut optim = AdamConfig::new().init();
@@ -204,7 +212,10 @@ pub fn yolo_tiny_demo(
         let loss = pred.mean();
         let grads = GradientsParams::from_grads(loss.backward(), &model);
         model = optim.step(lr, model, grads);
-        println!("train step {step}/{train_steps} loss={:.6}", loss.into_scalar());
+        println!(
+            "train step {step}/{train_steps} loss={:.6}",
+            loss.into_scalar()
+        );
     }
 
     Ok(())

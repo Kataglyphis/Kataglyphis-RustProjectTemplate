@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::time::{Duration, Instant};
 
 use gstreamer as gst;
@@ -20,7 +20,7 @@ use egui_winit::State as EguiWinitState;
 use sysinfo::{Pid, ProcessesToUpdate, System};
 
 #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-use crate::person_detection::{default_model_path, Detection, PersonDetector};
+use crate::person_detection::{Detection, PersonDetector, default_model_path};
 use crate::resource_monitor;
 
 #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
@@ -197,30 +197,31 @@ fn build_pipeline(frame_tx: std::sync::mpsc::SyncSender<Frame>) -> gst::Pipeline
     appsink.set_callbacks(
         gst_app::AppSinkCallbacks::builder()
             .new_sample(move |sink| {
-                if let Some(sample) = sink.pull_sample().ok() {
-                    if let Some(buffer) = sample.buffer() {
-                        let caps = sample
-                            .caps()
-                            .and_then(|c| c.structure(0))
-                            .map(|s| s.to_owned());
-                        if let Some(structure) = caps {
-                            let width = structure.get::<i32>("width").unwrap_or(640) as u32;
-                            let height = structure.get::<i32>("height").unwrap_or(480) as u32;
-                            if let Ok(map) = buffer.map_readable() {
-                                if let Some(data) = rgba_tightly_packed_copy(map.as_slice(), width, height) {
-                                    #[cfg(target_os = "windows")]
-                                    resource_monitor::record_camera_frame();
+                if let Ok(sample) = sink.pull_sample()
+                    && let Some(buffer) = sample.buffer()
+                {
+                    let caps = sample
+                        .caps()
+                        .and_then(|c| c.structure(0))
+                        .map(|s| s.to_owned());
+                    if let Some(structure) = caps {
+                        let width = structure.get::<i32>("width").unwrap_or(640) as u32;
+                        let height = structure.get::<i32>("height").unwrap_or(480) as u32;
+                        if let Ok(map) = buffer.map_readable()
+                            && let Some(data) =
+                                rgba_tightly_packed_copy(map.as_slice(), width, height)
+                        {
+                            #[cfg(target_os = "windows")]
+                            resource_monitor::record_camera_frame();
 
-                                    let id = frame_id.fetch_add(1, Ordering::Relaxed);
+                            let id = frame_id.fetch_add(1, Ordering::Relaxed);
 
-                                    let _ = frame_tx.try_send(Frame {
-                                        id,
-                                        data: Arc::new(data),
-                                        width,
-                                        height,
-                                    });
-                                }
-                            }
+                            let _ = frame_tx.try_send(Frame {
+                                id,
+                                data: Arc::new(data),
+                                width,
+                                height,
+                            });
                         }
                     }
                 }
@@ -253,10 +254,7 @@ fn start_window(frame_rx: Receiver<Frame>, backends: wgpu::Backends, backend_lab
             }
 
             let window_attributes = WindowAttributes::default()
-                .with_title(format!(
-                    "GStreamer + WGPU [{}]",
-                    self.backend_label
-                ))
+                .with_title(format!("GStreamer + WGPU [{}]", self.backend_label))
                 .with_inner_size(winit::dpi::LogicalSize::new(800.0, 600.0));
 
             let window = event_loop
@@ -312,11 +310,11 @@ fn start_window(frame_rx: Receiver<Frame>, backends: wgpu::Backends, backend_lab
                         self.latest_frame_id = self.latest_frame_id.wrapping_add(1);
                     }
 
-                    if let Some(frame) = self.latest_frame.as_ref() {
-                        if self.uploaded_frame_id != self.latest_frame_id {
-                            state.upload_frame(frame);
-                            self.uploaded_frame_id = self.latest_frame_id;
-                        }
+                    if let Some(frame) = self.latest_frame.as_ref()
+                        && self.uploaded_frame_id != self.latest_frame_id
+                    {
+                        state.upload_frame(frame);
+                        self.uploaded_frame_id = self.latest_frame_id;
                     }
                     if let Err(err) = state.render(window) {
                         eprintln!("Render error: {err:?}");
@@ -461,16 +459,14 @@ impl<'w> WgpuState<'w> {
             .expect("No suitable GPU adapters found on the system!");
 
         let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("device"),
-                    required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::default(),
-                    memory_hints: wgpu::MemoryHints::default(),
-                    trace: wgpu::Trace::default(),
-                    experimental_features: wgpu::ExperimentalFeatures::default(),
-                },
-            )
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("device"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+                memory_hints: wgpu::MemoryHints::default(),
+                trace: wgpu::Trace::default(),
+                experimental_features: wgpu::ExperimentalFeatures::default(),
+            })
             .await
             .expect("Failed to create device");
 
@@ -614,8 +610,7 @@ impl<'w> WgpuState<'w> {
 
         #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
         let (infer_tx, infer_rx, detector_error, model_path) = {
-            let env_override = std::env::var("KATAGLYPHIS_ONNX_MODEL")
-                .ok();
+            let env_override = std::env::var("KATAGLYPHIS_ONNX_MODEL").ok();
             let path = env_override
                 .clone()
                 .unwrap_or_else(|| default_model_path().to_string_lossy().to_string());
@@ -641,6 +636,7 @@ impl<'w> WgpuState<'w> {
                 };
 
                 while let Ok(req) = req_rx.recv() {
+                    #[cfg(target_os = "windows")]
                     let infer_start = Instant::now();
                     let result = match detector.infer_persons_rgba(
                         req.rgba.as_slice(),
@@ -660,9 +656,9 @@ impl<'w> WgpuState<'w> {
                         },
                     };
 
-                    let infer_duration = infer_start.elapsed();
                     #[cfg(target_os = "windows")]
                     {
+                        let infer_duration = infer_start.elapsed();
                         resource_monitor::record_inference_duration(infer_duration);
                         resource_monitor::record_inference_completion();
                     }
@@ -671,12 +667,7 @@ impl<'w> WgpuState<'w> {
                 }
             });
 
-            (
-                Some(req_tx),
-                Some(res_rx),
-                None,
-                Some(path),
-            )
+            (Some(req_tx), Some(res_rx), None, Some(path))
         };
 
         #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
@@ -895,8 +886,7 @@ impl<'w> WgpuState<'w> {
         let infer_time_ns_now = resource_monitor::INFERENCE_TIME_NS_TOTAL.load(Ordering::Relaxed);
         let infer_time_samples_now =
             resource_monitor::INFERENCE_TIME_SAMPLES.load(Ordering::Relaxed);
-        let infer_time_ns_delta =
-            infer_time_ns_now.wrapping_sub(self.overlay_last_infer_time_ns);
+        let infer_time_ns_delta = infer_time_ns_now.wrapping_sub(self.overlay_last_infer_time_ns);
         let infer_time_samples_delta =
             infer_time_samples_now.wrapping_sub(self.overlay_last_infer_time_samples);
         self.overlay_last_infer_time_ns = infer_time_ns_now;
@@ -1008,15 +998,17 @@ impl<'w> WgpuState<'w> {
                         ));
                         ui.label(format!(
                             "CPU: {:.1}%   RSS: {:.1} MiB",
-                            self.overlay_proc_cpu_pct,
-                            self.overlay_proc_rss_mib
+                            self.overlay_proc_cpu_pct, self.overlay_proc_rss_mib
                         ));
                         draw_cpu_history(ui, &self.overlay_cpu_history);
 
                         #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
                         {
                             // Draw bounding boxes in the foreground over the video.
-                            if frame_dimensions.0 > 0 && frame_dimensions.1 > 0 && !self.last_detections.is_empty() {
+                            if frame_dimensions.0 > 0
+                                && frame_dimensions.1 > 0
+                                && !self.last_detections.is_empty()
+                            {
                                 let screen = ctx.content_rect();
                                 let sx = screen.width() / frame_dimensions.0 as f32;
                                 let sy = screen.height() / frame_dimensions.1 as f32;
@@ -1151,12 +1143,12 @@ impl<'w> WgpuState<'w> {
 
             let egui_rpass = encoder
                 .begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("egui_render_pass"),
-                color_attachments: &color_attachments,
-                depth_stencil_attachment: None,
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            })
+                    label: Some("egui_render_pass"),
+                    color_attachments: &color_attachments,
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                })
                 .forget_lifetime();
 
             let mut egui_rpass = egui_rpass;
@@ -1236,9 +1228,11 @@ fn draw_cpu_history(ui: &mut egui::Ui, history: &VecDeque<f32>) {
         let pos = egui::pos2(x, y);
 
         if let Some(prev) = prev {
-            painter.line_segment([prev, pos], egui::Stroke::new(1.5, egui::Color32::LIGHT_BLUE));
+            painter.line_segment(
+                [prev, pos],
+                egui::Stroke::new(1.5, egui::Color32::LIGHT_BLUE),
+            );
         }
         prev = Some(pos);
     }
 }
-

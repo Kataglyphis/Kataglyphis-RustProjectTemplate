@@ -3,9 +3,9 @@ use burn::module::{AutodiffModule, Module};
 use burn::nn;
 use burn::optim::{AdamConfig, GradientsParams, Optimizer};
 use burn::tensor::activation::{relu, sigmoid};
-use burn::tensor::{backend::Backend, Tensor, TensorData};
+use burn::tensor::{Tensor, TensorData, backend::Backend};
 
-use crate::burn_demos::{plot, InferenceBackend, TrainingBackend};
+use crate::burn_demos::{InferenceBackend, TrainingBackend, plot};
 
 #[derive(Module, Debug)]
 struct DeepClassifier<B: Backend> {
@@ -176,20 +176,28 @@ fn eval_two_moons_accuracy(
     Ok(accuracy_from_sigmoid(pred, target))
 }
 
+struct EpochConfig {
+    epoch: usize,
+    steps_per_epoch: usize,
+    lr: f64,
+    batch_size: usize,
+}
+
 fn train_two_moons_epoch(
     mut model: DeepClassifier<TrainingBackend>,
     optim: &mut impl Optimizer<DeepClassifier<TrainingBackend>, TrainingBackend>,
     dataset: &TwoMoonsDataset,
     device: &<TrainingBackend as Backend>::Device,
-    epoch: usize,
-    steps_per_epoch: usize,
-    lr: f64,
-    batch_size: usize,
+    config: &EpochConfig,
 ) -> (DeepClassifier<TrainingBackend>, f32) {
     let mut loss_sum = 0.0f32;
 
-    for step in 0..steps_per_epoch {
-        let (x, y) = dataset.batch::<TrainingBackend>(device, batch_size, epoch * steps_per_epoch + step);
+    for step in 0..config.steps_per_epoch {
+        let (x, y) = dataset.batch::<TrainingBackend>(
+            device,
+            config.batch_size,
+            config.epoch * config.steps_per_epoch + step,
+        );
         let pred = model.forward(x);
 
         // Binary cross-entropy (manual; keeps deps minimal).
@@ -200,15 +208,20 @@ fn train_two_moons_epoch(
         let loss = -(y.clone() * pred.clone().log() + one_minus_y * one_minus_pred.log()).mean();
 
         let grads = GradientsParams::from_grads(loss.backward(), &model);
-        model = optim.step(lr, model, grads);
+        model = optim.step(config.lr, model, grads);
         loss_sum += loss.into_scalar();
 
         if step % 10 == 0 {
-            println!("epoch {epoch} step {step}/{steps_per_epoch} loss={:.6}", loss_sum / (step + 1) as f32);
+            println!(
+                "epoch {} step {step}/{} loss={:.6}",
+                config.epoch,
+                config.steps_per_epoch,
+                loss_sum / (step + 1) as f32
+            );
         }
     }
 
-    let loss_avg = loss_sum / steps_per_epoch.max(1) as f32;
+    let loss_avg = loss_sum / config.steps_per_epoch.max(1) as f32;
     (model, loss_avg)
 }
 
@@ -229,7 +242,13 @@ pub fn two_moons_demo(
 
     let mut losses = Vec::with_capacity(epochs);
     for epoch in 0..epochs {
-        let (m, loss) = train_two_moons_epoch(model, &mut optim, &dataset, &device, epoch, steps_per_epoch, lr, batch_size);
+        let config = EpochConfig {
+            epoch,
+            steps_per_epoch,
+            lr,
+            batch_size,
+        };
+        let (m, loss) = train_two_moons_epoch(model, &mut optim, &dataset, &device, &config);
         model = m;
         losses.push(loss);
 

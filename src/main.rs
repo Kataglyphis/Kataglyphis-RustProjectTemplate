@@ -9,11 +9,11 @@ mod gui;
 #[cfg(feature = "gui_windows")]
 mod gui_windows;
 
+mod logging;
 #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
 mod person_detection;
 mod resource_monitor;
 mod utils;
-mod logging;
 
 #[derive(Parser)]
 #[command(name = "file_tool")]
@@ -155,10 +155,7 @@ async fn main() -> Result<()> {
                 gui::run();
             }
 
-            #[cfg(not(any(
-                feature = "gui_windows",
-                all(feature = "gui_unix", not(windows))
-            )))]
+            #[cfg(not(any(feature = "gui_windows", all(feature = "gui_unix", not(windows)))))]
             {
                 eprintln!(
                     "GUI feature is disabled. Enable --features gui_windows (WGPU) or gui_unix (GTK on non-Windows)."
