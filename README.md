@@ -161,6 +161,11 @@ Overlay:
 - Zeigt FPS, Inferenz-Latenz, CPU/RSS und eine CPU-Historie.
 - Inferenz kann im Overlay ein-/ausgeschaltet werden.
 
+## Analysis
+```bash
+cargo +nightly check --manifest-path Cargo.toml --target wasm32-unknown-unknown -Z build-std=std,panic_abort
+```
+
 ### Resource usage logging (CPU/GPU/RAM)
 
 ```bash
