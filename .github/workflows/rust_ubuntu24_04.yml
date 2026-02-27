@@ -179,9 +179,12 @@ jobs:
         shell: bash
         id: vars
         run: |
-          ARCHIVE_NAME="${BINARY}-${VERSION}-${{ matrix.runner }}-${ARCH}.tar.gz"
+          # sanitize VERSION (replace slashes with hyphens)
+          VERSION_SAFE=${VERSION//\//-}
+          ARCHIVE_NAME="dist/${BINARY}-${VERSION_SAFE}-${{ matrix.runner }}-${ARCH}.tar.gz"
+          echo "VERSION_SAFE=$VERSION_SAFE" >> "$GITHUB_OUTPUT"
           echo "archive_name=$ARCHIVE_NAME" >> "$GITHUB_OUTPUT"
-
+          
       - name: 📦 Create archive
         shell: bash
         run: |
