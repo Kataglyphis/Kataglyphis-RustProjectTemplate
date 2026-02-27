@@ -184,20 +184,25 @@ jobs:
           ARCHIVE_NAME="dist/${BINARY}-${VERSION_SAFE}-${{ matrix.runner }}-${ARCH}.tar.gz"
           echo "VERSION_SAFE=$VERSION_SAFE" >> "$GITHUB_OUTPUT"
           echo "archive_name=$ARCHIVE_NAME" >> "$GITHUB_OUTPUT"
-          
+
       - name: 📦 Create archive
         shell: bash
         run: |
-          mkdir -p dist
+          # ensure archive parent dir exists
+          ARCHIVE="dist/${{ steps.vars.outputs.archive_name }}"
+          # note: steps.vars.outputs.archive_name already starts with "dist/...", avoid double-dist
+          ARCHIVE="${{ steps.vars.outputs.archive_name }}"
+          mkdir -p "$(dirname "$ARCHIVE")"
+          # copy binary to staging dir and create tar (archive will contain only the binary filename)
           cp "target/release/$BINARY_FILE" "dist/$BINARY"
-          tar czvf "dist/${{ steps.vars.outputs.archive_name }}" -C dist "$BINARY"
+          tar -C dist -czvf "$ARCHIVE" "$BINARY"
 
       - name: 📤 Upload build artifact
         uses: actions/upload-artifact@v6.0.0
         with:
           name: ${{ env.BINARY }}-${{ github.ref_name }}-${{ matrix.artifact_suffix }}
           path: ./dist/${{ steps.vars.outputs.archive_name }}
-
+          
       - name: Create docs
         if: matrix.docs
         run: |
