@@ -51,6 +51,7 @@ burn_demos = [
 ]
 
 [dependencies]
+cxx = "1.0"
 flutter_rust_bridge = "=2.11.1"
 anyhow = "1"
 log = "0.4"
@@ -106,6 +107,9 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
 assert_cmd = "2"
 predicates = "3"
 tempfile = "3"
+
+[build-dependencies]
+cxx-build = "1.0"
 
 [patch.crates-io]
 gpu-allocator = { git = "https://github.com/Traverse-Research/gpu-allocator", branch = "main" }
