@@ -1,6 +1,5 @@
 // src/utils.rs
 use anyhow::{Context, Result};
-use tokio::fs;
 
 pub struct FileStats {
     pub lines: usize,
@@ -8,9 +7,17 @@ pub struct FileStats {
     pub bytes: usize,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub async fn read_file(path: &str) -> Result<String> {
-    let content = fs::read_to_string(path)
+    let content = tokio::fs::read_to_string(path)
         .await
+        .with_context(|| format!("Failed to read file at '{}'", path))?;
+    Ok(content)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub async fn read_file(path: &str) -> Result<String> {
+    let content = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read file at '{}'", path))?;
     Ok(content)
 }

@@ -1,10 +1,11 @@
 #![doc = include_str!("../docs/_static/getting-started.md")]
 
+#[cfg(not(target_arch = "wasm32"))]
 #[cxx::bridge]
 mod ffi {
-	extern "Rust" {
-		fn rusty_cxxbridge_integer() -> i32;
-	}
+    extern "Rust" {
+        fn rusty_cxxbridge_integer() -> i32;
+    }
 }
 
 pub mod api;
@@ -17,10 +18,10 @@ mod frb_generated;
 mod person_detection;
 
 pub fn rusty_cxxbridge_integer() -> i32 {
-	322
+    322
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn rusty_extern_c_integer() -> i32 {
-	322
+    322
 }
