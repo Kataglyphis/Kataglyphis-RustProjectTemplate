@@ -310,6 +310,6 @@ fn windows_gpu_sample() -> Option<GpuSample> {
 #[cfg(target_os = "windows")]
 fn warn_wmi_once(flag: &std::sync::atomic::AtomicBool, msg: &str) {
     if !flag.swap(true, Ordering::Relaxed) {
-        warn!("{msg}");
+        log::warn!("{msg}");
     }
 }
