@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../../ExternalLib/Kataglyphis-ContainerHub/linux/scripts/01-core/logging.sh"
+
 AUTO_YES="${1:-}"
 
-echo "[1/4] Updating lockfile packages..."
+info "[1/4] Updating lockfile packages..."
 cargo update
 
-echo "[2/4] Ensuring cargo-edit is installed..."
+info "[2/4] Ensuring cargo-edit is installed..."
 cargo install cargo-edit
 
-echo "[3/4] Running dry-run upgrade preview..."
+info "[3/4] Running dry-run upgrade preview..."
 cargo upgrade --dry-run --verbose
 
 proceed_upgrade() {
-	echo "[4/4] Applying incompatible upgrades..."
+	info "[4/4] Applying incompatible upgrades..."
 	cargo upgrade --incompatible --pinned
 }
 
@@ -29,9 +32,9 @@ if [[ -t 0 ]]; then
 			proceed_upgrade
 			;;
 		*)
-			echo "Upgrade cancelled by user after dry-run."
+			warn "Upgrade cancelled by user after dry-run."
 			;;
 	esac
 else
-	echo "Non-interactive shell detected. Skipping real upgrade. Use --yes to proceed automatically."
+	warn "Non-interactive shell detected. Skipping real upgrade. Use --yes to proceed automatically."
 fi
