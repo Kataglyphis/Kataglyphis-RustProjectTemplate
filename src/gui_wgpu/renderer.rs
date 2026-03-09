@@ -3,7 +3,6 @@ use std::sync::atomic::Ordering;
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::time::{Duration, Instant};
 
-use pollster::block_on;
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 

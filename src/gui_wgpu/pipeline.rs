@@ -5,6 +5,7 @@ use gstreamer as gst;
 use gstreamer::prelude::*;
 use gstreamer_app as gst_app;
 
+#[cfg(target_os = "windows")]
 use crate::resource_monitor;
 
 #[derive(Clone)]

@@ -7,6 +7,7 @@ use std::sync::mpsc::{Receiver, sync_channel};
 use std::time::{Duration, Instant};
 
 use gstreamer as gst;
+use gstreamer::prelude::ElementExt;
 use pollster::block_on;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
