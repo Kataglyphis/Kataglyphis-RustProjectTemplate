@@ -311,7 +311,7 @@ Get-AppxPackage -Name "Kataglyphis.RustProjectTemplate" | Remove-AppxPackage
 ### Linux
 ```bash
 # WGPU (recommended)
-cargo run --features gui_linux -- gui --backend vulkan
+cargo run --features gui_wgpu -- gui --backend vulkan
 
 # GTK demo
 cargo run --features gui_unix -- gui

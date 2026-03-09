@@ -6,7 +6,7 @@ use burn::record::{BinFileRecorder, FullPrecisionSettings, Recorder};
 use burn::tensor::activation::{relu, sigmoid};
 use burn::tensor::{Tensor, TensorData, backend::Backend};
 
-use crate::burn_demos::{InferenceBackend, TrainingBackend, plot};
+use crate::burn_demos::{InferenceBackend, TrainingBackend, lcg::Lcg, losses, plot};
 
 pub fn tensor_demo<B: Backend>() -> anyhow::Result<()> {
     let device = B::Device::default();
@@ -54,13 +54,9 @@ fn make_regression_batch<B: Backend>(
     let mut xs = Vec::with_capacity(batch);
     let mut ys = Vec::with_capacity(batch);
 
-    let mut state = (step as u64) ^ 0xD6E8_FEB8_6659_FD93;
+    let mut rng = Lcg::new((step as u64) ^ 0xD6E8_FEB8_6659_FD93);
     for i in 0..batch {
-        state = state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        let r = (state >> 32) as u32;
-        let x = (r as f32) / (u32::MAX as f32) * 2.0 - 1.0;
+        let x = rng.next_f32() * 2.0 - 1.0;
 
         // small deterministic noise
         let noise =
@@ -163,11 +159,7 @@ pub fn xor_demo(
     for epoch in 0..epochs {
         let pred = model.forward(x.clone());
 
-        let eps = 1e-6;
-        let pred = pred.clamp(eps, 1.0 - eps);
-        let one_minus_y = y.clone().mul_scalar(-1.0f32).add_scalar(1.0f32);
-        let one_minus_pred = pred.clone().mul_scalar(-1.0f32).add_scalar(1.0f32);
-        let loss = -(y.clone() * pred.clone().log() + one_minus_y * one_minus_pred.log()).mean();
+        let loss = losses::binary_cross_entropy(pred, y.clone());
 
         let grads = GradientsParams::from_grads(loss.backward(), &model);
         model = optim.step(lr, model, grads);

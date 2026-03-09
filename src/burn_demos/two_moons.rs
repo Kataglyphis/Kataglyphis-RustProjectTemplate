@@ -5,7 +5,7 @@ use burn::optim::{AdamConfig, GradientsParams, Optimizer};
 use burn::tensor::activation::{relu, sigmoid};
 use burn::tensor::{Tensor, TensorData, backend::Backend};
 
-use crate::burn_demos::{InferenceBackend, TrainingBackend, plot};
+use crate::burn_demos::{InferenceBackend, TrainingBackend, lcg::Lcg, losses, plot};
 
 #[derive(Module, Debug)]
 struct DeepClassifier<B: Backend> {
@@ -102,36 +102,6 @@ impl TwoMoonsDataset {
     }
 }
 
-struct Lcg {
-    state: u64,
-}
-
-impl Lcg {
-    fn new(seed: u64) -> Self {
-        Self { state: seed }
-    }
-
-    fn next_u32(&mut self) -> u32 {
-        self.state = self
-            .state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        (self.state >> 32) as u32
-    }
-
-    fn next_f32(&mut self) -> f32 {
-        let v = self.next_u32();
-        (v as f32) / (u32::MAX as f32)
-    }
-
-    fn next_normal(&mut self) -> f32 {
-        // Box-Muller.
-        let u1 = self.next_f32().max(1e-7);
-        let u2 = self.next_f32();
-        (-2.0 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos()
-    }
-}
-
 fn accuracy_from_sigmoid(pred: &[f32], target: &[f32]) -> f32 {
     let mut correct = 0usize;
     let n = pred.len().min(target.len()).max(1);
@@ -200,12 +170,8 @@ fn train_two_moons_epoch(
         );
         let pred = model.forward(x);
 
-        // Binary cross-entropy (manual; keeps deps minimal).
-        let eps = 1e-6;
-        let pred = pred.clamp(eps, 1.0 - eps);
-        let one_minus_y = y.clone().mul_scalar(-1.0f32).add_scalar(1.0f32);
-        let one_minus_pred = pred.clone().mul_scalar(-1.0f32).add_scalar(1.0f32);
-        let loss = -(y.clone() * pred.clone().log() + one_minus_y * one_minus_pred.log()).mean();
+        // Binary cross-entropy.
+        let loss = losses::binary_cross_entropy(pred, y.clone());
 
         let loss_val = loss.clone().into_scalar();
         let grads = GradientsParams::from_grads(loss.backward(), &model);

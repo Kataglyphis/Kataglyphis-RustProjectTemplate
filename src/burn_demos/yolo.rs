@@ -5,6 +5,8 @@ use burn::tensor::activation::relu;
 use burn::tensor::backend::Backend;
 use burn::tensor::{Tensor, TensorData};
 
+use super::lcg::Lcg;
+
 #[derive(Module, Debug)]
 pub struct YoloTiny<B: Backend> {
     c1: nn::conv::Conv2d<B>,
@@ -76,28 +78,5 @@ impl<B: Backend> YoloTiny<B> {
             data.push(rng.next_f32());
         }
         Tensor::<B, 4>::from_data(TensorData::new(data, [batch, 3, height, width]), device)
-    }
-}
-
-struct Lcg {
-    state: u64,
-}
-
-impl Lcg {
-    fn new(seed: u64) -> Self {
-        Self { state: seed }
-    }
-
-    fn next_u32(&mut self) -> u32 {
-        self.state = self
-            .state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        (self.state >> 32) as u32
-    }
-
-    fn next_f32(&mut self) -> f32 {
-        let v = self.next_u32();
-        (v as f32) / (u32::MAX as f32)
     }
 }

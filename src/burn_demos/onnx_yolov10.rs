@@ -8,6 +8,8 @@ use ort::session::Session;
 use std::path::Path;
 use std::time::Instant;
 
+use super::lcg::Lcg;
+
 pub fn onnx_yolov10_demo<TrainB: AutodiffBackend>(
     model_path: &Path,
     warmup: usize,
@@ -187,13 +189,9 @@ fn make_demo_image_1x3x640x640(seed: u64) -> Array4<f32> {
 
     let len = B * C * H * W;
     let mut data = Vec::with_capacity(len);
-    let mut state = seed ^ 0x9E37_79B9_7F4A_7C15;
+    let mut rng = Lcg::new(seed ^ 0x9E37_79B9_7F4A_7C15);
     for _ in 0..len {
-        state = state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        let v = (state >> 32) as u32;
-        data.push((v as f32) / (u32::MAX as f32));
+        data.push(rng.next_f32());
     }
 
     Array4::from_shape_vec((B, C, H, W), data).expect("shape should be valid")

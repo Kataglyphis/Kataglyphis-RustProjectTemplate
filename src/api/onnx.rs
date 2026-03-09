@@ -1,8 +1,16 @@
 use log::error;
 
-/// Person detection result in *original image pixel coordinates*.
+#[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+use crate::person_detection::Detection;
+
+/// Re-export `Detection` as the public API type for person detection results.
+///
+/// Previously this module defined a separate `PersonDetection` struct with
+/// identical fields and manually mapped between the two. Now we just re-use
+/// the canonical type.
+#[cfg(not(any(feature = "onnx_tract", feature = "onnxruntime")))]
 #[derive(Clone, Debug)]
-pub struct PersonDetection {
+pub struct Detection {
     pub x1: f32,
     pub y1: f32,
     pub x2: f32,
@@ -18,7 +26,7 @@ pub fn detect_persons_rgba(
     width: u32,
     height: u32,
     score_threshold: f32,
-) -> Vec<PersonDetection> {
+) -> Vec<Detection> {
     // Note: `person_detection` is feature-gated; keep this function compilable even when
     // ONNX features are disabled (e.g. for WASM builds).
     let resolved_model_path = if model_path.trim().is_empty() {
@@ -53,7 +61,7 @@ fn detect_persons_rgba_impl(
     width: u32,
     height: u32,
     score_threshold: f32,
-) -> anyhow::Result<Vec<PersonDetection>> {
+) -> anyhow::Result<Vec<Detection>> {
     use std::sync::{Mutex, OnceLock};
 
     use crate::person_detection::PersonDetector;
@@ -82,21 +90,9 @@ fn detect_persons_rgba_impl(
     }
 
     let detector = guard.as_ref().expect("Detector missing");
-    let dets = detector
+    detector
         .detector
-        .infer_persons_rgba(rgba, width, height, score_threshold)?;
-
-    Ok(dets
-        .into_iter()
-        .map(|d| PersonDetection {
-            x1: d.x1,
-            y1: d.y1,
-            x2: d.x2,
-            y2: d.y2,
-            score: d.score,
-            class_id: d.class_id,
-        })
-        .collect())
+        .infer_persons_rgba(rgba, width, height, score_threshold)
 }
 
 #[cfg(not(any(feature = "onnx_tract", feature = "onnxruntime")))]
@@ -106,6 +102,6 @@ fn detect_persons_rgba_impl(
     _width: u32,
     _height: u32,
     _score_threshold: f32,
-) -> anyhow::Result<Vec<PersonDetection>> {
+) -> anyhow::Result<Vec<Detection>> {
     anyhow::bail!("ONNX inference is disabled. Build with --features onnx_tract (or onnxruntime*)")
 }

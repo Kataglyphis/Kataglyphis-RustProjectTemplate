@@ -16,7 +16,7 @@ pub mod burn_demos;
 
 mod frb_generated;
 #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-mod person_detection;
+pub mod person_detection;
 
 pub fn rusty_cxxbridge_integer() -> i32 {
     322

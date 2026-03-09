@@ -166,6 +166,7 @@ fn main() -> anyhow::Result<()> {
         } => {
             let model_path = model_path.unwrap_or_else(|| {
                 std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("resources")
                     .join("models")
                     .join("yolov10m.onnx")
             });

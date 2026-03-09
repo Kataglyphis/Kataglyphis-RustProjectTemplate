@@ -18,6 +18,7 @@ default = []
 gui = ["dep:gstreamer", "dep:gstreamer-video", "dep:glib"]
 gui_unix = ["gui", "dep:gtk"]
 gui_linux = ["gui_windows"]
+gui_wgpu = ["gui_windows"]
 gui_windows = [
 	"gui",
 	"dep:gstreamer-app",

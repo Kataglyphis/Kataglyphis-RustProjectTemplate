@@ -1,6 +1,8 @@
 use burn_autodiff::Autodiff;
 use burn_ndarray::NdArray;
 
+pub mod lcg;
+pub mod losses;
 pub mod onnx_yolov10;
 pub mod plot;
 pub mod simple;

@@ -7,7 +7,7 @@ use std::io::Write;
 #[cfg(all(feature = "gui_unix", not(windows)))]
 mod gui;
 #[cfg(feature = "gui_windows")]
-mod gui_windows;
+mod gui_wgpu;
 
 mod logging;
 #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
@@ -146,7 +146,7 @@ async fn main() -> Result<()> {
             #[cfg(feature = "gui_windows")]
             {
                 // WGPU/Winit GUI (cross-platform)
-                gui_windows::run_with_backend(&backend);
+                gui_wgpu::run_with_backend(&backend);
             }
 
             #[cfg(all(feature = "gui_unix", not(windows), not(feature = "gui_windows")))]

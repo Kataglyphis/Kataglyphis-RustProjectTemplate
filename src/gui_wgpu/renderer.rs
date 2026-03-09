@@ -1,377 +1,27 @@
 use std::collections::VecDeque;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::time::{Duration, Instant};
 
-use gstreamer as gst;
-use gstreamer::prelude::*;
-use gstreamer_app as gst_app;
 use pollster::block_on;
 use wgpu::util::DeviceExt;
-use winit::application::ApplicationHandler;
-use winit::event::WindowEvent;
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::window::{Window, WindowAttributes, WindowId};
+use winit::window::Window;
 
 use egui::{Context as EguiContext, ViewportId};
 use egui_wgpu::{Renderer as EguiRenderer, ScreenDescriptor};
 use egui_winit::State as EguiWinitState;
+use std::sync::Arc;
 use sysinfo::{Pid, ProcessesToUpdate, System};
 
 #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
 use crate::person_detection::{Detection, PersonDetector, default_model_path};
 use crate::resource_monitor;
 
-#[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-struct InferRequest {
-    frame_id: u64,
-    rgba: Arc<Vec<u8>>,
-    width: u32,
-    height: u32,
-    score_threshold: f32,
-}
+use super::inference::{InferRequest, InferResult};
+use super::overlay::{bytes_to_mib, draw_cpu_history};
+use super::pipeline::Frame;
 
-#[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-struct InferResult {
-    frame_id: u64,
-    detections: Vec<Detection>,
-    error: Option<String>,
-}
-
-fn parse_backends(backend: &str) -> wgpu::Backends {
-    match backend.trim().to_ascii_lowercase().as_str() {
-        "vulkan" | "vk" => wgpu::Backends::VULKAN,
-        "primary" | "auto" => wgpu::Backends::PRIMARY,
-        "dx12" | "d3d12" => {
-            #[cfg(target_os = "windows")]
-            {
-                wgpu::Backends::DX12
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                eprintln!(
-                    "--backend dx12 is only available on Windows; falling back to primary. Valid: vulkan | primary"
-                );
-                wgpu::Backends::PRIMARY
-            }
-        }
-        other => {
-            #[cfg(target_os = "windows")]
-            {
-                eprintln!(
-                    "Unknown --backend '{other}', falling back to dx12. Valid: dx12 | vulkan | primary"
-                );
-                wgpu::Backends::DX12
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                eprintln!(
-                    "Unknown --backend '{other}', falling back to primary. Valid: vulkan | primary"
-                );
-                wgpu::Backends::PRIMARY
-            }
-        }
-    }
-}
-
-pub fn run_with_backend(backend: &str) {
-    run_inner(parse_backends(backend), backend);
-}
-
-fn run_inner(backends: wgpu::Backends, backend_label: &str) {
-    gst::init().expect("Failed to initialize GStreamer");
-
-    let (frame_tx, frame_rx) = sync_channel::<Frame>(2);
-    let pipeline = build_pipeline(frame_tx);
-
-    pipeline
-        .set_state(gst::State::Playing)
-        .expect("Failed to start pipeline");
-
-    start_window(frame_rx, backends, backend_label);
-
-    pipeline
-        .set_state(gst::State::Null)
-        .expect("Failed to stop pipeline");
-}
-
-#[derive(Clone)]
-struct Frame {
-    id: u64,
-    data: Arc<Vec<u8>>,
-    width: u32,
-    height: u32,
-}
-
-fn rgba_tightly_packed_copy(src: &[u8], width: u32, height: u32) -> Option<Vec<u8>> {
-    if width == 0 || height == 0 {
-        return None;
-    }
-
-    let row_bytes = (width as usize).saturating_mul(4);
-    let expected_len = row_bytes.saturating_mul(height as usize);
-
-    if src.len() == expected_len {
-        return Some(src.to_vec());
-    }
-
-    // Many GStreamer buffers are padded per row (stride). We conservatively try to
-    // interpret the buffer as a single RGBA plane with a constant stride.
-    if src.len() < expected_len {
-        return None;
-    }
-
-    let h = height as usize;
-    let mut stride = src.len() / h;
-    if stride < row_bytes {
-        return None;
-    }
-
-    // If there is trailing padding after the last row, prefer a stride that still
-    // lets us safely read all rows.
-    while stride.saturating_mul(h) > src.len() {
-        if stride == 0 {
-            return None;
-        }
-        stride -= 1;
-    }
-
-    let mut out = vec![0u8; expected_len];
-    for y in 0..h {
-        let src_start = y.saturating_mul(stride);
-        let src_end = src_start.saturating_add(row_bytes).min(src.len());
-        let dst_start = y.saturating_mul(row_bytes);
-        let dst_end = dst_start.saturating_add(row_bytes).min(out.len());
-
-        if src_end <= src_start || dst_end <= dst_start {
-            return None;
-        }
-
-        out[dst_start..dst_end].copy_from_slice(&src[src_start..src_end]);
-    }
-
-    Some(out)
-}
-
-fn build_pipeline(frame_tx: std::sync::mpsc::SyncSender<Frame>) -> gst::Pipeline {
-    let pipeline = gst::Pipeline::new();
-
-    let frame_id = AtomicU64::new(1);
-
-    let src = gst::ElementFactory::make("mfvideosrc")
-        .build()
-        .or_else(|_| gst::ElementFactory::make("autovideosrc").build())
-        .expect("Failed to create a video source");
-
-    let convert = gst::ElementFactory::make("videoconvert")
-        .build()
-        .expect("Failed to create videoconvert");
-
-    let caps = gst::Caps::builder("video/x-raw")
-        .field("format", "RGBA")
-        .build();
-
-    let capsfilter = gst::ElementFactory::make("capsfilter")
-        .property("caps", &caps)
-        .build()
-        .expect("Failed to create capsfilter");
-
-    let sink = gst::ElementFactory::make("appsink")
-        .property("emit-signals", true)
-        .property("max-buffers", 2u32)
-        .property("drop", true)
-        .build()
-        .expect("Failed to create appsink");
-
-    pipeline
-        .add_many([&src, &convert, &capsfilter, &sink])
-        .expect("Failed to add elements");
-    gst::Element::link_many([&src, &convert, &capsfilter, &sink]).expect("Failed to link elements");
-
-    let appsink = sink
-        .clone()
-        .dynamic_cast::<gst_app::AppSink>()
-        .expect("Sink is not an appsink");
-
-    appsink.set_callbacks(
-        gst_app::AppSinkCallbacks::builder()
-            .new_sample(move |sink| {
-                if let Ok(sample) = sink.pull_sample()
-                    && let Some(buffer) = sample.buffer()
-                {
-                    let caps = sample
-                        .caps()
-                        .and_then(|c| c.structure(0))
-                        .map(|s| s.to_owned());
-                    if let Some(structure) = caps {
-                        let width = structure.get::<i32>("width").unwrap_or(640) as u32;
-                        let height = structure.get::<i32>("height").unwrap_or(480) as u32;
-                        if let Ok(map) = buffer.map_readable()
-                            && let Some(data) =
-                                rgba_tightly_packed_copy(map.as_slice(), width, height)
-                        {
-                            #[cfg(target_os = "windows")]
-                            resource_monitor::record_camera_frame();
-
-                            let id = frame_id.fetch_add(1, Ordering::Relaxed);
-
-                            let _ = frame_tx.try_send(Frame {
-                                id,
-                                data: Arc::new(data),
-                                width,
-                                height,
-                            });
-                        }
-                    }
-                }
-                Ok(gst::FlowSuccess::Ok)
-            })
-            .build(),
-    );
-
-    pipeline
-}
-
-fn start_window(frame_rx: Receiver<Frame>, backends: wgpu::Backends, backend_label: &str) {
-    struct GuiApp {
-        frame_rx: Receiver<Frame>,
-        backends: wgpu::Backends,
-        backend_label: String,
-        window: Option<&'static Window>,
-        state: Option<WgpuState<'static>>,
-        latest_frame: Option<Frame>,
-        latest_frame_id: u64,
-        uploaded_frame_id: u64,
-        next_redraw_deadline: Instant,
-        redraw_interval: Duration,
-    }
-
-    impl ApplicationHandler for GuiApp {
-        fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-            if self.window.is_some() {
-                return;
-            }
-
-            let window_attributes = WindowAttributes::default()
-                .with_title(format!("GStreamer + WGPU [{}]", self.backend_label))
-                .with_inner_size(winit::dpi::LogicalSize::new(800.0, 600.0));
-
-            let window = event_loop
-                .create_window(window_attributes)
-                .expect("Failed to create window");
-
-            // wgpu::Surface borrows the Window by lifetime; `run_app` stores the handler for the
-            // duration of the loop, so keep a stable Window reference for the app lifetime.
-            let window: &'static Window = Box::leak(Box::new(window));
-            let state = block_on(WgpuState::new(window, event_loop, self.backends));
-
-            self.window = Some(window);
-            self.state = Some(state);
-
-            self.next_redraw_deadline = Instant::now();
-
-            window.request_redraw();
-        }
-
-        fn window_event(
-            &mut self,
-            event_loop: &ActiveEventLoop,
-            window_id: WindowId,
-            event: WindowEvent,
-        ) {
-            let Some(window) = self.window else {
-                return;
-            };
-            if window_id != window.id() {
-                return;
-            }
-            let Some(state) = self.state.as_mut() else {
-                return;
-            };
-
-            state.handle_window_event(window, &event);
-
-            match event {
-                WindowEvent::CloseRequested => event_loop.exit(),
-                WindowEvent::Resized(size) => {
-                    state.resize(size);
-                    window.request_redraw();
-                }
-                WindowEvent::ScaleFactorChanged { .. } => {
-                    let size = window.inner_size();
-                    state.resize(size);
-                    window.request_redraw();
-                }
-                WindowEvent::RedrawRequested => {
-                    // Never block the UI thread; if there is a new frame, upload it once.
-                    if let Ok(frame) = self.frame_rx.try_recv() {
-                        self.latest_frame = Some(frame);
-                        self.latest_frame_id = self.latest_frame_id.wrapping_add(1);
-                    }
-
-                    if let Some(frame) = self.latest_frame.as_ref()
-                        && self.uploaded_frame_id != self.latest_frame_id
-                    {
-                        state.upload_frame(frame);
-                        self.uploaded_frame_id = self.latest_frame_id;
-                    }
-                    if let Err(err) = state.render(window) {
-                        eprintln!("Render error: {err:?}");
-                        event_loop.exit();
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-            // Keep the UI responsive even if the video source is low-FPS.
-            // We upload new video frames only when they arrive, but we redraw at a steady cadence
-            // so egui interactions feel smooth.
-            let Some(window) = self.window else {
-                return;
-            };
-
-            let mut got_frame = false;
-            while let Ok(frame) = self.frame_rx.try_recv() {
-                self.latest_frame = Some(frame);
-                self.latest_frame_id = self.latest_frame_id.wrapping_add(1);
-                got_frame = true;
-            }
-
-            let now = Instant::now();
-            if now >= self.next_redraw_deadline {
-                self.next_redraw_deadline = now + self.redraw_interval;
-                window.request_redraw();
-            } else if got_frame {
-                window.request_redraw();
-            }
-
-            event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_redraw_deadline));
-        }
-    }
-
-    let event_loop = EventLoop::new().expect("Failed to create event loop");
-    let mut app = GuiApp {
-        frame_rx,
-        backends,
-        backend_label: backend_label.to_string(),
-        window: None,
-        state: None,
-        latest_frame: None,
-        latest_frame_id: 0,
-        uploaded_frame_id: 0,
-        next_redraw_deadline: Instant::now(),
-        redraw_interval: Duration::from_millis(16),
-    };
-
-    event_loop
-        .run_app(&mut app)
-        .expect("Failed to run event loop");
-}
-
-struct WgpuState<'w> {
+pub struct WgpuState<'w> {
     surface: wgpu::Surface<'w>,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -433,15 +83,13 @@ struct WgpuState<'w> {
 }
 
 impl<'w> WgpuState<'w> {
-    async fn new(
+    pub async fn new(
         window: &'w Window,
         display_target: &dyn wgpu::rwh::HasDisplayHandle,
         backends: wgpu::Backends,
     ) -> Self {
         let size = window.inner_size();
 
-        // Backend selection is controlled via CLI (--backend) to make it easy to
-        // switch between DX12 and Vulkan without changing code.
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends,
             ..Default::default()
@@ -478,7 +126,6 @@ impl<'w> WgpuState<'w> {
             .find(|f| f.is_srgb())
             .unwrap_or(surface_caps.formats[0]);
 
-        // Use FIFO to match widest support and avoid swapchain semaphore reuse issues on Vulkan.
         let present_mode = wgpu::PresentMode::Fifo;
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -493,7 +140,6 @@ impl<'w> WgpuState<'w> {
         surface.configure(&device, &config);
 
         let vertex_data = [
-            // pos       // uv
             Vertex {
                 position: [-1.0, -1.0],
                 tex_coords: [0.0, 1.0],
@@ -536,7 +182,7 @@ impl<'w> WgpuState<'w> {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/tex_quad.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/tex_quad.wgsl").into()),
         });
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -750,7 +396,7 @@ impl<'w> WgpuState<'w> {
         }
     }
 
-    fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
+    pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         if new_size.width > 0 && new_size.height > 0 {
             self.config.width = new_size.width;
             self.config.height = new_size.height;
@@ -759,14 +405,14 @@ impl<'w> WgpuState<'w> {
         }
     }
 
-    fn handle_window_event(&mut self, window: &Window, event: &winit::event::WindowEvent) {
+    pub fn handle_window_event(&mut self, window: &Window, event: &winit::event::WindowEvent) {
         let response = self.egui_state.on_window_event(window, event);
         if response.repaint {
             window.request_redraw();
         }
     }
 
-    fn upload_frame(&mut self, frame: &Frame) {
+    pub fn upload_frame(&mut self, frame: &Frame) {
         self.current_frame_id = Some(frame.id);
         self.poll_inference();
         let needs_recreate = match &self.texture {
@@ -836,7 +482,7 @@ impl<'w> WgpuState<'w> {
         self.maybe_infer(frame);
     }
 
-    fn poll_inference(&mut self) {
+    pub fn poll_inference(&mut self) {
         #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
         if let Some(rx) = self.infer_rx.as_ref() {
             while let Ok(res) = rx.try_recv() {
@@ -848,7 +494,7 @@ impl<'w> WgpuState<'w> {
         }
     }
 
-    fn update_overlay_stats(&mut self) {
+    pub fn update_overlay_stats(&mut self) {
         let now = Instant::now();
         if now.duration_since(self.overlay_last_sample_at) < Duration::from_millis(500) {
             return;
@@ -929,8 +575,6 @@ impl<'w> WgpuState<'w> {
             return;
         }
 
-        // Clone only when we actually schedule inference (decimated by `infer_every`).
-        // This keeps the UI thread responsive even for heavy models.
         if tx
             .try_send(InferRequest {
                 frame_id: frame.id,
@@ -946,7 +590,7 @@ impl<'w> WgpuState<'w> {
         }
     }
 
-    fn render(&mut self, window: &Window) -> Result<(), wgpu::SurfaceError> {
+    pub fn render(&mut self, window: &Window) -> Result<(), wgpu::SurfaceError> {
         self.poll_inference();
 
         self.egui_screen.pixels_per_point = window.scale_factor() as f32;
@@ -1004,7 +648,6 @@ impl<'w> WgpuState<'w> {
 
                         #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
                         {
-                            // Draw bounding boxes in the foreground over the video.
                             if frame_dimensions.0 > 0
                                 && frame_dimensions.1 > 0
                                 && !self.last_detections.is_empty()
@@ -1194,45 +837,5 @@ impl Vertex {
                 },
             ],
         }
-    }
-}
-
-fn bytes_to_mib(bytes: u64) -> f32 {
-    (bytes as f32) / (1024.0 * 1024.0)
-}
-
-fn draw_cpu_history(ui: &mut egui::Ui, history: &VecDeque<f32>) {
-    let desired = egui::vec2(160.0, 48.0);
-    let (rect, _response) = ui.allocate_exact_size(desired, egui::Sense::hover());
-
-    let painter = ui.painter();
-    painter.rect_stroke(
-        rect,
-        2.0,
-        egui::Stroke::new(1.0, egui::Color32::GRAY),
-        egui::StrokeKind::Inside,
-    );
-
-    if history.len() < 2 {
-        return;
-    }
-
-    let max_points = history.len().max(2) as f32 - 1.0;
-    let step_x = rect.width() / max_points;
-    let mut prev = None;
-
-    for (i, &value) in history.iter().enumerate() {
-        let x = rect.left() + (i as f32) * step_x;
-        let y_norm = (value / 100.0).clamp(0.0, 1.0);
-        let y = rect.bottom() - y_norm * rect.height();
-        let pos = egui::pos2(x, y);
-
-        if let Some(prev) = prev {
-            painter.line_segment(
-                [prev, pos],
-                egui::Stroke::new(1.5, egui::Color32::LIGHT_BLUE),
-            );
-        }
-        prev = Some(pos);
     }
 }
