@@ -9,6 +9,11 @@ targets = [
 [advisories]
 version = 2
 yanked = "deny"
+# Transitive deps from burn 0.20.1 — no safe upgrade available.
+ignore = [
+  "RUSTSEC-2025-0141", # bincode: unmaintained (via burn-core)
+  "RUSTSEC-2024-0436", # paste: unmaintained (via burn-ndarray, cubecl-core)
+]
 
 [licenses]
 version = 2
