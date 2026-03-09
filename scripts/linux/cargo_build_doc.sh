@@ -1,8 +1,17 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../../ExternalLib/Kataglyphis-ContainerHub/linux/scripts/01-core/logging.sh"
+
+# Extract crate name from Cargo.toml and format for rustdoc directory (replace dashes with underscores)
+CRATE_NAME=$(grep -E '^name\s*=' Cargo.toml | head -n 1 | awk -F'"' '{print $2}')
+if [ -z "$CRATE_NAME" ]; then
+    err "Failed to extract crate name from Cargo.toml"
+    exit 1
+fi
+CRATE_DIR_NAME="${CRATE_NAME//-/_}"
+info "Detected crate name: $CRATE_NAME (doc dir: $CRATE_DIR_NAME)"
 
 # Combine CSS files to create a custom rustdoc theme
 if [ -f "./ExternalLib/Kataglyphis-ContainerHub/docs/_static/css/custom.css" ] && [ -f "./resources/web/rustdoc-mapping.css" ]; then
@@ -24,9 +33,10 @@ if [ -f "./images/logo.png" ]; then
     info "Copying logo..."
     cp ./images/logo.png ./target/doc/logo.png
 fi
+
 if [ -d "./images" ]; then
-    info "Copying images..."
-    cp -r ./images ./target/doc/kataglyphis_rustprojecttemplate/
+    info "Copying images to target/doc/$CRATE_DIR_NAME/ ..."
+    cp -r ./images "./target/doc/$CRATE_DIR_NAME/"
 fi
 
 info "Documentation built successfully."
