@@ -83,7 +83,7 @@ jobs:
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
-            bash scripts/linux/cargo_security_checks.sh
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_security_checks.sh
             '
 
       - name: Debug build
@@ -110,7 +110,7 @@ jobs:
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
-            bash scripts/linux/cargo_fmt_clippy.sh
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_fmt_clippy.sh
             '
 
       - name: Run unit, integration, and doc tests
