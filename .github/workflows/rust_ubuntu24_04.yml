@@ -216,12 +216,6 @@ jobs:
             git config --global --add safe.directory /workspace || true
 
             bash scripts/linux/cargo_build_doc.sh
-
-            cat ./ExternalLib/Kataglyphis-ContainerHub/docs/_static/css/custom.css ./resources/web/rustdoc-mapping.css > ./combined-theme.css
-            RUSTDOCFLAGS="--extend-css ./combined-theme.css" cargo doc --no-deps
-            cp ./resources/web/redirect/index.html ./target/doc
-            cp ./images/logo.png ./target/doc/logo.png
-            cp -r ./images ./target/doc/kataglyphis_rustprojecttemplate/
             '
 
       - name: Fix permissions on generated docs
