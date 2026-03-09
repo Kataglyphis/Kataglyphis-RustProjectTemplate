@@ -35,6 +35,7 @@ pub fn onnx_yolov10_demo<TrainB: AutodiffBackend>(
     for (i, input) in session.inputs().iter().enumerate() {
         println!("input[{i}] name={:?}", input.name());
     }
+
     for (i, output) in session.outputs().iter().enumerate() {
         println!("output[{i}] name={:?}", output.name());
     }

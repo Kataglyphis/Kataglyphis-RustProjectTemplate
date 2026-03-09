@@ -1,4 +1,5 @@
-#![doc = include_str!("../docs/_static/getting-started.md")]
+#![doc = include_str!("../README.md")]
+#![doc(html_logo_url = "../logo.png")]
 
 #[cfg(not(target_arch = "wasm32"))]
 #[cxx::bridge]
@@ -25,3 +26,4 @@ pub fn rusty_cxxbridge_integer() -> i32 {
 pub extern "C" fn rusty_extern_c_integer() -> i32 {
     322
 }
+

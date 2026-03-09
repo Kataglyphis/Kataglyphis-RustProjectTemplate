@@ -1,0 +1,49 @@
+/* Kataglyphis Ecosystem - Rustdoc Mapping */
+/* This maps the CSS variables from ContainerHub onto rustdoc's internal variables */
+
+:root, :root[data-theme="light"] {
+  --main-background-color: var(--surface-soft, #f7fbf9);
+  --sidebar-background-color: #fbfefd;
+  --main-color: var(--text-main, #1f2a24);
+  --link-color: var(--pst-color-link, #1ca06a);
+  --sidebar-link-color: var(--text-main, #1f2a24);
+  --sidebar-current-link-background-color: var(--brand-accent-soft, #e9fbf2);
+  --search-input-bg-color: #ffffff;
+  --search-input-border-color: var(--surface-border, #dcefe5);
+  --headings-border-bottom-color: var(--surface-border, #dcefe5);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --main-background-color: #101712;
+    --sidebar-background-color: #0d1410;
+    --main-color: #e7efe9;
+    --link-color: var(--pst-color-link, #7df5ba);
+    --sidebar-link-color: #d7e7de;
+    --sidebar-current-link-background-color: #1d2d25;
+    --search-input-bg-color: #101712;
+    --search-input-border-color: #2b3b33;
+    --headings-border-bottom-color: #2b3b33;
+  }
+}
+
+:root[data-theme="dark"], :root[data-theme="ayu"] {
+  --main-background-color: #101712;
+  --sidebar-background-color: #0d1410;
+  --main-color: #e7efe9;
+  --link-color: var(--pst-color-link, #7df5ba);
+  --sidebar-link-color: #d7e7de;
+  --sidebar-current-link-background-color: #1d2d25;
+  --search-input-bg-color: #101712;
+  --search-input-border-color: #2b3b33;
+  --headings-border-bottom-color: #2b3b33;
+}
+
+nav.sidebar {
+  border-right: 1px solid var(--surface-border, #dcefe5) !important;
+}
+
+:root[data-theme="dark"] nav.sidebar,
+:root[data-theme="ayu"] nav.sidebar {
+  border-right: 1px solid #2b3b33 !important;
+}

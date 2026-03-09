@@ -5,7 +5,7 @@
 
   <h1>🦀 Kataglyphis-RustProjectTemplate 🦀</h1>
 
-  <h4>Collecting Rust best practices.</h4>
+  <h4>Collecting Rust best practices. Part of the <a href="https://github.com/Kataglyphis/kataglyphis-containerhub">Kataglyphis Ecosystem</a> for robust code sharing and rapid development.</h4>
 </div>
 
 <div align="center">
@@ -49,7 +49,7 @@ For **__official docs__** follow this [link](https://rust.jonasheinle.de).
 
 ## About The Project
 
-This project is about collecting experience in Rust.
+This template is a foundational part of the **Kataglyphis Ecosystem**, providing robust Rust best practices. It works synergistically with other projects like [Kataglyphis ContainerHub](https://github.com/Kataglyphis/kataglyphis-containerhub) to provide seamless code sharing, rapid development, and consistent identity across our web and systems engineering stack.
 
 ### Key Features
 

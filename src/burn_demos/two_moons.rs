@@ -192,12 +192,9 @@ fn train_two_moons_epoch(
 ) -> (DeepClassifier<TrainingBackend>, f32) {
     let mut loss_sum = 0.0f32;
 
-    for step in 0..config.steps_per_epoch {
-        let (x, y) = dataset.batch::<TrainingBackend>(
-            device,
-            config.batch_size,
-            config.epoch * config.steps_per_epoch + step,
-        );
+    for step in 0..steps_per_epoch {
+        let (x, y) =
+            dataset.batch::<TrainingBackend>(device, batch_size, epoch * steps_per_epoch + step);
         let pred = model.forward(x);
 
         // Binary cross-entropy (manual; keeps deps minimal).
@@ -213,9 +210,7 @@ fn train_two_moons_epoch(
 
         if step % 10 == 0 {
             println!(
-                "epoch {} step {step}/{} loss={:.6}",
-                config.epoch,
-                config.steps_per_epoch,
+                "epoch {epoch} step {step}/{steps_per_epoch} loss={:.6}",
                 loss_sum / (step + 1) as f32
             );
         }
@@ -242,13 +237,13 @@ pub fn two_moons_demo(
 
     let mut losses = Vec::with_capacity(epochs);
     for epoch in 0..epochs {
-        let config = EpochConfig {
-            epoch,
-            steps_per_epoch,
-            lr,
-            batch_size,
+        let (m, loss) = train_two_moons_epoch(
+            model,
+            &mut optim,
+            &dataset,
+            &device,
         };
-        let (m, loss) = train_two_moons_epoch(model, &mut optim, &dataset, &device, &config);
+       
         model = m;
         losses.push(loss);
 

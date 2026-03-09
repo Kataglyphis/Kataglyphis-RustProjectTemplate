@@ -1,0 +1,3 @@
+[submodule "ExternalLib/Kataglyphis-ContainerHub"]
+	path = ExternalLib/Kataglyphis-ContainerHub
+	url = git@github.com:Kataglyphis/Kataglyphis-ContainerHub.git

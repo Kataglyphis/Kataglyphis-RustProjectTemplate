@@ -64,7 +64,7 @@ fn make_regression_batch<B: Backend>(
 
         // small deterministic noise
         let noise =
-            (((i as f32) * 12.9898 + (step as f32) * 78.233).sin() * 43_758.547).fract() * 0.05;
+            (((i as f32) * 12.9898 + (step as f32) * 78.233).sin() * 43758.5453).fract() * 0.05;
         let y = 3.0 * x + 2.0 + noise;
 
         xs.push(x);
