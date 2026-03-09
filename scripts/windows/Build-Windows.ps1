@@ -1,103 +1,105 @@
 <#
 .SYNOPSIS
-  Build script for running inside the Windows container. Matches the behavior of the inline script
-  previously passed via -EncodedCommand.
+  Build script for running inside the Windows container, using the Kataglyphis-ContainerHub build framework.
 
 .DESCRIPTION
-  - Ensures Scoop shims are in PATH (common container user: ContainerAdministrator).
+  - Uses WindowsBuild.Common.psm1 for structured logging and step management.
+  - Ensures Scoop shims are in PATH.
   - Verifies rustup/cargo install.
-  - Runs cargo audit and cargo deny security checks.
-  - Adds rustfmt & clippy components.
-  - Runs formatting check, clippy (treat warnings as errors), tests, benches and release build.
-  - Accepts optional parameters or reads environment variables BINARY and VERSION.
-
-.EXAMPLE
-  # from inside container
-  powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-Windows.ps1
-
-  # pass parameters
-  powershell -NoProfile -ExecutionPolicy Bypass -File .\Build-Windows.ps1 -Workspace C:\workspace -Binary mybin -Version 1.2.3
+  - Runs security checks, linting, tests, benches, and release build.
 #>
 
 param(
-    [string]$Workspace = $env:WORKSPACE,         # optional working directory; defaults to current if not provided
-    [string]$Binary    = $env:BINARY,            # optional - read from environment if present
-    [string]$Version   = $env:VERSION            # optional - read from environment if present
+    [string]$Workspace = $env:WORKSPACE,
+    [string]$Binary    = $env:BINARY,
+    [string]$Version   = $env:VERSION
 )
 
-# Fail fast on any error
 $ErrorActionPreference = "Stop"
 
-function Write-Header($text) {
-    Write-Host "==== $text ===="
+if ([string]::IsNullOrWhiteSpace($Workspace)) {
+    $Workspace = (Get-Location).Path
 }
+
+# Import ContainerHub build framework
+$modulesPath = Join-Path $Workspace "ExternalLib\Kataglyphis-ContainerHub\windows\scripts\modules"
+$buildModule = Join-Path $modulesPath "WindowsBuild.Common.psm1"
+
+if (-not (Test-Path $buildModule)) {
+    Write-Error "Required module not found: $buildModule. Are submodules initialized?"
+    exit 1
+}
+
+Import-Module $buildModule -Force
+
+# Initialize Build Context
+$logDir = Join-Path $Workspace "logs"
+if (-not (Test-Path $logDir)) {
+    New-Item -ItemType Directory -Path $logDir | Out-Null
+}
+
+$Context = New-BuildContext -Workspace $Workspace -LogDir $logDir -StopOnError
+Open-BuildLog -Context $Context
 
 try {
-    # If a workspace was provided, switch there
-    if ($null -ne $Workspace -and $Workspace -ne "") {
-        Write-Host "Changing directory to workspace: $Workspace"
-        Set-Location -Path $Workspace
-    } else {
-        Write-Host "No Workspace parameter provided; using current directory: $(Get-Location)"
+    Write-BuildLog -Context $Context -Message "=== Build Environment ==="
+    Write-BuildLog -Context $Context -Message "Workspace: $Workspace"
+    Write-BuildLog -Context $Context -Message "BINARY:    $Binary"
+    Write-BuildLog -Context $Context -Message "VERSION:   $Version"
+
+    Set-Location -Path $Workspace
+
+    Invoke-BuildStep -Context $Context -StepName "Setup Environment" -Critical -Script {
+        $scoopShims = "C:\Users\ContainerAdministrator\scoop\shims"
+        if (-not ($env:PATH -split ";" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ieq $scoopShims })) {
+            Write-BuildLog -Context $Context -Message "Prepending scoop shims to PATH: $scoopShims"
+            $global:env:PATH = "$scoopShims;$env:PATH"
+        } else {
+            Write-BuildLog -Context $Context -Message "Scoop shims already in PATH"
+        }
     }
 
-    # Ensure Scoop shims are in PATH (common path inside many Windows containers)
-    $scoopShims = "C:\Users\ContainerAdministrator\scoop\shims"
-    if (-not ($env:PATH -split ";" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ieq $scoopShims })) {
-        Write-Host "Prepending scoop shims to PATH: $scoopShims"
-        $env:PATH = "$scoopShims;$env:PATH"
-    } else {
-        Write-Host "Scoop shims already in PATH."
+    Invoke-BuildStep -Context $Context -StepName "Verify Toolchain" -Critical -Script {
+        Invoke-BuildExternal -Context $Context -File "rustup" -Parameters "--version"
+        Invoke-BuildExternal -Context $Context -File "cargo" -Parameters "--version"
     }
 
-    Write-Header "Environment"
-    Write-Host "Workspace:    $((Get-Location).Path)"
-    Write-Host "BINARY:       $Binary"
-    Write-Host "VERSION:      $Version"
-    Write-Host "PATH (truncated): $($env:PATH.Substring(0, [Math]::Min(200, $env:PATH.Length)))`n"
+    Invoke-BuildStep -Context $Context -StepName "Security Checks (audit & deny)" -Critical -Script {
+        Invoke-BuildExternal -Context $Context -File "cargo" -Parameters @("install", "--locked", "cargo-audit", "cargo-deny")
+        Invoke-BuildExternal -Context $Context -File "cargo" -Parameters "audit"
+        Invoke-BuildExternal -Context $Context -File "cargo" -Parameters @("deny", "check", "advisories", "licenses", "bans", "sources")
+    }
 
-    # Verify Rust toolchain presence
-    Write-Header "Verifying Rust installation..."
-    & rustup --version
-    & cargo --version
+    Invoke-BuildStep -Context $Context -StepName "Format Check (cargo fmt)" -Critical -Script {
+        Invoke-BuildExternal -Context $Context -File "rustup" -Parameters @("component", "add", "rustfmt")
+        Invoke-BuildExternal -Context $Context -File "cargo" -Parameters @("fmt", "--all", "--", "--check")
+    }
 
-    # Security checks
-    Write-Header "Installing security tools and running cargo audit / cargo deny"
-    & cargo install --locked cargo-audit cargo-deny
-    & cargo audit
-    & cargo deny check advisories licenses bans sources
+    Invoke-BuildStep -Context $Context -StepName "Linting (cargo clippy)" -Critical -Script {
+        Invoke-BuildExternal -Context $Context -File "rustup" -Parameters @("component", "add", "clippy")
+        Invoke-BuildExternal -Context $Context -File "cargo" -Parameters @("clippy", "--all-targets", "--all-features", "--", "-D", "warnings")
+    }
 
-    # Add rustfmt component and run formatting check
-    Write-Header "Ensuring rustfmt component and running cargo fmt --check"
-    & rustup component add rustfmt
-    & cargo fmt --all -- --check
+    Invoke-BuildStep -Context $Context -StepName "Unit Tests" -Critical -Script {
+        Invoke-BuildExternal -Context $Context -File "cargo" -Parameters @("test", "--all", "--verbose")
+    }
 
-    # Add clippy and run linter
-    Write-Header "Ensuring clippy component and running cargo clippy"
-    & rustup component add clippy
-    & cargo clippy --all-targets --all-features -- -D warnings
+    Invoke-BuildStep -Context $Context -StepName "Benchmarks" -Script {
+        # Benchmarks might fail if not configured, leaving as non-critical
+        Invoke-BuildExternal -Context $Context -File "cargo" -Parameters "bench"
+    }
 
-    # Run tests
-    Write-Header "Running cargo test (verbose)"
-    & cargo test --all --verbose
+    Invoke-BuildStep -Context $Context -StepName "Release Build" -Critical -Script {
+        Invoke-BuildExternal -Context $Context -File "cargo" -Parameters @("build", "--release")
+    }
 
-    # Run benchmarks (note: requires benches configured and possibly nightly for some setups)
-    Write-Header "Running cargo bench"
-    & cargo bench
-
-    # Final release build
-    Write-Header "Running cargo build --release"
-    & cargo build --release
-
-    Write-Header "Build script completed successfully"
+    Write-BuildSummary -Context $Context
+    Write-BuildLogSuccess -Context $Context -Message "Pipeline completed successfully."
     exit 0
-}
-catch {
-    Write-Host ""
-    Write-Error "Build script failed: $($_.Exception.Message)"
-    if ($_.InvocationInfo -ne $null) {
-        Write-Host "At: $($_.InvocationInfo.ScriptName) Line: $($_.InvocationInfo.ScriptLineNumber)"
-    }
-    # For CI it's useful to return a non-zero exit code
+} catch {
+    Write-BuildLogError -Context $Context -Message "Pipeline failed: $($_.Exception.Message)"
+    Write-BuildSummary -Context $Context
     exit 1
+} finally {
+    Close-BuildLog -Context $Context
 }
