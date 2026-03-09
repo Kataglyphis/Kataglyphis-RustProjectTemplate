@@ -215,7 +215,7 @@ jobs:
             set -e
             git config --global --add safe.directory /workspace || true
 
-            bash scripts/linux/cargo_build_doc.sh
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_build_doc.sh
             '
 
       - name: Fix permissions on generated docs
