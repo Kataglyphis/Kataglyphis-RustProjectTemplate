@@ -17,6 +17,11 @@ jobs:
     env:
       BINARY: kataglyphis_rustprojecttemplate
       VERSION: ${{ github.ref_name }}
+      MSIX_PACKAGE_NAME: Kataglyphis.RustProjectTemplate
+      MSIX_PUBLISHER: CN=Kataglyphis
+      MSIX_PUBLISHER_DISPLAY_NAME: Kataglyphis
+      MSIX_DISPLAY_NAME: Kataglyphis Rust Project Template
+      MSIX_DESCRIPTION: Rust project template with optional GUI, ONNX backends, profiling, packaging, and CI workflows.
 
     steps:
       - name: Enable Git long paths
@@ -55,6 +60,32 @@ jobs:
             ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64 `
             powershell -NoProfile -ExecutionPolicy Bypass -File "C:\workspace\ExternalLib\Kataglyphis-ContainerHub\windows\scripts\rust\Build-Windows.ps1"
 
+      - name: 📦 Create MSIX package
+        shell: pwsh
+        run: |
+          # Normalise version: strip leading "v" and ensure four-part (Major.Minor.Build.Revision)
+          $ver = "${{ env.VERSION }}" -replace '^v',''
+          if ($ver -match '^\d+\.\d+\.\d+$') { $ver = "$ver.0" }
+          if (-not ($ver -match '^\d+\.\d+\.\d+\.\d+$')) { $ver = "0.1.0.0" }
+
+          docker run --rm `
+            --mount "type=bind,source=${{ github.workspace }},target=C:\workspace" `
+            -w "C:\workspace" `
+            ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64 `
+            powershell -NoProfile -ExecutionPolicy Bypass -File "C:\workspace\ExternalLib\Kataglyphis-ContainerHub\windows\scripts\rust\New-MsixPackage.ps1" `
+              -Workspace        "C:\workspace" `
+              -Binary           "${{ env.BINARY }}" `
+              -PackageName      "${{ env.MSIX_PACKAGE_NAME }}" `
+              -Publisher        "${{ env.MSIX_PUBLISHER }}" `
+              -PublisherDisplayName "${{ env.MSIX_PUBLISHER_DISPLAY_NAME }}" `
+              -DisplayName      "${{ env.MSIX_DISPLAY_NAME }}" `
+              -Description      "${{ env.MSIX_DESCRIPTION }}" `
+              -Version          "$ver" `
+              -CargoTargetDir   "target" `
+              -SkipBuild `
+              -CreateTestCertificate `
+              -CertificatePassword "${{ secrets.MSIX_CERT_PASSWORD }}"
+
       - name: 📦 Prepare archive variables
         id: vars
         shell: pwsh
@@ -73,3 +104,9 @@ jobs:
         with:
           name: ${{ env.BINARY }}-${{ github.ref_name }}-windows-2025-x64
           path: dist/${{ steps.vars.outputs.archive_name }}
+
+      - name: 📤 Upload MSIX artifact
+        uses: actions/upload-artifact@v6.0.0
+        with:
+          name: ${{ env.MSIX_PACKAGE_NAME }}-${{ github.ref_name }}-x64-msix
+          path: dist/msix/*.msix
