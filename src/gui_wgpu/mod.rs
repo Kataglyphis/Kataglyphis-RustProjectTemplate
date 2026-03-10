@@ -1,8 +1,10 @@
 pub mod inference;
 pub mod overlay;
+pub(crate) mod overlay_stats;
 pub mod pipeline;
 pub mod renderer;
 
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, sync_channel};
 use std::time::{Duration, Instant};
 
@@ -61,7 +63,7 @@ fn run_inner(backends: wgpu::Backends, backend_label: &str) {
     gst::init().expect("Failed to initialize GStreamer");
 
     let (frame_tx, frame_rx) = sync_channel::<Frame>(2);
-    let pipeline = build_pipeline(frame_tx);
+    let pipeline = build_pipeline(frame_tx).expect("Failed to build GStreamer pipeline");
 
     pipeline
         .set_state(gst::State::Playing)
@@ -79,8 +81,8 @@ fn start_window(frame_rx: Receiver<Frame>, backends: wgpu::Backends, backend_lab
         frame_rx: Receiver<Frame>,
         backends: wgpu::Backends,
         backend_label: String,
-        window: Option<&'static Window>,
-        state: Option<WgpuState<'static>>,
+        window: Option<Arc<Window>>,
+        state: Option<WgpuState>,
         latest_frame: Option<Frame>,
         latest_frame_id: u64,
         uploaded_frame_id: u64,
@@ -102,12 +104,14 @@ fn start_window(frame_rx: Receiver<Frame>, backends: wgpu::Backends, backend_lab
                 .create_window(window_attributes)
                 .expect("Failed to create window");
 
-            // wgpu::Surface borrows the Window by lifetime; `run_app` stores the handler for the
-            // duration of the loop, so keep a stable Window reference for the app lifetime.
-            let window: &'static Window = Box::leak(Box::new(window));
-            let state = block_on(WgpuState::new(window, event_loop, self.backends));
+            let window = Arc::new(window);
+            let state = block_on(WgpuState::new(
+                Arc::clone(&window),
+                event_loop,
+                self.backends,
+            ));
 
-            self.window = Some(window);
+            self.window = Some(Arc::clone(&window));
             self.state = Some(state);
 
             self.next_redraw_deadline = Instant::now();
@@ -121,7 +125,7 @@ fn start_window(frame_rx: Receiver<Frame>, backends: wgpu::Backends, backend_lab
             window_id: WindowId,
             event: WindowEvent,
         ) {
-            let Some(window) = self.window else {
+            let Some(window) = self.window.as_ref() else {
                 return;
             };
             if window_id != window.id() {
@@ -170,7 +174,7 @@ fn start_window(frame_rx: Receiver<Frame>, backends: wgpu::Backends, backend_lab
             // Keep the UI responsive even if the video source is low-FPS.
             // We upload new video frames only when they arrive, but we redraw at a steady cadence
             // so egui interactions feel smooth.
-            let Some(window) = self.window else {
+            let Some(window) = self.window.as_ref() else {
                 return;
             };
 

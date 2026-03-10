@@ -1,7 +1,8 @@
 use std::collections::VecDeque;
 
+/// Convert bytes to MiB. Re-exports the canonical implementation from `resource_monitor`.
 pub fn bytes_to_mib(bytes: u64) -> f32 {
-    (bytes as f32) / (1024.0 * 1024.0)
+    crate::resource_monitor::bytes_to_mib(bytes) as f32
 }
 
 pub fn draw_cpu_history(ui: &mut egui::Ui, history: &VecDeque<f32>) {

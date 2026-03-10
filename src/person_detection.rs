@@ -33,17 +33,7 @@ fn swap_xy_enabled() -> bool {
 
 // `tvec!` is imported via `tract_onnx::prelude::*` in the tract code paths.
 
-/// A single detection in *original image pixel coordinates*.
-#[derive(Clone, Debug)]
-pub struct Detection {
-    pub x1: f32,
-    pub y1: f32,
-    pub x2: f32,
-    pub y2: f32,
-    #[allow(dead_code)]
-    pub score: f32,
-    pub class_id: i64,
-}
+use crate::detection::Detection;
 
 /// Minimal YOLO-style person detector.
 ///
@@ -56,6 +46,8 @@ pub struct PersonDetector {
     backend: Backend,
     input_w: u32,
     input_h: u32,
+    preprocess: PreprocessMode,
+    swap_xy: bool,
 }
 
 #[cfg(feature = "onnx_tract")]
@@ -78,6 +70,12 @@ enum Backend {
 impl PersonDetector {
     pub fn new(model_path: &str) -> Result<Self> {
         info!("Loading ONNX model: {model_path}");
+
+        // Cache environment configuration once at construction time.
+        let preprocess = preprocess_mode();
+        let swap_xy = swap_xy_enabled();
+        debug!("Preprocess mode: {:?}, swap_xy: {}", preprocess, swap_xy);
+
         let requested_backend = std::env::var("KATAGLYPHIS_ONNX_BACKEND")
             .ok()
             .map(|v| v.to_lowercase());
@@ -88,13 +86,14 @@ impl PersonDetector {
                 {
                     let (session, (input_w, input_h)) = load_ort_session(model_path)?;
                     info!("ONNX backend: ort ({}x{})", input_w, input_h);
-                    debug!("Preprocess mode: {:?}", preprocess_mode());
                     Ok(Self {
                         backend: Backend::Ort {
                             session: std::sync::Mutex::new(session),
                         },
                         input_w,
                         input_h,
+                        preprocess,
+                        swap_xy,
                     })
                 }
 
@@ -108,13 +107,14 @@ impl PersonDetector {
                 {
                     let (model, (input_w, input_h)) = load_tract_model(model_path)?;
                     info!("ONNX backend: tract ({}x{})", input_w, input_h);
-                    debug!("Preprocess mode: {:?}", preprocess_mode());
                     Ok(Self {
                         backend: Backend::Tract {
                             model: Box::new(model),
                         },
                         input_w,
                         input_h,
+                        preprocess,
+                        swap_xy,
                     })
                 }
 
@@ -138,13 +138,14 @@ impl PersonDetector {
                     match load_ort_session(model_path) {
                         Ok((session, (input_w, input_h))) => {
                             info!("ONNX backend: ort ({}x{})", input_w, input_h);
-                            debug!("Preprocess mode: {:?}", preprocess_mode());
                             return Ok(Self {
                                 backend: Backend::Ort {
                                     session: std::sync::Mutex::new(session),
                                 },
                                 input_w,
                                 input_h,
+                                preprocess,
+                                swap_xy,
                             });
                         }
                         Err(err) => {
@@ -160,17 +161,18 @@ impl PersonDetector {
                 {
                     let (model, (input_w, input_h)) = load_tract_model(model_path)?;
                     info!("ONNX backend: tract ({}x{})", input_w, input_h);
-                    debug!("Preprocess mode: {:?}", preprocess_mode());
                     Ok(Self {
                         backend: Backend::Tract {
                             model: Box::new(model),
                         },
                         input_w,
                         input_h,
+                        preprocess,
+                        swap_xy,
                     })
                 }
 
-                #[cfg(not(any(feature = "onnx_tract", feature = "onnxruntime")))]
+                #[cfg(not(onnx))]
                 {
                     bail!(
                         "ONNX inference is disabled. Build with --features onnx_tract (or onnxruntime*)"
@@ -187,7 +189,7 @@ impl PersonDetector {
         height: u32,
         score_threshold: f32,
     ) -> Result<Vec<Detection>> {
-        let (input, mapping) = match preprocess_mode() {
+        let (input, mapping) = match self.preprocess {
             PreprocessMode::Letterbox => {
                 rgba_to_nchw_f32_letterboxed(rgba, width, height, self.input_w, self.input_h)?
             }
@@ -200,10 +202,12 @@ impl PersonDetector {
             .infer_raw_nchw_f32(input)
             .context("Failed to run ONNX model")?;
 
-        let detections = parse_yolo_like_detections(&shape, &data, score_threshold, mapping)?;
+        let mut detections =
+            parse_yolo_like_detections(&shape, &data, score_threshold, mapping, self.swap_xy)?;
 
         // Keep only class 0 (= person) by convention.
-        Ok(detections.into_iter().filter(|d| d.class_id == 0).collect())
+        detections.retain(|d| d.class_id == 0);
+        Ok(detections)
     }
 
     fn infer_raw_nchw_f32(&self, input: Vec<f32>) -> Result<(Vec<usize>, Vec<f32>)> {
@@ -241,7 +245,7 @@ impl PersonDetector {
                     .run(ort::inputs![input_tensor])
                     .context("Failed to run ONNX model (ort)")?;
 
-                if outputs.len() == 0 {
+                if outputs.is_empty() {
                     bail!("Model returned no outputs");
                 }
                 let out = &outputs[0];
@@ -497,6 +501,45 @@ fn ensure_ort_cuda_provider_dylibs_next_to_exe() -> Result<()> {
     Ok(())
 }
 
+// ── RGBA → NCHW preprocessing ──────────────────────────────────────
+
+/// Validate that `rgba` has the expected length for `src_w * src_h * 4`.
+#[inline]
+fn validate_rgba(rgba: &[u8], src_w: u32, src_h: u32) -> Result<()> {
+    let expected = (src_w as usize)
+        .checked_mul(src_h as usize)
+        .and_then(|p| p.checked_mul(4))
+        .context("Image dimensions overflow")?;
+    if rgba.len() != expected {
+        bail!(
+            "RGBA buffer length mismatch: got {}, expected {} ({}x{}x4)",
+            rgba.len(),
+            expected,
+            src_w,
+            src_h
+        );
+    }
+    Ok(())
+}
+
+/// Write a single RGB pixel into a planar CHW buffer.
+#[inline]
+fn write_pixel_chw(chw: &mut [f32], plane: usize, dst_idx: usize, r: f32, g: f32, b: f32) {
+    chw[dst_idx] = r;
+    chw[plane + dst_idx] = g;
+    chw[2 * plane + dst_idx] = b;
+}
+
+/// Sample an RGBA pixel from `src` using nearest-neighbour and normalise to [0,1].
+#[inline]
+fn sample_rgba_normalised(src: &[u8], sx: u32, sy: u32, src_w: u32) -> (f32, f32, f32) {
+    let idx = ((sy * src_w + sx) * 4) as usize;
+    let r = src[idx] as f32 / 255.0;
+    let g = src[idx + 1] as f32 / 255.0;
+    let b = src[idx + 2] as f32 / 255.0;
+    (r, g, b)
+}
+
 fn rgba_to_nchw_f32_letterboxed(
     rgba: &[u8],
     src_w: u32,
@@ -504,32 +547,16 @@ fn rgba_to_nchw_f32_letterboxed(
     dst_w: u32,
     dst_h: u32,
 ) -> Result<(Vec<f32>, ImageMapping)> {
-    let expected_len = (src_w as usize)
-        .checked_mul(src_h as usize)
-        .and_then(|p| p.checked_mul(4))
-        .context("Image dimensions overflow")?;
-    if rgba.len() != expected_len {
-        bail!(
-            "RGBA buffer length mismatch: got {}, expected {} ({}x{}x4)",
-            rgba.len(),
-            expected_len,
-            src_w,
-            src_h
-        );
-    }
+    validate_rgba(rgba, src_w, src_h)?;
 
-    // Letterbox to dst size (keep aspect ratio)
     let scale = f32::min(dst_w as f32 / src_w as f32, dst_h as f32 / src_h as f32);
     let new_w = (src_w as f32 * scale).round().max(1.0) as u32;
     let new_h = (src_h as f32 * scale).round().max(1.0) as u32;
     let pad_x_i = (dst_w - new_w) / 2;
     let pad_y_i = (dst_h - new_h) / 2;
-    let pad_x = (dst_w - new_w) as f32 / 2.0;
-    let pad_y = (dst_h - new_h) as f32 / 2.0;
 
-    // Convert to NCHW f32 normalized [0,1] using nearest-neighbor sampling.
-    let mut chw = vec![0f32; 3 * (dst_w * dst_h) as usize];
     let plane = (dst_w * dst_h) as usize;
+    let mut chw = vec![0f32; 3 * plane];
     let fill = 114.0 / 255.0;
 
     for dy in 0..dst_h {
@@ -540,18 +567,12 @@ fn rgba_to_nchw_f32_letterboxed(
                 if dx >= pad_x_i && dx < pad_x_i + new_w && dy >= pad_y_i && dy < pad_y_i + new_h {
                     let sx = ((dx - pad_x_i) * src_w) / new_w;
                     let sy = ((dy - pad_y_i) * src_h) / new_h;
-                    let src_idx = ((sy * src_w + sx) * 4) as usize;
-                    let r = rgba[src_idx] as f32 / 255.0;
-                    let g = rgba[src_idx + 1] as f32 / 255.0;
-                    let b = rgba[src_idx + 2] as f32 / 255.0;
-                    (r, g, b)
+                    sample_rgba_normalised(rgba, sx, sy, src_w)
                 } else {
                     (fill, fill, fill)
                 };
 
-            chw[dst_idx] = r;
-            chw[plane + dst_idx] = g;
-            chw[2 * plane + dst_idx] = b;
+            write_pixel_chw(&mut chw, plane, dst_idx, r, g, b);
         }
     }
 
@@ -560,8 +581,8 @@ fn rgba_to_nchw_f32_letterboxed(
         src_h,
         scale_x: scale,
         scale_y: scale,
-        pad_x,
-        pad_y,
+        pad_x: (dst_w - new_w) as f32 / 2.0,
+        pad_y: (dst_h - new_h) as f32 / 2.0,
     };
 
     Ok((chw, mapping))
@@ -574,37 +595,18 @@ fn rgba_to_nchw_f32_stretched(
     dst_w: u32,
     dst_h: u32,
 ) -> Result<(Vec<f32>, ImageMapping)> {
-    let expected_len = (src_w as usize)
-        .checked_mul(src_h as usize)
-        .and_then(|p| p.checked_mul(4))
-        .context("Image dimensions overflow")?;
-    if rgba.len() != expected_len {
-        bail!(
-            "RGBA buffer length mismatch: got {}, expected {} ({}x{}x4)",
-            rgba.len(),
-            expected_len,
-            src_w,
-            src_h
-        );
-    }
+    validate_rgba(rgba, src_w, src_h)?;
 
-    let mut chw = vec![0f32; 3 * (dst_w * dst_h) as usize];
     let plane = (dst_w * dst_h) as usize;
+    let mut chw = vec![0f32; 3 * plane];
 
     for dy in 0..dst_h {
         let sy = (dy * src_h) / dst_h;
         for dx in 0..dst_w {
             let sx = (dx * src_w) / dst_w;
-            let src_idx = ((sy * src_w + sx) * 4) as usize;
             let dst_idx = (dy * dst_w + dx) as usize;
-
-            let r = rgba[src_idx] as f32 / 255.0;
-            let g = rgba[src_idx + 1] as f32 / 255.0;
-            let b = rgba[src_idx + 2] as f32 / 255.0;
-
-            chw[dst_idx] = r;
-            chw[plane + dst_idx] = g;
-            chw[2 * plane + dst_idx] = b;
+            let (r, g, b) = sample_rgba_normalised(rgba, sx, sy, src_w);
+            write_pixel_chw(&mut chw, plane, dst_idx, r, g, b);
         }
     }
 
@@ -620,76 +622,69 @@ fn rgba_to_nchw_f32_stretched(
     Ok((chw, mapping))
 }
 
+// ── YOLO output parsing ────────────────────────────────────────────
+
 fn parse_yolo_like_detections(
     output_shape: &[usize],
     data: &[f32],
     score_threshold: f32,
     mapping: ImageMapping,
+    swap_xy: bool,
 ) -> Result<Vec<Detection>> {
-    // Accept shapes:
-    // - [1, N, 6]
-    // - [N, 6]
-    // - [1, N, >=6] (we read first 6)
     let (n, stride) = match output_shape.len() {
         2 => {
-            let n = output_shape[0];
-            let stride = output_shape[1];
-            if stride < 6 {
+            let (n, s) = (output_shape[0], output_shape[1]);
+            if s < 6 {
                 bail!(
                     "Unexpected output shape {:?}; need at least 6 columns",
                     output_shape
                 );
             }
-            (n, stride)
+            (n, s)
         }
         3 => {
-            let b = output_shape[0];
-            if b != 1 {
+            if output_shape[0] != 1 {
                 bail!(
                     "Unexpected output shape {:?}; expected batch=1",
                     output_shape
                 );
             }
-            let n = output_shape[1];
-            let stride = output_shape[2];
-            if stride < 6 {
+            let (n, s) = (output_shape[1], output_shape[2]);
+            if s < 6 {
                 bail!(
                     "Unexpected output shape {:?}; need at least 6 columns",
                     output_shape
                 );
             }
-            (n, stride)
+            (n, s)
         }
         _ => bail!("Unsupported output rank: {:?}", output_shape),
     };
 
-    let base = 0;
-
-    let mut detections = Vec::new();
+    let mut detections = Vec::with_capacity(n.min(64));
 
     for i in 0..n {
-        let row_start = base + i * stride;
-        if row_start + 6 > data.len() {
+        let row = i * stride;
+        if row + 6 > data.len() {
             break;
         }
 
-        let mut x1 = data[row_start];
-        let mut y1 = data[row_start + 1];
-        let mut x2 = data[row_start + 2];
-        let mut y2 = data[row_start + 3];
-        let score = data[row_start + 4];
-        let class_id = data[row_start + 5] as i64;
+        let mut x1 = data[row];
+        let mut y1 = data[row + 1];
+        let mut x2 = data[row + 2];
+        let mut y2 = data[row + 3];
+        let score = data[row + 4];
+        let class_id = data[row + 5] as i64;
 
         if !score.is_finite() || score < score_threshold {
             continue;
         }
 
-        if swap_xy_enabled() {
+        if swap_xy {
             std::mem::swap(&mut x1, &mut y1);
             std::mem::swap(&mut x2, &mut y2);
         }
 
-        // Map from model input coords back to original image coords.
         let (x1, y1) = unmap_point(x1, y1, mapping);
         let (x2, y2) = unmap_point(x2, y2, mapping);
 
@@ -706,6 +701,7 @@ fn parse_yolo_like_detections(
     Ok(detections)
 }
 
+#[inline]
 fn unmap_point(x: f32, y: f32, mapping: ImageMapping) -> (f32, f32) {
     let x = (x - mapping.pad_x) / mapping.scale_x.max(1e-6);
     let y = (y - mapping.pad_y) / mapping.scale_y.max(1e-6);

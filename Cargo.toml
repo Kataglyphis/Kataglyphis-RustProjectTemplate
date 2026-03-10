@@ -17,7 +17,18 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 default = []
 gui = ["dep:gstreamer", "dep:gstreamer-video", "dep:glib"]
 gui_unix = ["gui", "dep:gtk"]
-gui_linux = ["gui_windows"]
+gui_linux = [
+	"gui",
+	"dep:gstreamer-app",
+	"dep:winit",
+	"dep:wgpu",
+	"dep:pollster",
+	"dep:bytemuck",
+	"dep:egui",
+	"dep:egui-winit",
+	"dep:egui-wgpu",
+	"onnx_tract",
+]
 gui_wgpu = ["gui_windows"]
 gui_windows = [
 	"gui",
@@ -66,7 +77,6 @@ glib = { version = "0.22.0", optional = true }
 gstreamer-app = { version = "0.25.0", optional = true }
 winit = { version = "0.30", optional = true }
 wgpu = { version = "27.0.1", optional = true }
-gpu-allocator = { version = "0.28.0", default-features = false, features = ["std"] }
 pollster = { version = "0.4", optional = true }
 bytemuck = { version = "1.25", features = ["derive"], optional = true }
 egui = { version = "0.33.3", optional = true }
@@ -100,9 +110,11 @@ serde = { version = "1", features = ["derive"] }
 wmi = "0.18"
 
 [lints.rust]
-# `flutter_rust_bridge::frb` uses `cfg(frb_expand)` internally; declare it so Rust's
-# `unexpected_cfgs` lint doesn't warn.
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
+# Declare custom cfgs so the `unexpected_cfgs` lint stays quiet:
+# - `frb_expand`: used internally by `flutter_rust_bridge::frb`.
+# - `onnx`: emitted by build.rs when any ONNX backend feature is active.
+# - `gui_wgpu_backend`: emitted by build.rs when the WGPU GUI path is active.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)', 'cfg(onnx)', 'cfg(gui_wgpu_backend)'] }
 
 [dev-dependencies]
 assert_cmd = "2"
@@ -114,8 +126,17 @@ tempfile = "3"
 [target.'cfg(not(target_arch = "wasm32"))'.build-dependencies]
 cxx-build = "1.0"
 
-[patch.crates-io]
-gpu-allocator = { git = "https://github.com/Traverse-Research/gpu-allocator", branch = "main" }
+# ── Release profile ─────────────────────────────────────────────────
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+
+# Dev profile: faster incremental builds with basic optimisation for deps.
+[profile.dev.package."*"]
+opt-level = 2
 
 [[bin]]
 name = "burn-demos"

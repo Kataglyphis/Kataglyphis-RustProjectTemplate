@@ -1,10 +1,9 @@
-#![allow(dead_code)]
-
+use anyhow::{Context, Result};
 use gstreamer as gst;
 use gstreamer::prelude::*;
 use gtk::prelude::*;
 use gtk::{Application, ApplicationWindow, Box, Button, Label, Picture, glib};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 const APP_ID: &str = "com.example.GtkGstreamerDemo";
 
@@ -17,23 +16,29 @@ pub fn run() -> glib::ExitCode {
 }
 
 fn build_ui(app: &Application) {
+    if let Err(err) = try_build_ui(app) {
+        eprintln!("Failed to build UI: {err:#}");
+    }
+}
+
+fn try_build_ui(app: &Application) -> Result<()> {
     let pipeline = gst::Pipeline::with_name("video-pipeline");
 
     let src = gst::ElementFactory::make("autovideosrc")
         .build()
-        .expect("Failed to create autovideosrc");
+        .context("Failed to create autovideosrc")?;
 
     let convert = gst::ElementFactory::make("videoconvert")
         .build()
-        .expect("Failed to create videoconvert");
+        .context("Failed to create videoconvert")?;
 
-    let (sink, paintable) = make_video_sink();
+    let (sink, paintable) = make_video_sink()?;
 
     pipeline
         .add_many([&src, &convert, &sink])
-        .expect("Failed to add elements to pipeline");
+        .context("Failed to add elements to pipeline")?;
 
-    gst::Element::link_many([&src, &convert, &sink]).expect("Failed to link elements");
+    gst::Element::link_many([&src, &convert, &sink]).context("Failed to link elements")?;
 
     let play_button = Button::with_label("Play");
     let pause_button = Button::with_label("Pause");
@@ -84,33 +89,30 @@ fn build_ui(app: &Application) {
         .child(&main_box)
         .build();
 
-    let pipeline_clone = Arc::new(Mutex::new(pipeline.clone()));
+    let pipeline = Arc::new(pipeline);
 
-    let pipeline_play = pipeline_clone.clone();
+    let pipeline_play = Arc::clone(&pipeline);
     play_button.connect_clicked(move |_| {
-        let pipeline = pipeline_play.lock().unwrap();
-        pipeline
-            .set_state(gst::State::Playing)
-            .expect("Failed to set pipeline to Playing");
+        if let Err(err) = pipeline_play.set_state(gst::State::Playing) {
+            eprintln!("Failed to set pipeline to Playing: {err}");
+        }
     });
 
-    let pipeline_pause = pipeline_clone.clone();
+    let pipeline_pause = Arc::clone(&pipeline);
     pause_button.connect_clicked(move |_| {
-        let pipeline = pipeline_pause.lock().unwrap();
-        pipeline
-            .set_state(gst::State::Paused)
-            .expect("Failed to set pipeline to Paused");
+        if let Err(err) = pipeline_pause.set_state(gst::State::Paused) {
+            eprintln!("Failed to set pipeline to Paused: {err}");
+        }
     });
 
-    let pipeline_stop = pipeline_clone.clone();
+    let pipeline_stop = Arc::clone(&pipeline);
     stop_button.connect_clicked(move |_| {
-        let pipeline = pipeline_stop.lock().unwrap();
-        pipeline
-            .set_state(gst::State::Null)
-            .expect("Failed to set pipeline to Null");
+        if let Err(err) = pipeline_stop.set_state(gst::State::Null) {
+            eprintln!("Failed to set pipeline to Null: {err}");
+        }
     });
 
-    let bus = pipeline.bus().expect("Pipeline has no bus");
+    let bus = pipeline.bus().context("Pipeline has no bus")?;
     let pipeline_weak = pipeline.downgrade();
 
     let _bus_watch = bus
@@ -136,9 +138,9 @@ fn build_ui(app: &Application) {
                 }
                 MessageView::Eos(..) => {
                     if let Some(pipeline) = pipeline_weak.upgrade() {
-                        pipeline
-                            .set_state(gst::State::Null)
-                            .expect("Failed to stop pipeline on EOS");
+                        if let Err(err) = pipeline.set_state(gst::State::Null) {
+                            eprintln!("Failed to stop pipeline on EOS: {err}");
+                        }
                     }
                 }
                 _ => (),
@@ -146,25 +148,26 @@ fn build_ui(app: &Application) {
 
             glib::ControlFlow::Continue
         })
-        .expect("Failed to add bus watch");
+        .context("Failed to add bus watch")?;
 
-    let pipeline_cleanup = pipeline.clone();
+    let pipeline_cleanup = Arc::clone(&pipeline);
     window.connect_close_request(move |_| {
-        pipeline_cleanup
-            .set_state(gst::State::Null)
-            .expect("Failed to stop pipeline");
+        if let Err(err) = pipeline_cleanup.set_state(gst::State::Null) {
+            eprintln!("Failed to stop pipeline on close: {err}");
+        }
         glib::Propagation::Proceed
     });
 
     window.present();
+    Ok(())
 }
 
 // Choose a sink that works on the current platform.
-fn make_video_sink() -> (gst::Element, Option<gtk::gdk::Paintable>) {
+fn make_video_sink() -> Result<(gst::Element, Option<gtk::gdk::Paintable>)> {
     // Prefer GTK paintable sinks when available.
     if let Ok(sink) = gst::ElementFactory::make("gtk4paintablesink").build() {
         let paintable = sink.property::<gtk::gdk::Paintable>("paintable");
-        return (sink, Some(paintable));
+        return Ok((sink, Some(paintable)));
     }
 
     // Windows native sinks (render in their own window, no paintable to embed)
@@ -172,7 +175,7 @@ fn make_video_sink() -> (gst::Element, Option<gtk::gdk::Paintable>) {
     {
         for name in ["d3d11videosink", "direct3dsink"].iter() {
             if let Ok(sink) = gst::ElementFactory::make(name).build() {
-                return (sink, None);
+                return Ok((sink, None));
             }
         }
     }
@@ -180,6 +183,6 @@ fn make_video_sink() -> (gst::Element, Option<gtk::gdk::Paintable>) {
     // Fallback that picks a platform default.
     let sink = gst::ElementFactory::make("autovideosink")
         .build()
-        .expect("Failed to create a video sink");
-    (sink, None)
+        .context("Failed to create a video sink")?;
+    Ok((sink, None))
 }

@@ -1,11 +1,11 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use anyhow::{Context, Result};
 use gstreamer as gst;
 use gstreamer::prelude::*;
 use gstreamer_app as gst_app;
 
-#[cfg(target_os = "windows")]
 use crate::resource_monitor;
 
 #[derive(Clone)]
@@ -66,7 +66,7 @@ pub fn rgba_tightly_packed_copy(src: &[u8], width: u32, height: u32) -> Option<V
     Some(out)
 }
 
-pub fn build_pipeline(frame_tx: std::sync::mpsc::SyncSender<Frame>) -> gst::Pipeline {
+pub fn build_pipeline(frame_tx: std::sync::mpsc::SyncSender<Frame>) -> Result<gst::Pipeline> {
     let pipeline = gst::Pipeline::new();
 
     let frame_id = AtomicU64::new(1);
@@ -74,11 +74,11 @@ pub fn build_pipeline(frame_tx: std::sync::mpsc::SyncSender<Frame>) -> gst::Pipe
     let src = gst::ElementFactory::make("mfvideosrc")
         .build()
         .or_else(|_| gst::ElementFactory::make("autovideosrc").build())
-        .expect("Failed to create a video source");
+        .context("Failed to create a video source")?;
 
     let convert = gst::ElementFactory::make("videoconvert")
         .build()
-        .expect("Failed to create videoconvert");
+        .context("Failed to create videoconvert")?;
 
     let caps = gst::Caps::builder("video/x-raw")
         .field("format", "RGBA")
@@ -87,24 +87,25 @@ pub fn build_pipeline(frame_tx: std::sync::mpsc::SyncSender<Frame>) -> gst::Pipe
     let capsfilter = gst::ElementFactory::make("capsfilter")
         .property("caps", &caps)
         .build()
-        .expect("Failed to create capsfilter");
+        .context("Failed to create capsfilter")?;
 
     let sink = gst::ElementFactory::make("appsink")
         .property("emit-signals", true)
         .property("max-buffers", 2u32)
         .property("drop", true)
         .build()
-        .expect("Failed to create appsink");
+        .context("Failed to create appsink")?;
 
     pipeline
         .add_many([&src, &convert, &capsfilter, &sink])
-        .expect("Failed to add elements");
-    gst::Element::link_many([&src, &convert, &capsfilter, &sink]).expect("Failed to link elements");
+        .context("Failed to add elements to pipeline")?;
+    gst::Element::link_many([&src, &convert, &capsfilter, &sink])
+        .context("Failed to link pipeline elements")?;
 
     let appsink = sink
         .clone()
         .dynamic_cast::<gst_app::AppSink>()
-        .expect("Sink is not an appsink");
+        .map_err(|_| anyhow::anyhow!("Sink element is not an AppSink"))?;
 
     appsink.set_callbacks(
         gst_app::AppSinkCallbacks::builder()
@@ -123,7 +124,6 @@ pub fn build_pipeline(frame_tx: std::sync::mpsc::SyncSender<Frame>) -> gst::Pipe
                             && let Some(data) =
                                 rgba_tightly_packed_copy(map.as_slice(), width, height)
                         {
-                            #[cfg(target_os = "windows")]
                             resource_monitor::record_camera_frame();
 
                             let id = frame_id.fetch_add(1, Ordering::Relaxed);
@@ -142,5 +142,5 @@ pub fn build_pipeline(frame_tx: std::sync::mpsc::SyncSender<Frame>) -> gst::Pipe
             .build(),
     );
 
-    pipeline
+    Ok(pipeline)
 }

@@ -102,7 +102,7 @@ fn run_once(
 
     let outputs = session.run(ort::inputs![input_tensor]).context("run ORT")?;
 
-    if outputs.len() == 0 {
+    if outputs.is_empty() {
         anyhow::bail!("model returned no outputs");
     }
 

@@ -1,5 +1,4 @@
-use std::collections::VecDeque;
-use std::sync::atomic::Ordering;
+#[cfg(onnx)]
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::time::{Duration, Instant};
 
@@ -10,18 +9,82 @@ use egui::{Context as EguiContext, ViewportId};
 use egui_wgpu::{Renderer as EguiRenderer, ScreenDescriptor};
 use egui_winit::State as EguiWinitState;
 use std::sync::Arc;
-use sysinfo::{Pid, ProcessesToUpdate, System};
 
-#[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-use crate::person_detection::{Detection, PersonDetector, default_model_path};
+#[cfg(onnx)]
+use crate::detection::Detection;
+#[cfg(onnx)]
+use crate::person_detection::{PersonDetector, default_model_path};
 use crate::resource_monitor;
 
 use super::inference::{InferRequest, InferResult};
-use super::overlay::{bytes_to_mib, draw_cpu_history};
+use super::overlay::draw_cpu_history;
+use super::overlay_stats::OverlayStats;
 use super::pipeline::Frame;
 
-pub struct WgpuState<'w> {
-    surface: wgpu::Surface<'w>,
+/// State for the background inference thread and its results.
+#[cfg(onnx)]
+struct InferenceState {
+    detector_error: Option<String>,
+    model_path: Option<String>,
+    score_threshold: f32,
+    infer_every: Duration,
+    last_infer: Instant,
+    last_detections: Vec<Detection>,
+    last_detections_frame_id: Option<u64>,
+    infer_tx: Option<SyncSender<InferRequest>>,
+    infer_rx: Option<Receiver<InferResult>>,
+    infer_in_flight: bool,
+    infer_enabled: bool,
+}
+
+#[cfg(onnx)]
+impl InferenceState {
+    fn poll(&mut self) {
+        if let Some(rx) = self.infer_rx.as_ref() {
+            while let Ok(res) = rx.try_recv() {
+                self.infer_in_flight = false;
+                self.last_detections = res.detections;
+                self.last_detections_frame_id = Some(res.frame_id);
+                self.detector_error = res.error;
+            }
+        }
+    }
+
+    fn maybe_infer(&mut self, frame: &Frame) {
+        let Some(tx) = self.infer_tx.as_ref() else {
+            return;
+        };
+
+        if !self.infer_enabled {
+            return;
+        }
+
+        if self.last_infer.elapsed() < self.infer_every {
+            return;
+        }
+
+        if self.infer_in_flight {
+            return;
+        }
+
+        if tx
+            .try_send(InferRequest {
+                frame_id: frame.id,
+                rgba: Arc::clone(&frame.data),
+                width: frame.width,
+                height: frame.height,
+                score_threshold: self.score_threshold,
+            })
+            .is_ok()
+        {
+            self.last_infer = Instant::now();
+            self.infer_in_flight = true;
+        }
+    }
+}
+
+pub struct WgpuState {
+    surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
@@ -37,53 +100,17 @@ pub struct WgpuState<'w> {
     egui_screen: ScreenDescriptor,
     overlay_enabled: bool,
 
-    sysinfo: System,
-    pid: Pid,
+    overlay: OverlayStats,
 
-    overlay_last_sample_at: Instant,
-    overlay_last_cam_count: u64,
-    overlay_last_infer_count: u64,
-    overlay_last_infer_time_ns: u64,
-    overlay_last_infer_time_samples: u64,
-    overlay_cam_fps: f32,
-    overlay_infer_fps: f32,
-    overlay_infer_latency_ms: f32,
-    overlay_infer_capacity_fps: f32,
-    overlay_proc_cpu_pct: f32,
-    overlay_proc_rss_mib: f32,
-    overlay_cpu_history: VecDeque<f32>,
-    overlay_cpu_history_cap: usize,
-
-    #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-    detector_error: Option<String>,
-    #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-    model_path: Option<String>,
-    #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-    score_threshold: f32,
-    #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-    infer_every: Duration,
-    #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-    last_infer: Instant,
-    #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-    last_detections: Vec<Detection>,
-    #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-    last_detections_frame_id: Option<u64>,
+    #[cfg(onnx)]
+    inference: InferenceState,
 
     current_frame_id: Option<u64>,
-
-    #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-    infer_tx: Option<SyncSender<InferRequest>>,
-    #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-    infer_rx: Option<Receiver<InferResult>>,
-    #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-    infer_in_flight: bool,
-    #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-    infer_enabled: bool,
 }
 
-impl<'w> WgpuState<'w> {
+impl WgpuState {
     pub async fn new(
-        window: &'w Window,
+        window: Arc<Window>,
         display_target: &dyn wgpu::rwh::HasDisplayHandle,
         backends: wgpu::Backends,
     ) -> Self {
@@ -94,7 +121,7 @@ impl<'w> WgpuState<'w> {
             ..Default::default()
         });
         let surface = instance
-            .create_surface(window)
+            .create_surface(Arc::clone(&window))
             .expect("Failed to create surface");
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -253,7 +280,7 @@ impl<'w> WgpuState<'w> {
             pixels_per_point: window.scale_factor() as f32,
         };
 
-        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+        #[cfg(onnx)]
         let (infer_tx, infer_rx, detector_error, model_path) = {
             let env_override = std::env::var("KATAGLYPHIS_ONNX_MODEL").ok();
             let path = env_override
@@ -281,7 +308,6 @@ impl<'w> WgpuState<'w> {
                 };
 
                 while let Ok(req) = req_rx.recv() {
-                    #[cfg(target_os = "windows")]
                     let infer_start = Instant::now();
                     let result = match detector.infer_persons_rgba(
                         req.rgba.as_slice(),
@@ -301,12 +327,8 @@ impl<'w> WgpuState<'w> {
                         },
                     };
 
-                    #[cfg(target_os = "windows")]
-                    {
-                        let infer_duration = infer_start.elapsed();
-                        resource_monitor::record_inference_duration(infer_duration);
-                        resource_monitor::record_inference_completion();
-                    }
+                    resource_monitor::record_inference_duration(infer_start.elapsed());
+                    resource_monitor::record_inference_completion();
 
                     let _ = res_tx.try_send(result);
                 }
@@ -315,20 +337,17 @@ impl<'w> WgpuState<'w> {
             (Some(req_tx), Some(res_rx), None, Some(path))
         };
 
-        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+        #[cfg(onnx)]
         let score_threshold = std::env::var("KATAGLYPHIS_SCORE_THRESHOLD")
             .ok()
             .and_then(|v| v.parse::<f32>().ok())
             .unwrap_or(0.5);
 
-        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+        #[cfg(onnx)]
         let infer_every_ms = std::env::var("KATAGLYPHIS_INFER_EVERY_MS")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
             .unwrap_or(0);
-
-        let pid = Pid::from_u32(std::process::id());
-        let sysinfo = System::new_all();
 
         Self {
             surface,
@@ -347,51 +366,24 @@ impl<'w> WgpuState<'w> {
             egui_screen,
             overlay_enabled: true,
 
-            sysinfo,
-            pid,
+            overlay: OverlayStats::new(),
 
-            overlay_last_sample_at: Instant::now(),
-            overlay_last_cam_count: resource_monitor::CAMERA_FRAMES.load(Ordering::Relaxed),
-            overlay_last_infer_count: resource_monitor::INFERENCE_COMPLETIONS
-                .load(Ordering::Relaxed),
-            overlay_last_infer_time_ns: resource_monitor::INFERENCE_TIME_NS_TOTAL
-                .load(Ordering::Relaxed),
-            overlay_last_infer_time_samples: resource_monitor::INFERENCE_TIME_SAMPLES
-                .load(Ordering::Relaxed),
-            overlay_cam_fps: 0.0,
-            overlay_infer_fps: 0.0,
-            overlay_infer_latency_ms: 0.0,
-            overlay_infer_capacity_fps: 0.0,
-            overlay_proc_cpu_pct: 0.0,
-            overlay_proc_rss_mib: 0.0,
-            overlay_cpu_history: VecDeque::new(),
-            overlay_cpu_history_cap: 120,
-
-            #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-            detector_error,
-            #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-            model_path,
-            #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-            score_threshold,
-            #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-            infer_every: Duration::from_millis(infer_every_ms),
-            #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-            last_infer: Instant::now() - Duration::from_secs(1),
-            #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-            last_detections: Vec::new(),
-            #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-            last_detections_frame_id: None,
+            #[cfg(onnx)]
+            inference: InferenceState {
+                detector_error,
+                model_path,
+                score_threshold,
+                infer_every: Duration::from_millis(infer_every_ms),
+                last_infer: Instant::now() - Duration::from_secs(1),
+                last_detections: Vec::new(),
+                last_detections_frame_id: None,
+                infer_tx,
+                infer_rx,
+                infer_in_flight: false,
+                infer_enabled: true,
+            },
 
             current_frame_id: None,
-
-            #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-            infer_tx,
-            #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-            infer_rx,
-            #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-            infer_in_flight: false,
-            #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-            infer_enabled: true,
         }
     }
 
@@ -477,116 +469,17 @@ impl<'w> WgpuState<'w> {
             );
         }
 
-        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-        self.maybe_infer(frame);
+        #[cfg(onnx)]
+        self.inference.maybe_infer(frame);
     }
 
     pub fn poll_inference(&mut self) {
-        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-        if let Some(rx) = self.infer_rx.as_ref() {
-            while let Ok(res) = rx.try_recv() {
-                self.infer_in_flight = false;
-                self.last_detections = res.detections;
-                self.last_detections_frame_id = Some(res.frame_id);
-                self.detector_error = res.error;
-            }
-        }
+        #[cfg(onnx)]
+        self.inference.poll();
     }
 
     pub fn update_overlay_stats(&mut self) {
-        let now = Instant::now();
-        if now.duration_since(self.overlay_last_sample_at) < Duration::from_millis(500) {
-            return;
-        }
-
-        let dt_s = now
-            .duration_since(self.overlay_last_sample_at)
-            .as_secs_f32()
-            .max(0.001);
-        self.overlay_last_sample_at = now;
-
-        self.sysinfo
-            .refresh_processes(ProcessesToUpdate::Some(&[self.pid]), true);
-        self.sysinfo.refresh_memory();
-
-        let (cpu_pct, rss_bytes) = self
-            .sysinfo
-            .process(self.pid)
-            .map(|p| (p.cpu_usage(), p.memory()))
-            .unwrap_or((0.0, 0));
-
-        self.overlay_proc_cpu_pct = cpu_pct;
-        self.overlay_proc_rss_mib = bytes_to_mib(rss_bytes);
-
-        let cam_count_now = resource_monitor::CAMERA_FRAMES.load(Ordering::Relaxed);
-        let cam_delta = cam_count_now.wrapping_sub(self.overlay_last_cam_count);
-        self.overlay_cam_fps = (cam_delta as f32) / dt_s;
-        self.overlay_last_cam_count = cam_count_now;
-
-        let infer_count_now = resource_monitor::INFERENCE_COMPLETIONS.load(Ordering::Relaxed);
-        let infer_delta = infer_count_now.wrapping_sub(self.overlay_last_infer_count);
-        self.overlay_infer_fps = (infer_delta as f32) / dt_s;
-        self.overlay_last_infer_count = infer_count_now;
-
-        let infer_time_ns_now = resource_monitor::INFERENCE_TIME_NS_TOTAL.load(Ordering::Relaxed);
-        let infer_time_samples_now =
-            resource_monitor::INFERENCE_TIME_SAMPLES.load(Ordering::Relaxed);
-        let infer_time_ns_delta = infer_time_ns_now.wrapping_sub(self.overlay_last_infer_time_ns);
-        let infer_time_samples_delta =
-            infer_time_samples_now.wrapping_sub(self.overlay_last_infer_time_samples);
-        self.overlay_last_infer_time_ns = infer_time_ns_now;
-        self.overlay_last_infer_time_samples = infer_time_samples_now;
-
-        if infer_time_samples_delta > 0 {
-            self.overlay_infer_latency_ms =
-                (infer_time_ns_delta as f32 / infer_time_samples_delta as f32) / 1_000_000.0;
-        } else {
-            self.overlay_infer_latency_ms = 0.0;
-        }
-
-        self.overlay_infer_capacity_fps = if self.overlay_infer_latency_ms > 0.0 {
-            1000.0 / self.overlay_infer_latency_ms
-        } else {
-            0.0
-        };
-
-        self.overlay_cpu_history.push_back(cpu_pct);
-        while self.overlay_cpu_history.len() > self.overlay_cpu_history_cap {
-            self.overlay_cpu_history.pop_front();
-        }
-    }
-
-    #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-    fn maybe_infer(&mut self, frame: &Frame) {
-        let Some(tx) = self.infer_tx.as_ref() else {
-            return;
-        };
-
-        if !self.infer_enabled {
-            return;
-        }
-
-        if self.last_infer.elapsed() < self.infer_every {
-            return;
-        }
-
-        if self.infer_in_flight {
-            return;
-        }
-
-        if tx
-            .try_send(InferRequest {
-                frame_id: frame.id,
-                rgba: Arc::clone(&frame.data),
-                width: frame.width,
-                height: frame.height,
-                score_threshold: self.score_threshold,
-            })
-            .is_ok()
-        {
-            self.last_infer = Instant::now();
-            self.infer_in_flight = true;
-        }
+        self.overlay.update();
     }
 
     pub fn render(&mut self, window: &Window) -> Result<(), wgpu::SurfaceError> {
@@ -599,26 +492,26 @@ impl<'w> WgpuState<'w> {
         self.update_overlay_stats();
 
         let mut overlay_enabled = self.overlay_enabled;
-        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-        let mut infer_enabled = self.infer_enabled;
+        #[cfg(onnx)]
+        let mut infer_enabled = self.inference.infer_enabled;
         let frame_dimensions = self
             .texture
             .as_ref()
             .map(|(_, _, _, w, h)| (*w, *h))
             .unwrap_or((0, 0));
 
-        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-        let detections_count = if self.last_detections_frame_id.is_some() {
-            self.last_detections.len()
+        #[cfg(onnx)]
+        let detections_count = if self.inference.last_detections_frame_id.is_some() {
+            self.inference.last_detections.len()
         } else {
             0
         };
-        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-        let detector_error = self.detector_error.clone();
-        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-        let model_path = self.model_path.clone();
-        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-        let score_threshold = self.score_threshold;
+        #[cfg(onnx)]
+        let detector_error = self.inference.detector_error.clone();
+        #[cfg(onnx)]
+        let model_path = self.inference.model_path.clone();
+        #[cfg(onnx)]
+        let score_threshold = self.inference.score_threshold;
 
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
             if overlay_enabled {
@@ -632,24 +525,24 @@ impl<'w> WgpuState<'w> {
                             frame_dimensions.0, frame_dimensions.1
                         ));
                         ui.separator();
-                        ui.label(format!("Camera FPS: {:.2}", self.overlay_cam_fps));
-                        ui.label(format!("Infer FPS:  {:.2}", self.overlay_infer_fps));
-                        ui.label(format!("Infer ms:   {:.2}", self.overlay_infer_latency_ms));
+                        ui.label(format!("Camera FPS: {:.2}", self.overlay.cam_fps));
+                        ui.label(format!("Infer FPS:  {:.2}", self.overlay.infer_fps));
+                        ui.label(format!("Infer ms:   {:.2}", self.overlay.infer_latency_ms));
                         ui.label(format!(
                             "Infer cap: {:.2} fps",
-                            self.overlay_infer_capacity_fps
+                            self.overlay.infer_capacity_fps
                         ));
                         ui.label(format!(
                             "CPU: {:.1}%   RSS: {:.1} MiB",
-                            self.overlay_proc_cpu_pct, self.overlay_proc_rss_mib
+                            self.overlay.proc_cpu_pct, self.overlay.proc_rss_mib
                         ));
-                        draw_cpu_history(ui, &self.overlay_cpu_history);
+                        draw_cpu_history(ui, &self.overlay.cpu_history);
 
-                        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+                        #[cfg(onnx)]
                         {
                             if frame_dimensions.0 > 0
                                 && frame_dimensions.1 > 0
-                                && !self.last_detections.is_empty()
+                                && !self.inference.last_detections.is_empty()
                             {
                                 let screen = ctx.content_rect();
                                 let sx = screen.width() / frame_dimensions.0 as f32;
@@ -659,7 +552,7 @@ impl<'w> WgpuState<'w> {
                                     egui::Id::new("detections"),
                                 ));
 
-                                for d in &self.last_detections {
+                                for d in &self.inference.last_detections {
                                     let x1 = screen.left() + d.x1 * sx;
                                     let y1 = screen.top() + d.y1 * sy;
                                     let x2 = screen.left() + d.x2 * sx;
@@ -709,9 +602,9 @@ impl<'w> WgpuState<'w> {
             }
         });
         self.overlay_enabled = overlay_enabled;
-        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+        #[cfg(onnx)]
         {
-            self.infer_enabled = infer_enabled;
+            self.inference.infer_enabled = infer_enabled;
         }
 
         let clipped_primitives = self
@@ -791,6 +684,9 @@ impl<'w> WgpuState<'w> {
                     occlusion_query_set: None,
                     timestamp_writes: None,
                 })
+                // Erase the borrow lifetime so we can pass the render pass to
+                // `egui_renderer.render()` which requires `'static`.  The pass
+                // is dropped before the encoder is submitted, so this is safe.
                 .forget_lifetime();
 
             let mut egui_rpass = egui_rpass;

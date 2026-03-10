@@ -1,23 +1,6 @@
 use log::error;
 
-#[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
-use crate::person_detection::Detection;
-
-/// Re-export `Detection` as the public API type for person detection results.
-///
-/// Previously this module defined a separate `PersonDetection` struct with
-/// identical fields and manually mapped between the two. Now we just re-use
-/// the canonical type.
-#[cfg(not(any(feature = "onnx_tract", feature = "onnxruntime")))]
-#[derive(Clone, Debug)]
-pub struct Detection {
-    pub x1: f32,
-    pub y1: f32,
-    pub x2: f32,
-    pub y2: f32,
-    pub score: f32,
-    pub class_id: i64,
-}
+use crate::detection::Detection;
 
 #[flutter_rust_bridge::frb(sync)]
 pub fn detect_persons_rgba(
@@ -30,14 +13,14 @@ pub fn detect_persons_rgba(
     // Note: `person_detection` is feature-gated; keep this function compilable even when
     // ONNX features are disabled (e.g. for WASM builds).
     let resolved_model_path = if model_path.trim().is_empty() {
-        #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+        #[cfg(onnx)]
         {
             crate::person_detection::default_model_path()
                 .to_string_lossy()
                 .to_string()
         }
 
-        #[cfg(not(any(feature = "onnx_tract", feature = "onnxruntime")))]
+        #[cfg(not(onnx))]
         {
             String::new()
         }
@@ -54,7 +37,7 @@ pub fn detect_persons_rgba(
     }
 }
 
-#[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
+#[cfg(onnx)]
 fn detect_persons_rgba_impl(
     model_path: &str,
     rgba: &[u8],
@@ -95,7 +78,7 @@ fn detect_persons_rgba_impl(
         .infer_persons_rgba(rgba, width, height, score_threshold)
 }
 
-#[cfg(not(any(feature = "onnx_tract", feature = "onnxruntime")))]
+#[cfg(not(onnx))]
 fn detect_persons_rgba_impl(
     _model_path: &str,
     _rgba: &[u8],

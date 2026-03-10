@@ -3179,16 +3179,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gpu-allocator"
-version = "0.28.0"
-source = "git+https://github.com/Traverse-Research/gpu-allocator?branch=main#46539528a94f6afb7ce77089fb95156aa0e9a082"
-dependencies = [
- "log",
- "presser",
- "thiserror 2.0.18",
-]
-
-[[package]]
 name = "gpu-descriptor"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3982,7 +3972,6 @@ dependencies = [
  "env_logger",
  "flutter_rust_bridge",
  "glib",
- "gpu-allocator 0.28.0",
  "gstreamer",
  "gstreamer-app",
  "gstreamer-video",
@@ -7965,7 +7954,7 @@ dependencies = [
  "glow",
  "glutin_wgl_sys",
  "gpu-alloc",
- "gpu-allocator 0.27.0",
+ "gpu-allocator",
  "gpu-descriptor",
  "hashbrown 0.15.5",
  "js-sys",
@@ -8013,7 +8002,7 @@ dependencies = [
  "glow",
  "glutin_wgl_sys",
  "gpu-alloc",
- "gpu-allocator 0.27.0",
+ "gpu-allocator",
  "gpu-descriptor",
  "hashbrown 0.16.1",
  "js-sys",
