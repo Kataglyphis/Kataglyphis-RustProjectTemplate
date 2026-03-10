@@ -426,7 +426,7 @@ fn ensure_ort_cuda_provider_dylibs_next_to_exe() -> Result<()> {
                 } else if path.file_name() == Some(file_name) {
                     let meta = entry.metadata()?;
                     let mtime = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-                    if best.as_ref().map_or(true, |(t, _)| mtime > *t) {
+                    if best.as_ref().is_none_or(|(t, _)| mtime > *t) {
                         best = Some((mtime, path));
                     }
                 }
