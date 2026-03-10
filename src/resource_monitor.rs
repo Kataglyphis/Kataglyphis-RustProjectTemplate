@@ -262,20 +262,14 @@ fn windows_gpu_sample() -> Option<GpuSample> {
     };
 
     // Memory usage (bytes) per adapter.
-    let adapters: Vec<GpuAdapter> = match wmi.raw_query(
+    let adapters: Vec<GpuAdapter> = wmi.raw_query(
         "SELECT DedicatedUsage, SharedUsage, TotalCommitted FROM Win32_PerfFormattedData_GPUPerformanceCounters_GPUAdapter",
-    ) {
-        Ok(v) => v,
-        Err(_) => Vec::new(),
-    };
+    ).unwrap_or_default();
 
     // Utilization (%). We aggregate the max utilization across engines as a simple heuristic.
-    let engines: Vec<GpuEngine> = match wmi.raw_query(
+    let engines: Vec<GpuEngine> = wmi.raw_query(
         "SELECT UtilizationPercentage FROM Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine",
-    ) {
-        Ok(v) => v,
-        Err(_) => Vec::new(),
-    };
+    ).unwrap_or_default();
 
     let util_max = engines
         .iter()
@@ -287,8 +281,10 @@ fn windows_gpu_sample() -> Option<GpuSample> {
         .into_iter()
         .find(|a| a.dedicated_usage.is_some() || a.shared_usage.is_some());
 
-    let mut sample = GpuSample::default();
-    sample.utilization_pct = util_max;
+    let mut sample = GpuSample {
+        utilization_pct: util_max,
+        ..Default::default()
+    };
 
     if let Some(a) = adapter {
         sample.dedicated_used_bytes = a.dedicated_usage;
