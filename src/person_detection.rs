@@ -245,10 +245,7 @@ impl PersonDetector {
                     .run(ort::inputs![input_tensor])
                     .context("Failed to run ONNX model (ort)")?;
 
-                if outputs.is_empty() {
-                    bail!("Model returned no outputs");
-                }
-                let out = &outputs[0];
+                let out = outputs.get(0).context("Model returned no outputs")?;
                 let (shape, data) = out
                     .try_extract_tensor::<f32>()
                     .context("Failed to extract f32 tensor from ORT output")?;

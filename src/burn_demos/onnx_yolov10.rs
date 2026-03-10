@@ -102,11 +102,7 @@ fn run_once(
 
     let outputs = session.run(ort::inputs![input_tensor]).context("run ORT")?;
 
-    if outputs.is_empty() {
-        anyhow::bail!("model returned no outputs");
-    }
-
-    let out = &outputs[0];
+    let out = outputs.get(0).context("model returned no outputs")?;
     let (shape, data) = out
         .try_extract_tensor::<f32>()
         .context("extract f32 tensor")?;
