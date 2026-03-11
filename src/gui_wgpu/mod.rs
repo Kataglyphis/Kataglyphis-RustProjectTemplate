@@ -1,8 +1,8 @@
-pub mod inference;
-pub mod overlay;
+pub(crate) mod inference;
+pub(crate) mod overlay;
 pub(crate) mod overlay_stats;
-pub mod pipeline;
-pub mod renderer;
+pub(crate) mod pipeline;
+pub(crate) mod renderer;
 
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, sync_channel};

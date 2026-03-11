@@ -45,21 +45,21 @@ pub(crate) static INFERENCE_TIME_SAMPLES: AtomicU64 = AtomicU64::new(0);
 /// Record a single inference completion.
 #[inline]
 #[cfg_attr(not(gui_wgpu_backend), allow(dead_code))]
-pub fn record_inference_completion() {
+pub(crate) fn record_inference_completion() {
     INFERENCE_COMPLETIONS.fetch_add(1, Ordering::Relaxed);
 }
 
 /// Record a single camera frame arrival.
 #[inline]
 #[cfg_attr(not(gui_wgpu_backend), allow(dead_code))]
-pub fn record_camera_frame() {
+pub(crate) fn record_camera_frame() {
     CAMERA_FRAMES.fetch_add(1, Ordering::Relaxed);
 }
 
 /// Record one inference duration sample.
 #[inline]
 #[cfg_attr(not(gui_wgpu_backend), allow(dead_code))]
-pub fn record_inference_duration(duration: Duration) {
+pub(crate) fn record_inference_duration(duration: Duration) {
     let ns = duration.as_nanos().min(u128::from(u64::MAX)) as u64;
     INFERENCE_TIME_NS_TOTAL.fetch_add(ns, Ordering::Relaxed);
     INFERENCE_TIME_SAMPLES.fetch_add(1, Ordering::Relaxed);
@@ -104,7 +104,7 @@ impl Drop for ResourceMonitor {
 // ── Unit conversions ───────────────────────────────────────────────
 
 #[inline]
-pub fn bytes_to_mib(bytes: u64) -> f64 {
+pub(crate) fn bytes_to_mib(bytes: u64) -> f64 {
     (bytes as f64) / BYTES_PER_MIB
 }
 
@@ -198,7 +198,7 @@ fn run_monitor_loop(config: ResourceMonitorConfig, stop: Arc<AtomicBool>) {
 
 /// Per-tick rate metrics computed from atomic counter deltas.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Rates {
+pub(crate) struct Rates {
     pub cam_fps: f64,
     pub infer_fps: f64,
     pub infer_latency_ms: f64,
@@ -209,7 +209,7 @@ pub struct Rates {
 ///
 /// Shared between the background `ResourceMonitor` loop and the GUI overlay so
 /// that the rate-computation logic is defined in exactly one place.
-pub struct CounterSnapshot {
+pub(crate) struct CounterSnapshot {
     at: Instant,
     cam: u64,
     infer: u64,
@@ -224,7 +224,7 @@ impl Default for CounterSnapshot {
 }
 
 impl CounterSnapshot {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             at: Instant::now(),
             cam: CAMERA_FRAMES.load(Ordering::Relaxed),
@@ -234,7 +234,7 @@ impl CounterSnapshot {
         }
     }
 
-    pub fn tick(&mut self, now: Instant) -> Rates {
+    pub(crate) fn tick(&mut self, now: Instant) -> Rates {
         let dt_s = now.duration_since(self.at).as_secs_f64().max(0.001);
         self.at = now;
 

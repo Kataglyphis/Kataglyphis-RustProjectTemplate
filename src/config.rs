@@ -20,8 +20,11 @@ use log::warn;
 /// # Variants
 ///
 /// ```ignore
-/// // Value type (returned by copy):
+/// // Value type (returned by copy), public by default:
 /// env_cached!(fn_name -> Type, { || init_expr });
+///
+/// // Value type with explicit visibility:
+/// env_cached!(pub(crate) fn_name -> Type, { || init_expr });
 ///
 /// // Reference type (returned by &'static ref):
 /// env_cached!(ref fn_name -> Type, { || init_expr });
@@ -31,6 +34,14 @@ macro_rules! env_cached {
     ($(#[$attr:meta])* fn $name:ident -> $ty:ty, $init:expr) => {
         $(#[$attr])*
         pub fn $name() -> $ty {
+            static CACHE: OnceLock<$ty> = OnceLock::new();
+            *CACHE.get_or_init($init)
+        }
+    };
+    // Copy variant with explicit visibility.
+    ($(#[$attr:meta])* $vis:vis fn $name:ident -> $ty:ty, $init:expr) => {
+        $(#[$attr])*
+        $vis fn $name() -> $ty {
             static CACHE: OnceLock<$ty> = OnceLock::new();
             *CACHE.get_or_init($init)
         }
@@ -48,7 +59,8 @@ macro_rules! env_cached {
 // ── Preprocessing ──────────────────────────────────────────────────
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum PreprocessMode {
+#[cfg_attr(not(onnx), allow(dead_code))]
+pub(crate) enum PreprocessMode {
     Letterbox,
     #[default]
     Stretch,
@@ -56,7 +68,8 @@ pub enum PreprocessMode {
 
 env_cached!(
     /// `KATAGLYPHIS_PREPROCESS`: `"letterbox"` | `"stretch"` (default `"stretch"`).
-    fn preprocess_mode -> PreprocessMode, || {
+    #[cfg_attr(not(onnx), allow(dead_code))]
+    pub(crate) fn preprocess_mode -> PreprocessMode, || {
         let raw = std::env::var("KATAGLYPHIS_PREPROCESS").unwrap_or_else(|_| "stretch".to_string());
         match raw.trim().to_ascii_lowercase().as_str() {
             "letterbox" | "boxed" | "pad" => PreprocessMode::Letterbox,

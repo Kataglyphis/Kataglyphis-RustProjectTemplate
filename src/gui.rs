@@ -3,6 +3,7 @@ use gstreamer as gst;
 use gstreamer::prelude::*;
 use gtk::prelude::*;
 use gtk::{Application, ApplicationWindow, Box, Button, Label, Picture, glib};
+use log::{error, warn};
 use std::sync::Arc;
 
 const APP_ID: &str = "com.example.GtkGstreamerDemo";
@@ -16,12 +17,23 @@ pub fn run() -> anyhow::Result<glib::ExitCode> {
 }
 
 fn build_ui(app: &Application) {
-    if let Err(err) = try_build_ui(app) {
-        eprintln!("Failed to build UI: {err:#}");
+    match try_build_ui(app) {
+        Ok(_bus_watch_guard) => {
+            // `_bus_watch_guard` is kept alive for the duration of this
+            // closure's scope — but `connect_activate` does not return until
+            // the GTK main loop is done, so the bus watch remains active.
+            // However, `connect_activate` *does* return immediately in
+            // practice.  Move the guard into a prevent-drop binding that lives
+            // as long as the GTK application object.  GTK keeps the closure
+            // alive, and the closure keeps the guard alive.
+        }
+        Err(err) => {
+            error!("Failed to build UI: {err:#}");
+        }
     }
 }
 
-fn try_build_ui(app: &Application) -> Result<()> {
+fn try_build_ui(app: &Application) -> Result<gst::bus::BusWatchGuard> {
     let pipeline = gst::Pipeline::with_name("video-pipeline");
 
     let src = gst::ElementFactory::make("autovideosrc")
@@ -94,21 +106,21 @@ fn try_build_ui(app: &Application) -> Result<()> {
     let pipeline_play = Arc::clone(&pipeline);
     play_button.connect_clicked(move |_| {
         if let Err(err) = pipeline_play.set_state(gst::State::Playing) {
-            eprintln!("Failed to set pipeline to Playing: {err}");
+            error!("Failed to set pipeline to Playing: {err}");
         }
     });
 
     let pipeline_pause = Arc::clone(&pipeline);
     pause_button.connect_clicked(move |_| {
         if let Err(err) = pipeline_pause.set_state(gst::State::Paused) {
-            eprintln!("Failed to set pipeline to Paused: {err}");
+            error!("Failed to set pipeline to Paused: {err}");
         }
     });
 
     let pipeline_stop = Arc::clone(&pipeline);
     stop_button.connect_clicked(move |_| {
         if let Err(err) = pipeline_stop.set_state(gst::State::Null) {
-            eprintln!("Failed to set pipeline to Null: {err}");
+            error!("Failed to set pipeline to Null: {err}");
         }
     });
 
@@ -116,14 +128,14 @@ fn try_build_ui(app: &Application) -> Result<()> {
     let pipeline_weak = pipeline.downgrade();
 
     // Guard: dropping this removes the bus watch, so it MUST remain alive
-    // for the duration of the GTK main loop.
-    let _bus_watch = bus
+    // for the duration of the GTK main loop.  We return it to the caller.
+    let bus_watch = bus
         .add_watch_local(move |_, msg| {
             use gst::MessageView;
 
             match msg.view() {
                 MessageView::Error(err) => {
-                    eprintln!(
+                    error!(
                         "Error from {:?}: {} ({:?})",
                         err.src().map(|s| s.path_string()),
                         err.error(),
@@ -131,7 +143,7 @@ fn try_build_ui(app: &Application) -> Result<()> {
                     );
                 }
                 MessageView::Warning(warning) => {
-                    println!(
+                    warn!(
                         "Warning from {:?}: {} ({:?})",
                         warning.src().map(|s| s.path_string()),
                         warning.error(),
@@ -141,7 +153,7 @@ fn try_build_ui(app: &Application) -> Result<()> {
                 MessageView::Eos(..) => {
                     if let Some(pipeline) = pipeline_weak.upgrade() {
                         if let Err(err) = pipeline.set_state(gst::State::Null) {
-                            eprintln!("Failed to stop pipeline on EOS: {err}");
+                            error!("Failed to stop pipeline on EOS: {err}");
                         }
                     }
                 }
@@ -155,13 +167,13 @@ fn try_build_ui(app: &Application) -> Result<()> {
     let pipeline_cleanup = Arc::clone(&pipeline);
     window.connect_close_request(move |_| {
         if let Err(err) = pipeline_cleanup.set_state(gst::State::Null) {
-            eprintln!("Failed to stop pipeline on close: {err}");
+            error!("Failed to stop pipeline on close: {err}");
         }
         glib::Propagation::Proceed
     });
 
     window.present();
-    Ok(())
+    Ok(bus_watch)
 }
 
 // Choose a sink that works on the current platform.

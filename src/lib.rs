@@ -24,7 +24,7 @@ pub mod burn_demos;
 
 mod frb_generated;
 #[cfg(onnx)]
-pub mod person_detection;
+pub(crate) mod person_detection;
 
 #[cfg(all(feature = "gui_unix", not(windows)))]
 pub mod gui;

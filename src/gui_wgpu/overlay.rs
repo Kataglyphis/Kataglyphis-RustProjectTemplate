@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-pub fn draw_cpu_history(ui: &mut egui::Ui, history: &VecDeque<f32>) {
+pub(crate) fn draw_cpu_history(ui: &mut egui::Ui, history: &VecDeque<f32>) {
     let desired = egui::vec2(160.0, 48.0);
     let (rect, _response) = ui.allocate_exact_size(desired, egui::Sense::hover());
 

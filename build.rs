@@ -26,8 +26,12 @@ fn main() {
     }
 
     // ── CXX bridge ─────────────────────────────────────────────────
-    #[cfg(not(target_arch = "wasm32"))]
-    {
+    // NOTE: `#[cfg(not(target_arch = "wasm32"))]` checks the *host* triple
+    // inside a build script, NOT the crate's target.  Use the `CARGO_CFG_*`
+    // environment variable so that cross-compiling to wasm32 correctly skips
+    // the CXX bridge build.
+    let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+    if target_arch != "wasm32" {
         cxx_build::bridge("src/lib.rs")
             .flag_if_supported("-std=c++17")
             .compile("kataglyphis_cxx");

@@ -31,7 +31,7 @@ struct FrameTexture {
     height: u32,
 }
 
-pub struct WgpuState {
+pub(crate) struct WgpuState {
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -104,7 +104,14 @@ async fn init_wgpu(
         .iter()
         .copied()
         .find(|f| f.is_srgb())
-        .unwrap_or(surface_caps.formats[0]);
+        .or_else(|| surface_caps.formats.first().copied())
+        .context("Surface reports no supported texture formats")?;
+
+    let alpha_mode = surface_caps
+        .alpha_modes
+        .first()
+        .copied()
+        .context("Surface reports no supported alpha modes")?;
 
     let config = wgpu::SurfaceConfiguration {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -112,7 +119,7 @@ async fn init_wgpu(
         width: size.width.max(1),
         height: size.height.max(1),
         present_mode: wgpu::PresentMode::Fifo,
-        alpha_mode: surface_caps.alpha_modes[0],
+        alpha_mode,
         view_formats: vec![],
         desired_maximum_frame_latency: 2,
     };
@@ -311,7 +318,7 @@ fn spawn_inference_thread() -> (
 }
 
 impl WgpuState {
-    pub async fn new(
+    pub(crate) async fn new(
         window: Arc<Window>,
         display_target: &dyn wgpu::rwh::HasDisplayHandle,
         backends: wgpu::Backends,
@@ -383,7 +390,7 @@ impl WgpuState {
         })
     }
 
-    pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
+    pub(crate) fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         if new_size.width > 0 && new_size.height > 0 {
             self.config.width = new_size.width;
             self.config.height = new_size.height;
@@ -392,14 +399,18 @@ impl WgpuState {
         }
     }
 
-    pub fn handle_window_event(&mut self, window: &Window, event: &winit::event::WindowEvent) {
+    pub(crate) fn handle_window_event(
+        &mut self,
+        window: &Window,
+        event: &winit::event::WindowEvent,
+    ) {
         let response = self.egui_state.on_window_event(window, event);
         if response.repaint {
             window.request_redraw();
         }
     }
 
-    pub fn upload_frame(&mut self, frame: &Frame) {
+    pub(crate) fn upload_frame(&mut self, frame: &Frame) {
         self.current_frame_id = Some(frame.id);
         self.poll_inference();
         let needs_recreate = match &self.texture {
@@ -475,16 +486,16 @@ impl WgpuState {
         self.inference.maybe_infer(frame);
     }
 
-    pub fn poll_inference(&mut self) {
+    pub(crate) fn poll_inference(&mut self) {
         #[cfg(onnx)]
         self.inference.poll();
     }
 
-    pub fn update_overlay_stats(&mut self) {
+    pub(crate) fn update_overlay_stats(&mut self) {
         self.overlay.update();
     }
 
-    pub fn render(&mut self, window: &Window) -> Result<(), wgpu::SurfaceError> {
+    pub(crate) fn render(&mut self, window: &Window) -> Result<(), wgpu::SurfaceError> {
         self.poll_inference();
 
         self.egui_screen.pixels_per_point = window.scale_factor() as f32;

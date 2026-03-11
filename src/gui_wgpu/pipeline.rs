@@ -5,11 +5,12 @@ use anyhow::{Context, Result};
 use gstreamer as gst;
 use gstreamer::prelude::*;
 use gstreamer_app as gst_app;
+use log::warn;
 
 use crate::resource_monitor;
 
 #[derive(Clone, Debug)]
-pub struct Frame {
+pub(crate) struct Frame {
     pub id: u64,
     pub data: Arc<[u8]>,
     pub width: u32,
@@ -21,7 +22,7 @@ pub struct Frame {
 /// When the source buffer is already tightly packed (`src.len() == width * height * 4`),
 /// the data is copied directly into an `Arc<[u8]>` — one allocation instead of two
 /// (`Vec` + `Arc`).  When stride-stripping is needed, a temporary `Vec` is used.
-pub fn rgba_tightly_packed(src: &[u8], width: u32, height: u32) -> Option<Arc<[u8]>> {
+pub(crate) fn rgba_tightly_packed(src: &[u8], width: u32, height: u32) -> Option<Arc<[u8]>> {
     if width == 0 || height == 0 {
         return None;
     }
@@ -65,7 +66,9 @@ pub fn rgba_tightly_packed(src: &[u8], width: u32, height: u32) -> Option<Arc<[u
     Some(Arc::from(out))
 }
 
-pub fn build_pipeline(frame_tx: std::sync::mpsc::SyncSender<Frame>) -> Result<gst::Pipeline> {
+pub(crate) fn build_pipeline(
+    frame_tx: std::sync::mpsc::SyncSender<Frame>,
+) -> Result<gst::Pipeline> {
     let pipeline = gst::Pipeline::new();
 
     let frame_id = AtomicU64::new(1);
@@ -117,8 +120,14 @@ pub fn build_pipeline(frame_tx: std::sync::mpsc::SyncSender<Frame>) -> Result<gs
                         .and_then(|c| c.structure(0))
                         .map(|s| s.to_owned());
                     if let Some(structure) = caps {
-                        let width = structure.get::<i32>("width").unwrap_or(640) as u32;
-                        let height = structure.get::<i32>("height").unwrap_or(480) as u32;
+                        let width = structure.get::<i32>("width").unwrap_or_else(|_| {
+                            warn!("GStreamer caps missing 'width'; defaulting to 640");
+                            640
+                        }) as u32;
+                        let height = structure.get::<i32>("height").unwrap_or_else(|_| {
+                            warn!("GStreamer caps missing 'height'; defaulting to 480");
+                            480
+                        }) as u32;
                         if let Ok(map) = buffer.map_readable()
                             && let Some(data) = rgba_tightly_packed(map.as_slice(), width, height)
                         {

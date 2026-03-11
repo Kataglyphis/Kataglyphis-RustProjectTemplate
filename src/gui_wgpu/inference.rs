@@ -8,7 +8,7 @@ use std::sync::mpsc::{Receiver, SyncSender};
 use crate::detection::Detection;
 
 #[cfg(onnx)]
-pub struct InferRequest {
+pub(crate) struct InferRequest {
     pub frame_id: u64,
     pub rgba: Arc<[u8]>,
     pub width: u32,
@@ -17,7 +17,7 @@ pub struct InferRequest {
 }
 
 #[cfg(onnx)]
-pub struct InferResult {
+pub(crate) struct InferResult {
     pub frame_id: u64,
     pub detections: Vec<Detection>,
     pub error: Option<String>,
@@ -41,7 +41,7 @@ pub(crate) struct InferenceState {
 
 #[cfg(onnx)]
 impl InferenceState {
-    pub fn poll(&mut self) {
+    pub(crate) fn poll(&mut self) {
         if let Some(rx) = self.infer_rx.as_ref() {
             while let Ok(res) = rx.try_recv() {
                 self.infer_in_flight = false;
@@ -52,7 +52,7 @@ impl InferenceState {
         }
     }
 
-    pub fn maybe_infer(&mut self, frame: &super::pipeline::Frame) {
+    pub(crate) fn maybe_infer(&mut self, frame: &super::pipeline::Frame) {
         let Some(tx) = self.infer_tx.as_ref() else {
             return;
         };

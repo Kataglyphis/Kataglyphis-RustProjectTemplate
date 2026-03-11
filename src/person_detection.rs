@@ -6,7 +6,7 @@ use crate::ort_ext::{OrtResultExt, extract_first_f32_output};
 
 use crate::config::{self, PreprocessMode};
 
-pub fn default_model_path() -> std::path::PathBuf {
+pub(crate) fn default_model_path() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("resources")
         .join("models")
@@ -24,7 +24,7 @@ use crate::detection::Detection;
 ///   ONNX model output formats differ (e.g. Nx6, 1xNx6, end-to-end models).
 /// - For YOLOv10 end-to-end exports, a common output shape is `[1, N, 6]` with
 ///   `xyxy + score + class`.
-pub struct PersonDetector {
+pub(crate) struct PersonDetector {
     backend: Backend,
     input_w: u32,
     input_h: u32,
@@ -46,9 +46,7 @@ enum Backend {
     Tract { model: Box<TractPlan> },
 
     #[cfg(feature = "onnxruntime")]
-    Ort {
-        session: std::sync::Mutex<ort::session::Session>,
-    },
+    Ort { session: ort::session::Session },
 }
 
 // ── ORT helpers are in crate::ort_ext ──────────────────────────────
@@ -75,7 +73,7 @@ impl PersonDetector {
         }
     }
 
-    pub fn new(model_path: &str) -> Result<Self> {
+    pub(crate) fn new(model_path: &str) -> Result<Self> {
         info!("Loading ONNX model: {model_path}");
 
         let preprocess = config::preprocess_mode();
@@ -91,9 +89,7 @@ impl PersonDetector {
                     let (session, (input_w, input_h)) = load_ort_session(model_path)?;
                     info!("ONNX backend: ort ({input_w}x{input_h})");
                     Ok(Self::from_parts(
-                        Backend::Ort {
-                            session: std::sync::Mutex::new(session),
-                        },
+                        Backend::Ort { session },
                         input_w,
                         input_h,
                         preprocess,
@@ -141,9 +137,7 @@ impl PersonDetector {
                         Ok((session, (input_w, input_h))) => {
                             info!("ONNX backend: ort ({input_w}x{input_h})");
                             return Ok(Self::from_parts(
-                                Backend::Ort {
-                                    session: std::sync::Mutex::new(session),
-                                },
+                                Backend::Ort { session },
                                 input_w,
                                 input_h,
                                 preprocess,
@@ -186,7 +180,7 @@ impl PersonDetector {
         }
     }
 
-    pub fn infer_persons_rgba(
+    pub(crate) fn infer_persons_rgba(
         &mut self,
         rgba: &[u8],
         width: u32,
@@ -212,9 +206,13 @@ impl PersonDetector {
             )?,
         };
 
-        let (shape, data) = self
-            .infer_raw_nchw_f32(&self.preprocess_buf)
-            .context("Failed to run ONNX model")?;
+        let (shape, data) = Self::infer_raw_nchw_f32(
+            &mut self.backend,
+            &self.preprocess_buf,
+            self.input_h,
+            self.input_w,
+        )
+        .context("Failed to run ONNX model")?;
 
         let mut detections =
             parse_yolo_like_detections(&shape, &data, score_threshold, mapping, self.swap_xy)?;
@@ -224,13 +222,18 @@ impl PersonDetector {
         Ok(detections)
     }
 
-    fn infer_raw_nchw_f32(&self, input: &[f32]) -> Result<(Vec<usize>, Vec<f32>)> {
-        match &self.backend {
+    fn infer_raw_nchw_f32(
+        backend: &mut Backend,
+        input: &[f32],
+        input_h: u32,
+        input_w: u32,
+    ) -> Result<(Vec<usize>, Vec<f32>)> {
+        match backend {
             #[cfg(feature = "onnx_tract")]
             Backend::Tract { model } => {
                 use tract_onnx::prelude::*;
 
-                let shape = [1usize, 3usize, self.input_h as usize, self.input_w as usize];
+                let shape = [1usize, 3usize, input_h as usize, input_w as usize];
                 let tensor = Tensor::from_shape(&shape, input)?;
                 let outputs = model
                     .run(tvec!(tensor.into()))
@@ -248,13 +251,12 @@ impl PersonDetector {
 
             #[cfg(feature = "onnxruntime")]
             Backend::Ort { session } => {
-                let mut session = session.lock().expect("ORT session mutex poisoned");
                 // TODO: ORT's `Tensor::from_array` requires owned data.  If a
                 // future ort release exposes a zero-copy `Tensor::from_slice`
                 // for borrowed buffers, we could eliminate the `input.to_vec()`
                 // copy and feed `self.preprocess_buf` directly.
                 let input_tensor = ort::value::Tensor::from_array((
-                    [1usize, 3usize, self.input_h as usize, self.input_w as usize],
+                    [1usize, 3usize, input_h as usize, input_w as usize],
                     input.to_vec().into_boxed_slice(),
                 ))
                 .context("Failed to create ORT input tensor")?;
