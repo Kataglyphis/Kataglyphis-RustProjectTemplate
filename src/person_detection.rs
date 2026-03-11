@@ -249,9 +249,10 @@ impl PersonDetector {
             #[cfg(feature = "onnxruntime")]
             Backend::Ort { session } => {
                 let mut session = session.lock().expect("ORT session mutex poisoned");
-                // ORT's safe `Tensor::from_array` requires owned data; a zero-copy
-                // view API is not available, so the copy from the reusable
-                // preprocess buffer is unavoidable.
+                // TODO: ORT's `Tensor::from_array` requires owned data.  If a
+                // future ort release exposes a zero-copy `Tensor::from_slice`
+                // for borrowed buffers, we could eliminate the `input.to_vec()`
+                // copy and feed `self.preprocess_buf` directly.
                 let input_tensor = ort::value::Tensor::from_array((
                     [1usize, 3usize, self.input_h as usize, self.input_w as usize],
                     input.to_vec().into_boxed_slice(),
@@ -686,6 +687,10 @@ fn parse_yolo_like_detections(
         _ => bail!("Unsupported output rank: {:?}", output_shape),
     };
 
+    // Pre-allocate with a small cap — `n` can be very large (e.g. 8400 for
+    // YOLOv8/v10 grids) but most rows are below `score_threshold`, so 64 is a
+    // reasonable upper bound that avoids over-allocation without extra reallocs
+    // for typical person-detection workloads.
     let mut detections = Vec::with_capacity(n.min(64));
 
     for i in 0..n {

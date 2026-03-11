@@ -1,8 +1,13 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::Context;
 use plotters::coord::Shift;
 use plotters::prelude::*;
+
+/// Convert any plotters `DrawingAreaErrorKind` into an `anyhow::Error`.
+fn plotters_err<E: std::fmt::Debug>(e: E) -> anyhow::Error {
+    anyhow::anyhow!("plotters error: {e:?}")
+}
 
 pub fn plot_loss_curve(path: impl AsRef<Path>, losses: &[f32], title: &str) -> anyhow::Result<()> {
     if losses.is_empty() {
@@ -28,21 +33,21 @@ fn render_loss_curve(path: &Path, losses: &[f32], title: &str) -> anyhow::Result
         .x_label_area_size(40)
         .y_label_area_size(60)
         .build_cartesian_2d(0i32..x_max, y_min..y_max)
-        .map_err(|e| anyhow::anyhow!("plotters error: {e:?}"))?;
+        .map_err(plotters_err)?;
 
     chart
         .configure_mesh()
         .x_desc("epoch")
         .y_desc("loss")
         .draw()
-        .map_err(|e| anyhow::anyhow!("plotters error: {e:?}"))?;
+        .map_err(plotters_err)?;
 
     chart
         .draw_series(LineSeries::new(
             losses.iter().enumerate().map(|(i, y)| (i as i32, *y)),
             &RED,
         ))
-        .map_err(|e| anyhow::anyhow!("plotters error: {e:?}"))?
+        .map_err(plotters_err)?
         .label("loss")
         .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
 
@@ -51,7 +56,7 @@ fn render_loss_curve(path: &Path, losses: &[f32], title: &str) -> anyhow::Result
         .border_style(BLACK)
         .background_style(WHITE.mix(0.9))
         .draw()
-        .map_err(|e| anyhow::anyhow!("plotters error: {e:?}"))?;
+        .map_err(plotters_err)?;
 
     present(&root)?;
 
@@ -59,8 +64,7 @@ fn render_loss_curve(path: &Path, losses: &[f32], title: &str) -> anyhow::Result
 }
 
 fn fill_white(area: &DrawingArea<BitMapBackend<'_>, Shift>) -> anyhow::Result<()> {
-    area.fill(&WHITE)
-        .map_err(|e| anyhow::anyhow!("plotters error: {e:?}"))
+    area.fill(&WHITE).map_err(plotters_err)
 }
 
 fn chart_bounds(losses: &[f32]) -> (i32, f32, f32) {
@@ -71,8 +75,7 @@ fn chart_bounds(losses: &[f32]) -> (i32, f32, f32) {
 }
 
 fn present(area: &DrawingArea<BitMapBackend<'_>, Shift>) -> anyhow::Result<()> {
-    area.present()
-        .map_err(|e| anyhow::anyhow!("plotters error: {e:?}"))
+    area.present().map_err(plotters_err)
 }
 
 fn ensure_parent_dir(path: &Path) -> anyhow::Result<()> {

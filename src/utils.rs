@@ -27,6 +27,25 @@ pub async fn read_file(path: impl AsRef<Path>) -> Result<String> {
     Ok(content)
 }
 
+/// Count lines and words by streaming a file through a buffered reader.
+///
+/// This is the shared implementation used by both native and wasm `file_stats`.
+fn count_lines_and_words(path: &Path) -> Result<(usize, usize)> {
+    use std::io::{BufRead, BufReader};
+    let file = std::fs::File::open(path)
+        .with_context(|| format!("Failed to open file '{}'", path.display()))?;
+    let reader = BufReader::new(file);
+    let mut lines = 0usize;
+    let mut words = 0usize;
+    for line in reader.lines() {
+        let line =
+            line.with_context(|| format!("Failed to read line from '{}'", path.display()))?;
+        lines += 1;
+        words += line.split_whitespace().count();
+    }
+    Ok((lines, words))
+}
+
 /// Compute line, word, and byte statistics for a file.
 ///
 /// Uses a buffered reader to stream the file line-by-line, avoiding loading the
@@ -52,40 +71,12 @@ pub async fn file_stats(path: impl AsRef<Path>) -> Result<FileStats> {
     let path_owned = path.to_path_buf();
 
     #[cfg(not(target_arch = "wasm32"))]
-    let (lines, words) = tokio::task::spawn_blocking(move || -> Result<(usize, usize)> {
-        use std::io::{BufRead, BufReader};
-        let file = std::fs::File::open(&path_owned)
-            .with_context(|| format!("Failed to open file '{}'", path_owned.display()))?;
-        let reader = BufReader::new(file);
-        let mut lines = 0usize;
-        let mut words = 0usize;
-        for line in reader.lines() {
-            let line = line
-                .with_context(|| format!("Failed to read line from '{}'", path_owned.display()))?;
-            lines += 1;
-            words += line.split_whitespace().count();
-        }
-        Ok((lines, words))
-    })
-    .await
-    .context("Blocking task panicked")??;
+    let (lines, words) = tokio::task::spawn_blocking(move || count_lines_and_words(&path_owned))
+        .await
+        .context("Blocking task panicked")??;
 
     #[cfg(target_arch = "wasm32")]
-    let (lines, words) = {
-        use std::io::{BufRead, BufReader};
-        let file = std::fs::File::open(&path_owned)
-            .with_context(|| format!("Failed to open file '{}'", path_owned.display()))?;
-        let reader = BufReader::new(file);
-        let mut lines = 0usize;
-        let mut words = 0usize;
-        for line in reader.lines() {
-            let line = line
-                .with_context(|| format!("Failed to read line from '{}'", path_owned.display()))?;
-            lines += 1;
-            words += line.split_whitespace().count();
-        }
-        (lines, words)
-    };
+    let (lines, words) = count_lines_and_words(&path_owned)?;
 
     Ok(FileStats {
         lines,

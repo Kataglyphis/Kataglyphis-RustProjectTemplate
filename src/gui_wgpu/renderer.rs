@@ -256,6 +256,8 @@ fn spawn_inference_thread() -> (
     Option<String>,
 ) {
     let path = crate::config::onnx_model_override()
+        .as_deref()
+        .map(str::to_string)
         .unwrap_or_else(|| default_model_path().to_string_lossy().to_string());
 
     let (req_tx, req_rx) = sync_channel::<InferRequest>(1);
@@ -543,24 +545,7 @@ impl WgpuState {
                     .default_pos(egui::pos2(12.0, 12.0))
                     .resizable(false)
                     .show(ctx, |ui| {
-                        ui.label("ONNX overlay");
-                        ui.label(format!(
-                            "Frame: {}x{}",
-                            frame_dimensions.0, frame_dimensions.1
-                        ));
-                        ui.separator();
-                        ui.label(format!("Camera FPS: {:.2}", self.overlay.cam_fps));
-                        ui.label(format!("Infer FPS:  {:.2}", self.overlay.infer_fps));
-                        ui.label(format!("Infer ms:   {:.2}", self.overlay.infer_latency_ms));
-                        ui.label(format!(
-                            "Infer cap: {:.2} fps",
-                            self.overlay.infer_capacity_fps
-                        ));
-                        ui.label(format!(
-                            "CPU: {:.1}%   RSS: {:.1} MiB",
-                            self.overlay.proc_cpu_pct, self.overlay.proc_rss_mib
-                        ));
-                        draw_cpu_history(ui, &self.overlay.cpu_history);
+                        Self::draw_system_stats(ui, frame_dimensions, &self.overlay);
 
                         #[cfg(onnx)]
                         {
@@ -569,19 +554,14 @@ impl WgpuState {
                                 frame_dimensions,
                                 &self.inference.last_detections,
                             );
-
-                            if let Some(path) = model_path.as_deref() {
-                                ui.label(format!("Model: {path}"));
-                            } else {
-                                ui.label("Model: (not set)");
-                            }
-                            ui.label(format!("Score threshold: {score_threshold:.2}"));
-                            ui.label(format!("Persons: {}", detections_count));
-                            ui.checkbox(&mut infer_enabled, "Inference enabled");
-                            if let Some(err) = detector_error.as_deref() {
-                                ui.separator();
-                                ui.label(err);
-                            }
+                            Self::draw_onnx_panel(
+                                ui,
+                                model_path.as_deref(),
+                                score_threshold,
+                                detections_count,
+                                detector_error.as_deref(),
+                                &mut infer_enabled,
+                            );
                         }
 
                         if ui.button("Toggle overlay visibility").clicked() {
@@ -607,6 +587,49 @@ impl WgpuState {
         }
 
         full_output
+    }
+
+    /// Draw frame dimensions, FPS counters, CPU/RAM stats, and CPU history chart.
+    fn draw_system_stats(ui: &mut egui::Ui, frame_dimensions: (u32, u32), overlay: &OverlayStats) {
+        ui.label("ONNX overlay");
+        ui.label(format!(
+            "Frame: {}x{}",
+            frame_dimensions.0, frame_dimensions.1
+        ));
+        ui.separator();
+        ui.label(format!("Camera FPS: {:.2}", overlay.cam_fps));
+        ui.label(format!("Infer FPS:  {:.2}", overlay.infer_fps));
+        ui.label(format!("Infer ms:   {:.2}", overlay.infer_latency_ms));
+        ui.label(format!("Infer cap: {:.2} fps", overlay.infer_capacity_fps));
+        ui.label(format!(
+            "CPU: {:.1}%   RSS: {:.1} MiB",
+            overlay.proc_cpu_pct, overlay.proc_rss_mib
+        ));
+        draw_cpu_history(ui, &overlay.cpu_history);
+    }
+
+    /// Draw the ONNX inference status panel (model path, score threshold, detection count, toggle).
+    #[cfg(onnx)]
+    fn draw_onnx_panel(
+        ui: &mut egui::Ui,
+        model_path: Option<&str>,
+        score_threshold: f32,
+        detections_count: usize,
+        detector_error: Option<&str>,
+        infer_enabled: &mut bool,
+    ) {
+        if let Some(path) = model_path {
+            ui.label(format!("Model: {path}"));
+        } else {
+            ui.label("Model: (not set)");
+        }
+        ui.label(format!("Score threshold: {score_threshold:.2}"));
+        ui.label(format!("Persons: {detections_count}"));
+        ui.checkbox(infer_enabled, "Inference enabled");
+        if let Some(err) = detector_error {
+            ui.separator();
+            ui.label(err);
+        }
     }
 
     /// Draw detection bounding boxes on the egui foreground layer.

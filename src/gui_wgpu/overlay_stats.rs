@@ -52,7 +52,10 @@ impl OverlayStats {
 
         self.sysinfo
             .refresh_processes(ProcessesToUpdate::Some(&[self.pid]), true);
-        self.sysinfo.refresh_memory();
+        // Note: refresh_memory() is intentionally omitted here — the overlay
+        // only uses per-process CPU% and RSS (which come from refresh_processes),
+        // not system-wide memory totals.  The background ResourceMonitor thread
+        // handles the full system-memory refresh for its own logging.
 
         let (cpu_pct, rss_bytes) = self
             .sysinfo

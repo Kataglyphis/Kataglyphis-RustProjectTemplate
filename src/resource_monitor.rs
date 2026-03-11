@@ -217,6 +217,12 @@ pub struct CounterSnapshot {
     infer_samples: u64,
 }
 
+impl Default for CounterSnapshot {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CounterSnapshot {
     pub fn new() -> Self {
         Self {

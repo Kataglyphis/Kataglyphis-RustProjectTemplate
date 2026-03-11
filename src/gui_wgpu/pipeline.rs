@@ -46,13 +46,12 @@ pub fn rgba_tightly_packed(src: &[u8], width: u32, height: u32) -> Option<Arc<[u
         return None;
     }
 
-    // If there is trailing padding after the last row, prefer a stride that still
-    // lets us safely read all rows.
-    while stride.saturating_mul(h) > src.len() {
-        if stride == 0 {
-            return None;
-        }
-        stride -= 1;
+    // Ensure the stride lets us safely index all rows.  The largest valid
+    // stride is `src.len() / h` (integer division already rounds down), so
+    // the product `stride * h <= src.len()` is guaranteed — no loop needed.
+    stride = src.len() / h;
+    if stride < row_bytes {
+        return None;
     }
 
     let mut out = vec![0u8; expected_len];
