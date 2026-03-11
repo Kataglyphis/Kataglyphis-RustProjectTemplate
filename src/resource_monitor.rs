@@ -120,6 +120,14 @@ fn run_monitor_loop(config: ResourceMonitorConfig, stop: Arc<AtomicBool>) {
         .and_then(|path| OpenOptions::new().create(true).append(true).open(path).ok())
         .map(BufWriter::new);
 
+    // Create the WMI connection once (Windows only) and reuse it every tick.
+    #[cfg(target_os = "windows")]
+    let wmi_conn = if config.include_gpu {
+        gpu_connect()
+    } else {
+        None
+    };
+
     let mut next_tick = Instant::now();
     let mut counters = CounterSnapshot::new();
 
@@ -141,7 +149,14 @@ fn run_monitor_loop(config: ResourceMonitorConfig, stop: Arc<AtomicBool>) {
         let sys_used_bytes = sys.used_memory();
 
         let gpu = if config.include_gpu {
-            gpu_sample()
+            #[cfg(target_os = "windows")]
+            {
+                wmi_conn.as_ref().and_then(gpu_sample_wmi)
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                None
+            }
         } else {
             None
         };
@@ -181,14 +196,20 @@ fn run_monitor_loop(config: ResourceMonitorConfig, stop: Arc<AtomicBool>) {
 
 // ── Counter snapshot (delta tracking) ──────────────────────────────
 
-struct Rates {
-    cam_fps: f64,
-    infer_fps: f64,
-    infer_latency_ms: f64,
-    infer_capacity_fps: f64,
+/// Per-tick rate metrics computed from atomic counter deltas.
+#[derive(Debug)]
+pub struct Rates {
+    pub cam_fps: f64,
+    pub infer_fps: f64,
+    pub infer_latency_ms: f64,
+    pub infer_capacity_fps: f64,
 }
 
-struct CounterSnapshot {
+/// Tracks atomic counter values between ticks and computes delta-based rates.
+///
+/// Shared between the background `ResourceMonitor` loop and the GUI overlay so
+/// that the rate-computation logic is defined in exactly one place.
+pub struct CounterSnapshot {
     at: Instant,
     cam: u64,
     infer: u64,
@@ -197,7 +218,7 @@ struct CounterSnapshot {
 }
 
 impl CounterSnapshot {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             at: Instant::now(),
             cam: CAMERA_FRAMES.load(Ordering::Relaxed),
@@ -207,7 +228,7 @@ impl CounterSnapshot {
         }
     }
 
-    fn tick(&mut self, now: Instant) -> Rates {
+    pub fn tick(&mut self, now: Instant) -> Rates {
         let dt_s = now.duration_since(self.at).as_secs_f64().max(0.001);
         self.at = now;
 
@@ -266,39 +287,44 @@ struct GpuSample {
 }
 
 fn append_gpu_metrics(line: &mut String, sample: &GpuSample) {
+    use std::fmt::Write;
     if let Some(util) = sample.utilization_pct {
-        line.push_str(&format!(" gpu_util={util:.1}%"));
+        let _ = write!(line, " gpu_util={util:.1}%");
     }
     if let Some(dedicated) = sample.dedicated_used_bytes {
-        line.push_str(&format!(" gpu_dedicated={:.1}MiB", bytes_to_mib(dedicated)));
+        let _ = write!(line, " gpu_dedicated={:.1}MiB", bytes_to_mib(dedicated));
     }
     if let Some(shared) = sample.shared_used_bytes {
-        line.push_str(&format!(" gpu_shared={:.1}MiB", bytes_to_mib(shared)));
+        let _ = write!(line, " gpu_shared={:.1}MiB", bytes_to_mib(shared));
     }
     if let Some(total) = sample.total_committed_bytes {
-        line.push_str(&format!(" gpu_total={:.1}MiB", bytes_to_mib(total)));
+        let _ = write!(line, " gpu_total={:.1}MiB", bytes_to_mib(total));
     }
 }
 
-fn gpu_sample() -> Option<GpuSample> {
-    #[cfg(target_os = "windows")]
-    {
-        windows_gpu_sample()
-    }
+/// Create a WMI connection for GPU queries (Windows only).
+///
+/// Returns `None` (with a one-time warning) if the connection cannot be established.
+#[cfg(target_os = "windows")]
+fn gpu_connect() -> Option<wmi::WMIConnection> {
+    use std::sync::atomic::AtomicBool;
+    static WARNED_WMI_GPU: AtomicBool = AtomicBool::new(false);
 
-    #[cfg(not(target_os = "windows"))]
-    {
-        None
+    match wmi::WMIConnection::new() {
+        Ok(wmi) => Some(wmi),
+        Err(_) => {
+            warn_wmi_once(
+                &WARNED_WMI_GPU,
+                "WMI connection failed; GPU metrics disabled",
+            );
+            None
+        }
     }
 }
 
 #[cfg(target_os = "windows")]
-fn windows_gpu_sample() -> Option<GpuSample> {
+fn gpu_sample_wmi(wmi: &wmi::WMIConnection) -> Option<GpuSample> {
     use serde::Deserialize;
-    use wmi::WMIConnection;
-
-    use std::sync::atomic::AtomicBool;
-    static WARNED_WMI_GPU: AtomicBool = AtomicBool::new(false);
 
     #[derive(Deserialize, Debug)]
     #[serde(rename_all = "PascalCase")]
@@ -313,17 +339,6 @@ fn windows_gpu_sample() -> Option<GpuSample> {
     struct GpuEngine {
         utilization_percentage: Option<u64>,
     }
-
-    let wmi = match WMIConnection::new() {
-        Ok(wmi) => wmi,
-        Err(_) => {
-            warn_wmi_once(
-                &WARNED_WMI_GPU,
-                "WMI connection failed; GPU metrics disabled",
-            );
-            return None;
-        }
-    };
 
     let adapters: Vec<GpuAdapter> = wmi.raw_query(
         "SELECT DedicatedUsage, SharedUsage, TotalCommitted FROM Win32_PerfFormattedData_GPUPerformanceCounters_GPUAdapter",

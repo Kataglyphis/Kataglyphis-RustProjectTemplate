@@ -28,19 +28,7 @@ pub fn init_logger() {
     });
 
     if std::env::var_os("RUST_LOG").is_none() {
-        let level = std::env::var("KATAGLYPHIS_LOG_LEVEL")
-            .ok()
-            .map(|v| v.to_ascii_lowercase())
-            .as_deref()
-            .and_then(|v| match v {
-                "error" => Some(log::LevelFilter::Error),
-                "warn" | "warning" => Some(log::LevelFilter::Warn),
-                "info" => Some(log::LevelFilter::Info),
-                "debug" => Some(log::LevelFilter::Debug),
-                "trace" => Some(log::LevelFilter::Trace),
-                _ => None,
-            })
-            .unwrap_or(log::LevelFilter::Info);
+        let level = crate::config::log_level();
 
         builder.filter_level(level);
 

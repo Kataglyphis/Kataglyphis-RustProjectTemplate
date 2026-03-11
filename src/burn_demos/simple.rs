@@ -221,17 +221,17 @@ pub fn save_load_demo() -> anyhow::Result<()> {
     let x = Tensor::<InferenceBackend, 2>::from_data(TensorData::new(vec![1.0], [1, 1]), &device);
     let y0 = model.forward(x.clone()).to_data();
 
+    let tmp_dir = tempfile::tempdir().context("create temp dir")?;
+    let path = tmp_dir.path().join("linear-regressor.bin");
+
     let recorder = BinFileRecorder::<FullPrecisionSettings>::new();
-    let path = std::path::Path::new("./tmp-linear-regressor.bin");
     let record = model.clone().into_record();
     recorder
-        .record(record, path.to_path_buf())
+        .record(record, path.clone())
         .context("record model")?;
 
     // Load into a fresh model.
-    let record = recorder
-        .load(path.to_path_buf(), &device)
-        .context("load model record")?;
+    let record = recorder.load(path, &device).context("load model record")?;
 
     let model2 = LinearRegressor::<InferenceBackend>::new(&device).load_record(record);
     let y1 = model2.forward(x).to_data();

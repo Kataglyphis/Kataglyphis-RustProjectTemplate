@@ -9,6 +9,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use super::lcg::Lcg;
+use crate::ort_ext::{OrtResultExt, extract_first_f32_output};
 
 pub fn onnx_yolov10_demo<TrainB: AutodiffBackend>(
     model_path: &Path,
@@ -19,30 +20,30 @@ pub fn onnx_yolov10_demo<TrainB: AutodiffBackend>(
     lr: f64,
     train_device: &TrainB::Device,
 ) -> anyhow::Result<()> {
-    let builder = Session::builder().context("Failed to create ORT SessionBuilder")?;
+    let mut builder = Session::builder().with_ort_context("Failed to create ORT SessionBuilder")?;
 
     #[cfg(all(feature = "onnxruntime_directml", windows))]
-    let builder = {
+    let mut builder = {
         use ort::execution_providers::DirectMLExecutionProvider;
         builder
             .with_execution_providers([DirectMLExecutionProvider::default().build()])
-            .context("Failed to configure ORT DirectML execution provider")?
+            .with_ort_context("Failed to configure ORT DirectML execution provider")?
     };
 
     let mut session = builder
         .commit_from_file(model_path)
-        .with_context(|| format!("Failed to load ONNX model from {}", model_path.display()))?;
+        .with_ort_context("Failed to load ONNX model")?;
 
     println!("ONNX model loaded: {}", model_path.display());
     for (i, input) in session.inputs().iter().enumerate() {
         println!("input[{i}] name={:?}", input.name());
     }
-
     for (i, output) in session.outputs().iter().enumerate() {
         println!("output[{i}] name={:?}", output.name());
     }
 
-    // Warmup.
+    // Warmup — intentionally allocates fresh input each iteration to warm the
+    // allocator as well as the ORT session.
     for i in 0..warmup {
         let input = make_demo_image_1x3x640x640(i as u64);
         let out = run_once(&mut session, input).context("warmup run")?;
@@ -51,11 +52,15 @@ pub fn onnx_yolov10_demo<TrainB: AutodiffBackend>(
         }
     }
 
-    // Timed runs.
+    // Timed runs — pre-allocate all input images so the benchmark only
+    // measures inference latency, not random-number generation / allocation.
+    let inputs: Vec<Array4<f32>> = (0..runs.max(1))
+        .map(|i| make_demo_image_1x3x640x640(1234 + i as u64))
+        .collect();
+
     let mut last_output = None;
     let start = Instant::now();
-    for i in 0..runs.max(1) {
-        let input = make_demo_image_1x3x640x640(1234 + i as u64);
+    for input in inputs {
         last_output = Some(run_once(&mut session, input).context("timed run")?);
     }
     let elapsed = start.elapsed();
@@ -102,23 +107,9 @@ fn run_once(
 
     let outputs = session.run(ort::inputs![input_tensor]).context("run ORT")?;
 
-    let out = outputs.get(0).context("model returned no outputs")?;
-    let (shape, data) = out
-        .try_extract_tensor::<f32>()
-        .context("extract f32 tensor")?;
-
-    let shape: Vec<usize> = shape
-        .iter()
-        .map(|d| {
-            if *d < 0 {
-                anyhow::bail!("ORT output had dynamic/negative dimension: {d}");
-            }
-            Ok(*d as usize)
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-
-    let arr = ndarray::ArrayD::from_shape_vec(shape.clone(), data.to_vec())
-        .context("reshape output tensor")?;
+    let (shape, flat) = extract_first_f32_output(&outputs)?;
+    let arr =
+        ndarray::ArrayD::from_shape_vec(shape.clone(), flat).context("reshape output tensor")?;
 
     Ok((shape, arr))
 }
@@ -144,11 +135,12 @@ fn make_adapter_batch<B: Backend>(
     features_300x6: &ndarray::Array2<f32>,
 ) -> (Tensor<B, 2>, Tensor<B, 2>) {
     let flat: Vec<f32> = features_300x6.iter().copied().collect();
-    let x = Tensor::<B, 2>::from_data(
-        TensorData::new(flat.clone(), [features_300x6.nrows(), 6]),
-        device,
-    );
-    let y = Tensor::<B, 2>::from_data(TensorData::new(flat, [features_300x6.nrows(), 6]), device);
+    let n_rows = features_300x6.nrows();
+    let data = TensorData::new(flat, [n_rows, 6]);
+    // Identity target: x == y.  Clone the tensor (shares layout metadata,
+    // copies only the backing buffer) rather than re-collecting flat data.
+    let x = Tensor::<B, 2>::from_data(data.clone(), device);
+    let y = Tensor::<B, 2>::from_data(data, device);
     (x, y)
 }
 

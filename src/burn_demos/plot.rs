@@ -98,8 +98,3 @@ fn min_max(values: &[f32]) -> (f32, f32) {
     }
     (min, max)
 }
-
-#[allow(dead_code)]
-fn default_plot_path(stem: &str) -> PathBuf {
-    PathBuf::from(format!("./{stem}.png"))
-}

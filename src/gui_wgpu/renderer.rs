@@ -1,7 +1,8 @@
 #[cfg(onnx)]
-use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
+use std::sync::mpsc::sync_channel;
 use std::time::{Duration, Instant};
 
+use anyhow::Context;
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
@@ -11,76 +12,23 @@ use egui_winit::State as EguiWinitState;
 use std::sync::Arc;
 
 #[cfg(onnx)]
-use crate::detection::Detection;
-#[cfg(onnx)]
 use crate::person_detection::{PersonDetector, default_model_path};
 use crate::resource_monitor;
 
-use super::inference::{InferRequest, InferResult};
+#[cfg(onnx)]
+use super::inference::{InferRequest, InferResult, InferenceState};
 use super::overlay::draw_cpu_history;
 use super::overlay_stats::OverlayStats;
 use super::pipeline::Frame;
 
-/// State for the background inference thread and its results.
-#[cfg(onnx)]
-struct InferenceState {
-    detector_error: Option<String>,
-    model_path: Option<String>,
-    score_threshold: f32,
-    infer_every: Duration,
-    last_infer: Instant,
-    last_detections: Vec<Detection>,
-    last_detections_frame_id: Option<u64>,
-    infer_tx: Option<SyncSender<InferRequest>>,
-    infer_rx: Option<Receiver<InferResult>>,
-    infer_in_flight: bool,
-    infer_enabled: bool,
-}
-
-#[cfg(onnx)]
-impl InferenceState {
-    fn poll(&mut self) {
-        if let Some(rx) = self.infer_rx.as_ref() {
-            while let Ok(res) = rx.try_recv() {
-                self.infer_in_flight = false;
-                self.last_detections = res.detections;
-                self.last_detections_frame_id = Some(res.frame_id);
-                self.detector_error = res.error;
-            }
-        }
-    }
-
-    fn maybe_infer(&mut self, frame: &Frame) {
-        let Some(tx) = self.infer_tx.as_ref() else {
-            return;
-        };
-
-        if !self.infer_enabled {
-            return;
-        }
-
-        if self.last_infer.elapsed() < self.infer_every {
-            return;
-        }
-
-        if self.infer_in_flight {
-            return;
-        }
-
-        if tx
-            .try_send(InferRequest {
-                frame_id: frame.id,
-                rgba: Arc::clone(&frame.data),
-                width: frame.width,
-                height: frame.height,
-                score_threshold: self.score_threshold,
-            })
-            .is_ok()
-        {
-            self.last_infer = Instant::now();
-            self.infer_in_flight = true;
-        }
-    }
+/// Named grouping of a GPU texture, its view, bind group, and dimensions.
+/// Replaces the previous anonymous 5-tuple for readability.
+struct FrameTexture {
+    texture: wgpu::Texture,
+    _view: wgpu::TextureView,
+    bind_group: wgpu::BindGroup,
+    width: u32,
+    height: u32,
 }
 
 pub struct WgpuState {
@@ -93,7 +41,7 @@ pub struct WgpuState {
     index_buffer: wgpu::Buffer,
     num_indices: u32,
     sampler: wgpu::Sampler,
-    texture: Option<(wgpu::Texture, wgpu::TextureView, wgpu::BindGroup, u32, u32)>,
+    texture: Option<FrameTexture>,
     egui_ctx: EguiContext,
     egui_state: EguiWinitState,
     egui_renderer: EguiRenderer,
@@ -108,92 +56,267 @@ pub struct WgpuState {
     current_frame_id: Option<u64>,
 }
 
+// ── Initialisation helpers ─────────────────────────────────────────
+
+/// Acquire a WGPU adapter, device, queue, and configured surface for the given window.
+async fn init_wgpu(
+    window: &Arc<Window>,
+    backends: wgpu::Backends,
+) -> anyhow::Result<(
+    wgpu::Surface<'static>,
+    wgpu::Device,
+    wgpu::Queue,
+    wgpu::SurfaceConfiguration,
+)> {
+    let size = window.inner_size();
+
+    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        backends,
+        ..Default::default()
+    });
+    let surface = instance
+        .create_surface(Arc::clone(window))
+        .context("Failed to create surface")?;
+    let adapter = instance
+        .request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: Some(&surface),
+            force_fallback_adapter: false,
+        })
+        .await
+        .context("No suitable GPU adapters found on the system")?;
+
+    let (device, queue) = adapter
+        .request_device(&wgpu::DeviceDescriptor {
+            label: Some("device"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::default(),
+            memory_hints: wgpu::MemoryHints::default(),
+            trace: wgpu::Trace::default(),
+            experimental_features: wgpu::ExperimentalFeatures::default(),
+        })
+        .await
+        .context("Failed to create device")?;
+
+    let surface_caps = surface.get_capabilities(&adapter);
+    let surface_format = surface_caps
+        .formats
+        .iter()
+        .copied()
+        .find(|f| f.is_srgb())
+        .unwrap_or(surface_caps.formats[0]);
+
+    let config = wgpu::SurfaceConfiguration {
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        format: surface_format,
+        width: size.width.max(1),
+        height: size.height.max(1),
+        present_mode: wgpu::PresentMode::Fifo,
+        alpha_mode: surface_caps.alpha_modes[0],
+        view_formats: vec![],
+        desired_maximum_frame_latency: 2,
+    };
+    surface.configure(&device, &config);
+
+    Ok((surface, device, queue, config))
+}
+
+/// Create the full-screen-quad geometry buffers used for video display.
+fn create_quad_buffers(device: &wgpu::Device) -> (wgpu::Buffer, wgpu::Buffer, u32) {
+    let vertex_data = [
+        Vertex {
+            position: [-1.0, -1.0],
+            tex_coords: [0.0, 1.0],
+        },
+        Vertex {
+            position: [1.0, -1.0],
+            tex_coords: [1.0, 1.0],
+        },
+        Vertex {
+            position: [1.0, 1.0],
+            tex_coords: [1.0, 0.0],
+        },
+        Vertex {
+            position: [-1.0, 1.0],
+            tex_coords: [0.0, 0.0],
+        },
+    ];
+    let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("vertex_buffer"),
+        contents: bytemuck::cast_slice(&vertex_data),
+        usage: wgpu::BufferUsages::VERTEX,
+    });
+
+    let index_data: [u16; 6] = [0, 1, 2, 0, 2, 3];
+    let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("index_buffer"),
+        contents: bytemuck::cast_slice(&index_data),
+        usage: wgpu::BufferUsages::INDEX,
+    });
+
+    (vertex_buffer, index_buffer, index_data.len() as u32)
+}
+
+/// Build the texture-sampling render pipeline (shader + layout + pipeline object).
+fn create_render_pipeline(
+    device: &wgpu::Device,
+    surface_format: wgpu::TextureFormat,
+) -> wgpu::RenderPipeline {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("shader"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/tex_quad.wgsl").into()),
+    });
+
+    let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("bind_group_layout"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
+    });
+
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("pipeline_layout"),
+        bind_group_layouts: &[&bind_group_layout],
+        push_constant_ranges: &[],
+    });
+
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("render_pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            buffers: &[Vertex::desc()],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: surface_format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    })
+}
+
+/// Initialise egui integration (context, platform state, renderer).
+fn init_egui(
+    window: &Window,
+    display_target: &dyn wgpu::rwh::HasDisplayHandle,
+    device: &wgpu::Device,
+    surface_format: wgpu::TextureFormat,
+    config: &wgpu::SurfaceConfiguration,
+) -> (EguiContext, EguiWinitState, EguiRenderer, ScreenDescriptor) {
+    let egui_ctx = EguiContext::default();
+    let egui_state = EguiWinitState::new(
+        egui_ctx.clone(),
+        ViewportId::ROOT,
+        display_target,
+        Some(window.scale_factor() as f32),
+        None,
+        None,
+    );
+    let egui_renderer = EguiRenderer::new(device, surface_format, Default::default());
+    let egui_screen = ScreenDescriptor {
+        size_in_pixels: [config.width, config.height],
+        pixels_per_point: window.scale_factor() as f32,
+    };
+    (egui_ctx, egui_state, egui_renderer, egui_screen)
+}
+
+/// Spawn the background inference thread and return its channels + initial metadata.
+#[cfg(onnx)]
+fn spawn_inference_thread() -> (
+    Option<std::sync::mpsc::SyncSender<InferRequest>>,
+    Option<std::sync::mpsc::Receiver<InferResult>>,
+    Option<String>,
+    Option<String>,
+) {
+    let path = crate::config::onnx_model_override()
+        .unwrap_or_else(|| default_model_path().to_string_lossy().to_string());
+
+    let (req_tx, req_rx) = sync_channel::<InferRequest>(1);
+    let (res_tx, res_rx) = sync_channel::<InferResult>(1);
+
+    let detector = match PersonDetector::new(&path) {
+        Ok(detector) => Some(detector),
+        Err(e) => {
+            let _ = res_tx.try_send(InferResult {
+                frame_id: 0,
+                detections: Vec::new(),
+                error: Some(format!("Failed to load model '{path}': {e:#}")),
+            });
+            None
+        }
+    };
+
+    std::thread::spawn(move || {
+        let Some(mut detector) = detector else {
+            return;
+        };
+
+        while let Ok(req) = req_rx.recv() {
+            let infer_start = Instant::now();
+            let result = match detector.infer_persons_rgba(
+                &req.rgba,
+                req.width,
+                req.height,
+                req.score_threshold,
+            ) {
+                Ok(dets) => InferResult {
+                    frame_id: req.frame_id,
+                    detections: dets,
+                    error: None,
+                },
+                Err(e) => InferResult {
+                    frame_id: req.frame_id,
+                    detections: Vec::new(),
+                    error: Some(format!("Inference failed: {e:#}")),
+                },
+            };
+
+            resource_monitor::record_inference_duration(infer_start.elapsed());
+            resource_monitor::record_inference_completion();
+
+            let _ = res_tx.try_send(result);
+        }
+    });
+
+    (Some(req_tx), Some(res_rx), None, Some(path))
+}
+
 impl WgpuState {
     pub async fn new(
         window: Arc<Window>,
         display_target: &dyn wgpu::rwh::HasDisplayHandle,
         backends: wgpu::Backends,
-    ) -> Self {
-        let size = window.inner_size();
+    ) -> anyhow::Result<Self> {
+        let (surface, device, queue, config) = init_wgpu(&window, backends).await?;
 
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends,
-            ..Default::default()
-        });
-        let surface = instance
-            .create_surface(Arc::clone(&window))
-            .expect("Failed to create surface");
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: Some(&surface),
-                force_fallback_adapter: false,
-            })
-            .await
-            .expect("No suitable GPU adapters found on the system!");
-
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                label: Some("device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
-                memory_hints: wgpu::MemoryHints::default(),
-                trace: wgpu::Trace::default(),
-                experimental_features: wgpu::ExperimentalFeatures::default(),
-            })
-            .await
-            .expect("Failed to create device");
-
-        let surface_caps = surface.get_capabilities(&adapter);
-        let surface_format = surface_caps
-            .formats
-            .iter()
-            .copied()
-            .find(|f| f.is_srgb())
-            .unwrap_or(surface_caps.formats[0]);
-
-        let present_mode = wgpu::PresentMode::Fifo;
-        let config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: surface_format,
-            width: size.width.max(1),
-            height: size.height.max(1),
-            present_mode,
-            alpha_mode: surface_caps.alpha_modes[0],
-            view_formats: vec![],
-            desired_maximum_frame_latency: 2,
-        };
-        surface.configure(&device, &config);
-
-        let vertex_data = [
-            Vertex {
-                position: [-1.0, -1.0],
-                tex_coords: [0.0, 1.0],
-            },
-            Vertex {
-                position: [1.0, -1.0],
-                tex_coords: [1.0, 1.0],
-            },
-            Vertex {
-                position: [1.0, 1.0],
-                tex_coords: [1.0, 0.0],
-            },
-            Vertex {
-                position: [-1.0, 1.0],
-                tex_coords: [0.0, 0.0],
-            },
-        ];
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("vertex_buffer"),
-            contents: bytemuck::cast_slice(&vertex_data),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        let index_data: [u16; 6] = [0, 1, 2, 0, 2, 3];
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("index_buffer"),
-            contents: bytemuck::cast_slice(&index_data),
-            usage: wgpu::BufferUsages::INDEX,
-        });
+        let (vertex_buffer, index_buffer, num_indices) = create_quad_buffers(&device);
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("sampler"),
@@ -206,150 +329,21 @@ impl WgpuState {
             ..Default::default()
         });
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/tex_quad.wgsl").into()),
-        });
+        let render_pipeline = create_render_pipeline(&device, config.format);
 
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("bind_group_layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
-
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("pipeline_layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
-
-        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("render_pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Vertex::desc()],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: config.format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
-
-        let egui_ctx = EguiContext::default();
-        let egui_state = EguiWinitState::new(
-            egui_ctx.clone(),
-            ViewportId::ROOT,
-            display_target,
-            Some(window.scale_factor() as f32),
-            None,
-            None,
-        );
-        let egui_renderer = EguiRenderer::new(&device, surface_format, Default::default());
-        let egui_screen = ScreenDescriptor {
-            size_in_pixels: [config.width, config.height],
-            pixels_per_point: window.scale_factor() as f32,
-        };
+        let (egui_ctx, egui_state, egui_renderer, egui_screen) =
+            init_egui(&window, display_target, &device, config.format, &config);
 
         #[cfg(onnx)]
-        let (infer_tx, infer_rx, detector_error, model_path) = {
-            let env_override = std::env::var("KATAGLYPHIS_ONNX_MODEL").ok();
-            let path = env_override
-                .clone()
-                .unwrap_or_else(|| default_model_path().to_string_lossy().to_string());
-
-            let (req_tx, req_rx) = sync_channel::<InferRequest>(1);
-            let (res_tx, res_rx) = sync_channel::<InferResult>(1);
-
-            let detector = match PersonDetector::new(&path) {
-                Ok(detector) => Some(detector),
-                Err(e) => {
-                    let _ = res_tx.try_send(InferResult {
-                        frame_id: 0,
-                        detections: Vec::new(),
-                        error: Some(format!("Failed to load model '{path}': {e:#}")),
-                    });
-                    None
-                }
-            };
-
-            std::thread::spawn(move || {
-                let Some(detector) = detector else {
-                    return;
-                };
-
-                while let Ok(req) = req_rx.recv() {
-                    let infer_start = Instant::now();
-                    let result = match detector.infer_persons_rgba(
-                        req.rgba.as_slice(),
-                        req.width,
-                        req.height,
-                        req.score_threshold,
-                    ) {
-                        Ok(dets) => InferResult {
-                            frame_id: req.frame_id,
-                            detections: dets,
-                            error: None,
-                        },
-                        Err(e) => InferResult {
-                            frame_id: req.frame_id,
-                            detections: Vec::new(),
-                            error: Some(format!("Inference failed: {e:#}")),
-                        },
-                    };
-
-                    resource_monitor::record_inference_duration(infer_start.elapsed());
-                    resource_monitor::record_inference_completion();
-
-                    let _ = res_tx.try_send(result);
-                }
-            });
-
-            (Some(req_tx), Some(res_rx), None, Some(path))
-        };
+        let (infer_tx, infer_rx, detector_error, model_path) = spawn_inference_thread();
 
         #[cfg(onnx)]
-        let score_threshold = std::env::var("KATAGLYPHIS_SCORE_THRESHOLD")
-            .ok()
-            .and_then(|v| v.parse::<f32>().ok())
-            .unwrap_or(0.5);
+        let score_threshold = crate::config::score_threshold();
 
         #[cfg(onnx)]
-        let infer_every_ms = std::env::var("KATAGLYPHIS_INFER_EVERY_MS")
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(0);
+        let infer_every_ms = crate::config::infer_every_ms();
 
-        Self {
+        Ok(Self {
             surface,
             device,
             queue,
@@ -357,7 +351,7 @@ impl WgpuState {
             render_pipeline,
             vertex_buffer,
             index_buffer,
-            num_indices: index_data.len() as u32,
+            num_indices,
             sampler,
             texture: None,
             egui_ctx,
@@ -384,7 +378,7 @@ impl WgpuState {
             },
 
             current_frame_id: None,
-        }
+        })
     }
 
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
@@ -407,7 +401,7 @@ impl WgpuState {
         self.current_frame_id = Some(frame.id);
         self.poll_inference();
         let needs_recreate = match &self.texture {
-            Some((_, _, _, w, h)) => frame.width != *w || frame.height != *h,
+            Some(ft) => frame.width != ft.width || frame.height != ft.height,
             None => true,
         };
 
@@ -442,10 +436,16 @@ impl WgpuState {
                     },
                 ],
             });
-            self.texture = Some((texture, view, bind_group, frame.width, frame.height));
+            self.texture = Some(FrameTexture {
+                texture,
+                _view: view,
+                bind_group,
+                width: frame.width,
+                height: frame.height,
+            });
         }
 
-        if let Some((texture, _, _, _, _)) = &self.texture {
+        if let Some(ft) = &self.texture {
             let layout = wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(4 * frame.width),
@@ -458,7 +458,7 @@ impl WgpuState {
             };
             self.queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
-                    texture,
+                    texture: &ft.texture,
                     mip_level: 0,
                     origin: wgpu::Origin3d::ZERO,
                     aspect: wgpu::TextureAspect::All,
@@ -491,13 +491,37 @@ impl WgpuState {
         let raw_input = self.egui_state.take_egui_input(window);
         self.update_overlay_stats();
 
+        let full_output = self.run_egui_overlay(raw_input);
+
+        let clipped_primitives = self
+            .egui_ctx
+            .tessellate(full_output.shapes, self.egui_screen.pixels_per_point);
+
+        for (id, image_delta) in &full_output.textures_delta.set {
+            self.egui_renderer
+                .update_texture(&self.device, &self.queue, *id, image_delta);
+        }
+
+        self.submit_frame(window, &clipped_primitives, &full_output)?;
+
+        for id in &full_output.textures_delta.free {
+            self.egui_renderer.free_texture(id);
+        }
+        self.egui_state
+            .handle_platform_output(window, full_output.platform_output);
+
+        Ok(())
+    }
+
+    /// Build and run the egui overlay UI, returning the full output for tessellation.
+    fn run_egui_overlay(&mut self, raw_input: egui::RawInput) -> egui::FullOutput {
         let mut overlay_enabled = self.overlay_enabled;
         #[cfg(onnx)]
         let mut infer_enabled = self.inference.infer_enabled;
         let frame_dimensions = self
             .texture
             .as_ref()
-            .map(|(_, _, _, w, h)| (*w, *h))
+            .map(|ft| (ft.width, ft.height))
             .unwrap_or((0, 0));
 
         #[cfg(onnx)]
@@ -540,36 +564,11 @@ impl WgpuState {
 
                         #[cfg(onnx)]
                         {
-                            if frame_dimensions.0 > 0
-                                && frame_dimensions.1 > 0
-                                && !self.inference.last_detections.is_empty()
-                            {
-                                let screen = ctx.content_rect();
-                                let sx = screen.width() / frame_dimensions.0 as f32;
-                                let sy = screen.height() / frame_dimensions.1 as f32;
-                                let painter = ctx.layer_painter(egui::LayerId::new(
-                                    egui::Order::Foreground,
-                                    egui::Id::new("detections"),
-                                ));
-
-                                for d in &self.inference.last_detections {
-                                    let x1 = screen.left() + d.x1 * sx;
-                                    let y1 = screen.top() + d.y1 * sy;
-                                    let x2 = screen.left() + d.x2 * sx;
-                                    let y2 = screen.top() + d.y2 * sy;
-
-                                    let rect = egui::Rect::from_min_max(
-                                        egui::pos2(x1, y1),
-                                        egui::pos2(x2, y2),
-                                    );
-                                    painter.rect_stroke(
-                                        rect,
-                                        0.0,
-                                        egui::Stroke::new(2.0, egui::Color32::LIGHT_GREEN),
-                                        egui::StrokeKind::Inside,
-                                    );
-                                }
-                            }
+                            Self::draw_detection_boxes(
+                                ctx,
+                                frame_dimensions,
+                                &self.inference.last_detections,
+                            );
 
                             if let Some(path) = model_path.as_deref() {
                                 ui.label(format!("Model: {path}"));
@@ -607,15 +606,51 @@ impl WgpuState {
             self.inference.infer_enabled = infer_enabled;
         }
 
-        let clipped_primitives = self
-            .egui_ctx
-            .tessellate(full_output.shapes, self.egui_screen.pixels_per_point);
+        full_output
+    }
 
-        for (id, image_delta) in &full_output.textures_delta.set {
-            self.egui_renderer
-                .update_texture(&self.device, &self.queue, *id, image_delta);
+    /// Draw detection bounding boxes on the egui foreground layer.
+    #[cfg(onnx)]
+    fn draw_detection_boxes(
+        ctx: &EguiContext,
+        frame_dimensions: (u32, u32),
+        detections: &[crate::detection::Detection],
+    ) {
+        if frame_dimensions.0 == 0 || frame_dimensions.1 == 0 || detections.is_empty() {
+            return;
         }
 
+        let screen = ctx.content_rect();
+        let sx = screen.width() / frame_dimensions.0 as f32;
+        let sy = screen.height() / frame_dimensions.1 as f32;
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new("detections"),
+        ));
+
+        for d in detections {
+            let x1 = screen.left() + d.x1 * sx;
+            let y1 = screen.top() + d.y1 * sy;
+            let x2 = screen.left() + d.x2 * sx;
+            let y2 = screen.top() + d.y2 * sy;
+
+            let rect = egui::Rect::from_min_max(egui::pos2(x1, y1), egui::pos2(x2, y2));
+            painter.rect_stroke(
+                rect,
+                0.0,
+                egui::Stroke::new(2.0, egui::Color32::LIGHT_GREEN),
+                egui::StrokeKind::Inside,
+            );
+        }
+    }
+
+    /// Encode and submit the GPU commands for one frame (video quad + egui).
+    fn submit_frame(
+        &mut self,
+        window: &Window,
+        clipped_primitives: &[egui::ClippedPrimitive],
+        full_output: &egui::FullOutput,
+    ) -> Result<(), wgpu::SurfaceError> {
         let frame = self.surface.get_current_texture()?;
         let view = frame
             .texture
@@ -627,6 +662,7 @@ impl WgpuState {
                 label: Some("render_encoder"),
             });
 
+        // Video quad pass.
         {
             let color_attachments = [Some(wgpu::RenderPassColorAttachment {
                 view: &view,
@@ -650,18 +686,19 @@ impl WgpuState {
             rpass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             rpass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
 
-            if let Some((_, _, bind_group, _, _)) = &self.texture {
-                rpass.set_bind_group(0, bind_group, &[]);
+            if let Some(ft) = &self.texture {
+                rpass.set_bind_group(0, &ft.bind_group, &[]);
             }
 
             rpass.draw_indexed(0..self.num_indices, 0, 0..1);
         }
 
+        // Egui pass.
         self.egui_renderer.update_buffers(
             &self.device,
             &self.queue,
             &mut encoder,
-            &clipped_primitives,
+            clipped_primitives,
             &self.egui_screen,
         );
 
@@ -676,7 +713,7 @@ impl WgpuState {
                 },
             })];
 
-            let egui_rpass = encoder
+            let mut egui_rpass = encoder
                 .begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("egui_render_pass"),
                     color_attachments: &color_attachments,
@@ -689,17 +726,9 @@ impl WgpuState {
                 // is dropped before the encoder is submitted, so this is safe.
                 .forget_lifetime();
 
-            let mut egui_rpass = egui_rpass;
-
             self.egui_renderer
-                .render(&mut egui_rpass, &clipped_primitives, &self.egui_screen);
+                .render(&mut egui_rpass, clipped_primitives, &self.egui_screen);
         }
-
-        for id in &full_output.textures_delta.free {
-            self.egui_renderer.free_texture(id);
-        }
-        self.egui_state
-            .handle_platform_output(window, full_output.platform_output);
 
         self.queue.submit(Some(encoder.finish()));
         frame.present();

@@ -1,6 +1,19 @@
 // src/cli.rs — Command-line interface definition.
 
-use clap::{Parser, Subcommand};
+use std::path::PathBuf;
+
+use clap::{Parser, Subcommand, ValueEnum};
+
+/// WGPU backend selection for the GUI.
+#[derive(Clone, Debug, ValueEnum)]
+pub enum GpuBackend {
+    /// Automatically pick the best backend for the platform.
+    Auto,
+    /// Vulkan.
+    Vulkan,
+    /// DirectX 12 (Windows only).
+    Dx12,
+}
 
 #[derive(Parser)]
 #[command(name = "kataglyphis")]
@@ -19,7 +32,7 @@ pub struct Cli {
 
     /// Optional file path to append resource log lines to (in addition to standard logging).
     #[arg(long, global = true)]
-    pub resource_log_file: Option<std::path::PathBuf>,
+    pub resource_log_file: Option<PathBuf>,
 
     /// Include GPU metrics in resource logging (best-effort; Windows only).
     #[arg(
@@ -40,18 +53,18 @@ pub enum Commands {
     /// Read the contents of a file and print them to stdout.
     Read {
         #[arg(short, long)]
-        path: String,
+        path: PathBuf,
     },
     /// Print line / word / byte statistics for a file.
     Stats {
         #[arg(short, long)]
-        path: String,
+        path: PathBuf,
     },
     /// Launch the GUI (requires a gui feature).
     Gui {
-        /// WGPU backend to use (dx12 | vulkan | primary).
+        /// WGPU backend to use.
         /// Note: dx12 is only available on Windows.
-        #[arg(long, default_value = "dx12")]
-        backend: String,
+        #[arg(long, value_enum, default_value_t = GpuBackend::Auto)]
+        backend: GpuBackend,
     },
 }

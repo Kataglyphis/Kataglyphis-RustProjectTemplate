@@ -7,12 +7,12 @@ use std::sync::Arc;
 
 const APP_ID: &str = "com.example.GtkGstreamerDemo";
 
-pub fn run() -> glib::ExitCode {
-    gst::init().expect("Failed to initialize GStreamer");
+pub fn run() -> anyhow::Result<glib::ExitCode> {
+    gst::init().context("Failed to initialize GStreamer")?;
 
     let app = Application::builder().application_id(APP_ID).build();
     app.connect_activate(build_ui);
-    app.run_with_args::<&str>(&[])
+    Ok(app.run_with_args::<&str>(&[]))
 }
 
 fn build_ui(app: &Application) {

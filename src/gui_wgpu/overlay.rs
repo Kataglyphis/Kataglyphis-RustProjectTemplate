@@ -1,10 +1,5 @@
 use std::collections::VecDeque;
 
-/// Convert bytes to MiB. Re-exports the canonical implementation from `resource_monitor`.
-pub fn bytes_to_mib(bytes: u64) -> f32 {
-    crate::resource_monitor::bytes_to_mib(bytes) as f32
-}
-
 pub fn draw_cpu_history(ui: &mut egui::Ui, history: &VecDeque<f32>) {
     let desired = egui::vec2(160.0, 48.0);
     let (rect, _response) = ui.allocate_exact_size(desired, egui::Sense::hover());

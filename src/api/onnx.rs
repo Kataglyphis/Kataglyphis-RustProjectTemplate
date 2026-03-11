@@ -72,7 +72,7 @@ fn detect_persons_rgba_impl(
         });
     }
 
-    let detector = guard.as_ref().expect("Detector missing");
+    let detector = guard.as_mut().expect("Detector missing");
     detector
         .detector
         .infer_persons_rgba(rgba, width, height, score_threshold)

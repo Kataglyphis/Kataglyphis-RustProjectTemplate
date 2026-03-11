@@ -1,22 +1,12 @@
-// src/main.rs
+// src/main.rs — Thin CLI driver.  All logic lives in the library crate.
 use anyhow::Result;
 use clap::Parser;
 use log::info;
 
 mod cli;
-#[cfg(all(feature = "gui_unix", not(windows)))]
-mod gui;
-#[cfg(feature = "gui_windows")]
-mod gui_wgpu;
-
-mod detection;
-mod logging;
-#[cfg(onnx)]
-mod person_detection;
-mod resource_monitor;
-mod utils;
 
 use cli::{Cli, Commands};
+use kataglyphis_rustprojecttemplate::{logging, resource_monitor, utils};
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::main)]
 #[cfg_attr(target_arch = "wasm32", tokio::main(flavor = "current_thread"))]
@@ -38,7 +28,7 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Commands::Read { path } => {
-            info!("Reading file: {}", path);
+            info!("Reading file: {}", path.display());
             let content = utils::read_file(&path).await?;
             println!("{}", content);
         }
@@ -52,13 +42,19 @@ async fn main() -> Result<()> {
         Commands::Gui { backend } => {
             #[cfg(feature = "gui_windows")]
             {
-                gui_wgpu::run_with_backend(&backend);
+                use kataglyphis_rustprojecttemplate::gui_wgpu::GpuBackend as LibBackend;
+                let lib_backend = match backend {
+                    cli::GpuBackend::Auto => LibBackend::Auto,
+                    cli::GpuBackend::Vulkan => LibBackend::Vulkan,
+                    cli::GpuBackend::Dx12 => LibBackend::Dx12,
+                };
+                kataglyphis_rustprojecttemplate::gui_wgpu::run_with_backend(&lib_backend)?;
             }
 
             #[cfg(all(feature = "gui_unix", not(windows), not(feature = "gui_windows")))]
             {
                 let _ = backend;
-                gui::run();
+                kataglyphis_rustprojecttemplate::gui::run()?;
             }
 
             #[cfg(not(any(feature = "gui_windows", all(feature = "gui_unix", not(windows)))))]

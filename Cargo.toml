@@ -19,19 +19,18 @@ gui = ["dep:gstreamer", "dep:gstreamer-video", "dep:glib"]
 gui_unix = ["gui", "dep:gtk"]
 gui_linux = [
 	"gui",
-	"dep:gstreamer-app",
-	"dep:winit",
-	"dep:wgpu",
-	"dep:pollster",
-	"dep:bytemuck",
-	"dep:egui",
-	"dep:egui-winit",
-	"dep:egui-wgpu",
+	"_gui_wgpu_deps",
 	"onnx_tract",
 ]
 gui_wgpu = ["gui_windows"]
 gui_windows = [
 	"gui",
+	"_gui_wgpu_deps",
+	"onnx_tract",
+]
+
+# Private: shared WGPU-based GUI dependencies pulled in by gui_linux and gui_windows.
+_gui_wgpu_deps = [
 	"dep:gstreamer-app",
 	"dep:winit",
 	"dep:wgpu",
@@ -40,14 +39,13 @@ gui_windows = [
 	"dep:egui",
 	"dep:egui-winit",
 	"dep:egui-wgpu",
-	"onnx_tract",
 ]
 
 # Pure-Rust ONNX backend (CPU) via tract.
-onnx_tract = ["dep:tract-onnx", "dep:image"]
+onnx_tract = ["dep:tract-onnx"]
 
 # Optional ONNX Runtime backend (Windows): enables GPU inference via DirectML when available.
-onnxruntime = ["dep:ort", "dep:image", "ort/std", "ort/ndarray", "ort/download-binaries", "ort/tls-native"]
+onnxruntime = ["dep:ort", "ort/std", "ort/ndarray", "ort/download-binaries", "ort/tls-native"]
 onnxruntime_directml = ["onnxruntime", "ort/directml"]
 onnxruntime_cuda = ["onnxruntime", "ort/cuda"]
 

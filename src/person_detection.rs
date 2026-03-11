@@ -1,34 +1,16 @@
 use anyhow::{Context, Result, bail};
 use log::{debug, info, warn};
 
+#[cfg(feature = "onnxruntime")]
+use crate::ort_ext::{OrtResultExt, extract_first_f32_output};
+
+use crate::config::{self, PreprocessMode};
+
 pub fn default_model_path() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("resources")
         .join("models")
         .join("yolov10m.onnx")
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PreprocessMode {
-    Letterbox,
-    Stretch,
-}
-
-fn preprocess_mode() -> PreprocessMode {
-    let raw = std::env::var("KATAGLYPHIS_PREPROCESS").unwrap_or_else(|_| "stretch".to_string());
-
-    match raw.trim().to_ascii_lowercase().as_str() {
-        "letterbox" | "boxed" | "pad" => PreprocessMode::Letterbox,
-        "stretch" | "resize" => PreprocessMode::Stretch,
-        other => {
-            warn!("Unknown preprocess mode '{other}', defaulting to stretch");
-            PreprocessMode::Stretch
-        }
-    }
-}
-
-fn swap_xy_enabled() -> bool {
-    std::env::var("KATAGLYPHIS_SWAP_XY").ok().as_deref() == Some("1")
 }
 
 // `tvec!` is imported via `tract_onnx::prelude::*` in the tract code paths.
@@ -48,6 +30,8 @@ pub struct PersonDetector {
     input_h: u32,
     preprocess: PreprocessMode,
     swap_xy: bool,
+    /// Reusable buffer for NCHW preprocessing — avoids a fresh allocation per frame.
+    preprocess_buf: Vec<f32>,
 }
 
 #[cfg(feature = "onnx_tract")]
@@ -67,34 +51,54 @@ enum Backend {
     },
 }
 
+// ── ORT helpers are in crate::ort_ext ──────────────────────────────
+
+// ── PersonDetector construction helpers ────────────────────────────
+
 impl PersonDetector {
+    /// Build a `PersonDetector` from an already-loaded backend and input dims.
+    fn from_parts(
+        backend: Backend,
+        input_w: u32,
+        input_h: u32,
+        preprocess: PreprocessMode,
+        swap_xy: bool,
+    ) -> Self {
+        let buf_len = 3 * (input_w as usize) * (input_h as usize);
+        Self {
+            backend,
+            input_w,
+            input_h,
+            preprocess,
+            swap_xy,
+            preprocess_buf: vec![0.0; buf_len],
+        }
+    }
+
     pub fn new(model_path: &str) -> Result<Self> {
         info!("Loading ONNX model: {model_path}");
 
-        // Cache environment configuration once at construction time.
-        let preprocess = preprocess_mode();
-        let swap_xy = swap_xy_enabled();
+        let preprocess = config::preprocess_mode();
+        let swap_xy = config::swap_xy_enabled();
         debug!("Preprocess mode: {:?}, swap_xy: {}", preprocess, swap_xy);
 
-        let requested_backend = std::env::var("KATAGLYPHIS_ONNX_BACKEND")
-            .ok()
-            .map(|v| v.to_lowercase());
+        let requested_backend = config::onnx_backend();
 
         match requested_backend.as_deref() {
             Some("ort") | Some("onnxruntime") => {
                 #[cfg(feature = "onnxruntime")]
                 {
                     let (session, (input_w, input_h)) = load_ort_session(model_path)?;
-                    info!("ONNX backend: ort ({}x{})", input_w, input_h);
-                    Ok(Self {
-                        backend: Backend::Ort {
+                    info!("ONNX backend: ort ({input_w}x{input_h})");
+                    Ok(Self::from_parts(
+                        Backend::Ort {
                             session: std::sync::Mutex::new(session),
                         },
                         input_w,
                         input_h,
                         preprocess,
                         swap_xy,
-                    })
+                    ))
                 }
 
                 #[cfg(not(feature = "onnxruntime"))]
@@ -106,16 +110,16 @@ impl PersonDetector {
                 #[cfg(feature = "onnx_tract")]
                 {
                     let (model, (input_w, input_h)) = load_tract_model(model_path)?;
-                    info!("ONNX backend: tract ({}x{})", input_w, input_h);
-                    Ok(Self {
-                        backend: Backend::Tract {
+                    info!("ONNX backend: tract ({input_w}x{input_h})");
+                    Ok(Self::from_parts(
+                        Backend::Tract {
                             model: Box::new(model),
                         },
                         input_w,
                         input_h,
                         preprocess,
                         swap_xy,
-                    })
+                    ))
                 }
 
                 #[cfg(not(feature = "onnx_tract"))]
@@ -130,23 +134,21 @@ impl PersonDetector {
                 // Default: prefer ORT when available, fallback to tract.
                 #[cfg(feature = "onnxruntime")]
                 {
-                    let device = std::env::var("KATAGLYPHIS_ORT_DEVICE")
-                        .unwrap_or_else(|_| "cpu".to_string())
-                        .to_ascii_lowercase();
+                    let device = config::ort_device();
                     let require_ort = device == "cuda" || device == "auto";
 
                     match load_ort_session(model_path) {
                         Ok((session, (input_w, input_h))) => {
-                            info!("ONNX backend: ort ({}x{})", input_w, input_h);
-                            return Ok(Self {
-                                backend: Backend::Ort {
+                            info!("ONNX backend: ort ({input_w}x{input_h})");
+                            return Ok(Self::from_parts(
+                                Backend::Ort {
                                     session: std::sync::Mutex::new(session),
                                 },
                                 input_w,
                                 input_h,
                                 preprocess,
                                 swap_xy,
-                            });
+                            ));
                         }
                         Err(err) => {
                             if require_ort {
@@ -160,22 +162,24 @@ impl PersonDetector {
                 #[cfg(feature = "onnx_tract")]
                 {
                     let (model, (input_w, input_h)) = load_tract_model(model_path)?;
-                    info!("ONNX backend: tract ({}x{})", input_w, input_h);
-                    Ok(Self {
-                        backend: Backend::Tract {
+                    info!("ONNX backend: tract ({input_w}x{input_h})");
+                    Ok(Self::from_parts(
+                        Backend::Tract {
                             model: Box::new(model),
                         },
                         input_w,
                         input_h,
                         preprocess,
                         swap_xy,
-                    })
+                    ))
                 }
 
-                #[cfg(not(onnx))]
+                #[cfg(not(feature = "onnx_tract"))]
                 {
                     bail!(
-                        "ONNX inference is disabled. Build with --features onnx_tract (or onnxruntime*)"
+                        "No ONNX backend available. \
+                         Build with --features onnx_tract to enable the tract fallback, \
+                         or ensure the ORT session can be created."
                     )
                 }
             }
@@ -183,23 +187,33 @@ impl PersonDetector {
     }
 
     pub fn infer_persons_rgba(
-        &self,
+        &mut self,
         rgba: &[u8],
         width: u32,
         height: u32,
         score_threshold: f32,
     ) -> Result<Vec<Detection>> {
-        let (input, mapping) = match self.preprocess {
-            PreprocessMode::Letterbox => {
-                rgba_to_nchw_f32_letterboxed(rgba, width, height, self.input_w, self.input_h)?
-            }
-            PreprocessMode::Stretch => {
-                rgba_to_nchw_f32_stretched(rgba, width, height, self.input_w, self.input_h)?
-            }
+        let mapping = match self.preprocess {
+            PreprocessMode::Letterbox => rgba_to_nchw_f32_letterboxed(
+                rgba,
+                width,
+                height,
+                self.input_w,
+                self.input_h,
+                &mut self.preprocess_buf,
+            )?,
+            PreprocessMode::Stretch => rgba_to_nchw_f32_stretched(
+                rgba,
+                width,
+                height,
+                self.input_w,
+                self.input_h,
+                &mut self.preprocess_buf,
+            )?,
         };
 
         let (shape, data) = self
-            .infer_raw_nchw_f32(input)
+            .infer_raw_nchw_f32(&self.preprocess_buf)
             .context("Failed to run ONNX model")?;
 
         let mut detections =
@@ -210,14 +224,14 @@ impl PersonDetector {
         Ok(detections)
     }
 
-    fn infer_raw_nchw_f32(&self, input: Vec<f32>) -> Result<(Vec<usize>, Vec<f32>)> {
+    fn infer_raw_nchw_f32(&self, input: &[f32]) -> Result<(Vec<usize>, Vec<f32>)> {
         match &self.backend {
             #[cfg(feature = "onnx_tract")]
             Backend::Tract { model } => {
                 use tract_onnx::prelude::*;
 
                 let shape = [1usize, 3usize, self.input_h as usize, self.input_w as usize];
-                let tensor = Tensor::from_shape(&shape, &input)?;
+                let tensor = Tensor::from_shape(&shape, input)?;
                 let outputs = model
                     .run(tvec!(tensor.into()))
                     .context("Failed to run ONNX model (tract)")?;
@@ -235,9 +249,12 @@ impl PersonDetector {
             #[cfg(feature = "onnxruntime")]
             Backend::Ort { session } => {
                 let mut session = session.lock().expect("ORT session mutex poisoned");
+                // ORT's safe `Tensor::from_array` requires owned data; a zero-copy
+                // view API is not available, so the copy from the reusable
+                // preprocess buffer is unavoidable.
                 let input_tensor = ort::value::Tensor::from_array((
                     [1usize, 3usize, self.input_h as usize, self.input_w as usize],
-                    input.into_boxed_slice(),
+                    input.to_vec().into_boxed_slice(),
                 ))
                 .context("Failed to create ORT input tensor")?;
 
@@ -245,22 +262,8 @@ impl PersonDetector {
                     .run(ort::inputs![input_tensor])
                     .context("Failed to run ONNX model (ort)")?;
 
-                let out = outputs.get(0).context("Model returned no outputs")?;
-                let (shape, data) = out
-                    .try_extract_tensor::<f32>()
-                    .context("Failed to extract f32 tensor from ORT output")?;
-
-                let shape: Vec<usize> = shape
-                    .iter()
-                    .map(|d| {
-                        if *d < 0 {
-                            bail!("ORT output had dynamic/negative dimension: {d}")
-                        }
-                        Ok(*d as usize)
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-
-                Ok((shape, data.to_vec()))
+                let (shape, data) = extract_first_f32_output(&outputs)?;
+                Ok((shape, data))
             }
         }
     }
@@ -324,14 +327,12 @@ fn load_tract_model(model_path: &str) -> Result<(TractPlan, (u32, u32))> {
 fn load_ort_session(model_path: &str) -> Result<(ort::session::Session, (u32, u32))> {
     use ort::session::Session;
 
-    let mut builder = Session::builder().context("Failed to create ORT SessionBuilder")?;
+    let mut builder = Session::builder().with_ort_context("Failed to create ORT SessionBuilder")?;
 
     #[cfg(feature = "onnxruntime_cuda")]
     {
         use ort::execution_providers::{CUDAExecutionProvider, ExecutionProvider};
-        let device = std::env::var("KATAGLYPHIS_ORT_DEVICE")
-            .unwrap_or_else(|_| "cpu".to_string())
-            .to_ascii_lowercase();
+        let device = config::ort_device();
 
         info!("ORT device request: {device}");
 
@@ -343,20 +344,16 @@ fn load_ort_session(model_path: &str) -> Result<(ort::session::Session, (u32, u3
             match cuda.is_available() {
                 Ok(true) => {}
                 Ok(false) => {
-                    return Err(anyhow::anyhow!(
-                        "ORT was built without CUDA support (CUDA EP unavailable)."
-                    ));
+                    bail!("ORT was built without CUDA support (CUDA EP unavailable).");
                 }
                 Err(err) => {
-                    return Err(anyhow::anyhow!(
-                        "Failed to query CUDA EP availability: {err}"
-                    ));
+                    bail!("Failed to query CUDA EP availability: {err}");
                 }
             }
 
             let cuda_result = builder
                 .with_execution_providers([cuda.build().error_on_failure()])
-                .context("Failed to configure ORT CUDA execution provider");
+                .with_ort_context("Failed to configure ORT CUDA execution provider");
 
             match cuda_result {
                 Ok(b) => {
@@ -368,8 +365,8 @@ fn load_ort_session(model_path: &str) -> Result<(ort::session::Session, (u32, u3
                         return Err(err);
                     }
                     warn!("ORT CUDA provider unavailable, falling back to CPU: {err:#}");
-                    builder =
-                        Session::builder().context("Failed to recreate ORT SessionBuilder")?;
+                    builder = Session::builder()
+                        .with_ort_context("Failed to recreate ORT SessionBuilder")?;
                 }
             }
         }
@@ -380,18 +377,47 @@ fn load_ort_session(model_path: &str) -> Result<(ort::session::Session, (u32, u3
         use ort::execution_providers::DirectMLExecutionProvider;
         builder = builder
             .with_execution_providers([DirectMLExecutionProvider::default().build()])
-            .context("Failed to configure ORT DirectML execution provider")?;
+            .with_ort_context("Failed to configure ORT DirectML execution provider")?;
         info!("ORT DirectML execution provider enabled");
     }
 
     let session = builder
         .commit_from_file(model_path)
-        .with_context(|| format!("Failed to load ONNX model from '{model_path}' (ort)"))?;
-    info!("ORT session created from model file");
+        .with_ort_context("Failed to load ONNX model (ort)")?;
+    info!("ORT session created from model file: {model_path}");
 
-    let (input_w, input_h) = (640, 640);
+    // Try to extract NCHW input resolution from the first input's type info.
+    // Falls back to 640x640 when the shape is dynamic or unavailable.
+    let (input_w, input_h) = extract_ort_input_dims(&session);
 
     Ok((session, (input_w, input_h)))
+}
+
+/// Attempt to read `(W, H)` from the first input's tensor shape (`[N, C, H, W]`).
+///
+/// Returns `(640, 640)` when the shape is missing, non-tensor, or has dynamic
+/// (negative) dimensions.
+#[cfg(feature = "onnxruntime")]
+fn extract_ort_input_dims(session: &ort::session::Session) -> (u32, u32) {
+    const DEFAULT: (u32, u32) = (640, 640);
+
+    let Some(first) = session.inputs().first() else {
+        return DEFAULT;
+    };
+    let Some(shape) = first.dtype().tensor_shape() else {
+        return DEFAULT;
+    };
+    // Expect NCHW: [batch, channels, height, width]
+    if shape.len() != 4 {
+        return DEFAULT;
+    }
+    let h = shape[2];
+    let w = shape[3];
+    if h <= 0 || w <= 0 {
+        // Dynamic dimensions are represented as -1.
+        return DEFAULT;
+    }
+    (w as u32, h as u32)
 }
 
 #[cfg(all(feature = "onnxruntime", feature = "onnxruntime_cuda", windows))]
@@ -474,10 +500,7 @@ fn ensure_ort_cuda_provider_dylibs_next_to_exe() -> Result<()> {
 
         let src = src_dir.join(name);
         if !src.is_file() {
-            return Err(anyhow::anyhow!(
-                "Required ORT CUDA DLL not found: '{}'",
-                src.display()
-            ));
+            bail!("Required ORT CUDA DLL not found: '{}'", src.display());
         }
 
         std::fs::copy(&src, &dst).with_context(|| {
@@ -488,10 +511,10 @@ fn ensure_ort_cuda_provider_dylibs_next_to_exe() -> Result<()> {
 
     for name in required {
         if !exe_dir.join(name).is_file() {
-            return Err(anyhow::anyhow!(
+            bail!(
                 "ORT CUDA DLL missing after copy: '{}'",
                 exe_dir.join(name).display()
-            ));
+            );
         }
     }
 
@@ -543,7 +566,8 @@ fn rgba_to_nchw_f32_letterboxed(
     src_h: u32,
     dst_w: u32,
     dst_h: u32,
-) -> Result<(Vec<f32>, ImageMapping)> {
+    buf: &mut Vec<f32>,
+) -> Result<ImageMapping> {
     validate_rgba(rgba, src_w, src_h)?;
 
     let scale = f32::min(dst_w as f32 / src_w as f32, dst_h as f32 / src_h as f32);
@@ -553,23 +577,23 @@ fn rgba_to_nchw_f32_letterboxed(
     let pad_y_i = (dst_h - new_h) / 2;
 
     let plane = (dst_w * dst_h) as usize;
-    let mut chw = vec![0f32; 3 * plane];
+    let total = 3 * plane;
     let fill = 114.0 / 255.0;
 
-    for dy in 0..dst_h {
-        for dx in 0..dst_w {
+    buf.clear();
+    buf.resize(total, fill);
+
+    // Content region only — skip the pad rows/columns entirely.
+    let content_x_end = pad_x_i + new_w;
+    let content_y_end = pad_y_i + new_h;
+
+    for dy in pad_y_i..content_y_end {
+        let sy = ((dy - pad_y_i) * src_h) / new_h;
+        for dx in pad_x_i..content_x_end {
+            let sx = ((dx - pad_x_i) * src_w) / new_w;
             let dst_idx = (dy * dst_w + dx) as usize;
-
-            let (r, g, b) =
-                if dx >= pad_x_i && dx < pad_x_i + new_w && dy >= pad_y_i && dy < pad_y_i + new_h {
-                    let sx = ((dx - pad_x_i) * src_w) / new_w;
-                    let sy = ((dy - pad_y_i) * src_h) / new_h;
-                    sample_rgba_normalised(rgba, sx, sy, src_w)
-                } else {
-                    (fill, fill, fill)
-                };
-
-            write_pixel_chw(&mut chw, plane, dst_idx, r, g, b);
+            let (r, g, b) = sample_rgba_normalised(rgba, sx, sy, src_w);
+            write_pixel_chw(buf, plane, dst_idx, r, g, b);
         }
     }
 
@@ -582,7 +606,7 @@ fn rgba_to_nchw_f32_letterboxed(
         pad_y: (dst_h - new_h) as f32 / 2.0,
     };
 
-    Ok((chw, mapping))
+    Ok(mapping)
 }
 
 fn rgba_to_nchw_f32_stretched(
@@ -591,11 +615,15 @@ fn rgba_to_nchw_f32_stretched(
     src_h: u32,
     dst_w: u32,
     dst_h: u32,
-) -> Result<(Vec<f32>, ImageMapping)> {
+    buf: &mut Vec<f32>,
+) -> Result<ImageMapping> {
     validate_rgba(rgba, src_w, src_h)?;
 
     let plane = (dst_w * dst_h) as usize;
-    let mut chw = vec![0f32; 3 * plane];
+    let total = 3 * plane;
+
+    buf.clear();
+    buf.resize(total, 0.0);
 
     for dy in 0..dst_h {
         let sy = (dy * src_h) / dst_h;
@@ -603,7 +631,7 @@ fn rgba_to_nchw_f32_stretched(
             let sx = (dx * src_w) / dst_w;
             let dst_idx = (dy * dst_w + dx) as usize;
             let (r, g, b) = sample_rgba_normalised(rgba, sx, sy, src_w);
-            write_pixel_chw(&mut chw, plane, dst_idx, r, g, b);
+            write_pixel_chw(buf, plane, dst_idx, r, g, b);
         }
     }
 
@@ -616,7 +644,7 @@ fn rgba_to_nchw_f32_stretched(
         pad_y: 0.0,
     };
 
-    Ok((chw, mapping))
+    Ok(mapping)
 }
 
 // ── YOLO output parsing ────────────────────────────────────────────

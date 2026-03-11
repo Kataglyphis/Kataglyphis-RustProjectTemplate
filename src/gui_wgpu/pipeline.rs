@@ -8,15 +8,20 @@ use gstreamer_app as gst_app;
 
 use crate::resource_monitor;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Frame {
     pub id: u64,
-    pub data: Arc<Vec<u8>>,
+    pub data: Arc<[u8]>,
     pub width: u32,
     pub height: u32,
 }
 
-pub fn rgba_tightly_packed_copy(src: &[u8], width: u32, height: u32) -> Option<Vec<u8>> {
+/// Convert a (possibly stride-padded) RGBA buffer into a tightly-packed one.
+///
+/// When the source buffer is already tightly packed (`src.len() == width * height * 4`),
+/// the data is copied directly into an `Arc<[u8]>` — one allocation instead of two
+/// (`Vec` + `Arc`).  When stride-stripping is needed, a temporary `Vec` is used.
+pub fn rgba_tightly_packed(src: &[u8], width: u32, height: u32) -> Option<Arc<[u8]>> {
     if width == 0 || height == 0 {
         return None;
     }
@@ -24,8 +29,9 @@ pub fn rgba_tightly_packed_copy(src: &[u8], width: u32, height: u32) -> Option<V
     let row_bytes = (width as usize).saturating_mul(4);
     let expected_len = row_bytes.saturating_mul(height as usize);
 
+    // Fast path: already tightly packed — copy straight into Arc.
     if src.len() == expected_len {
-        return Some(src.to_vec());
+        return Some(Arc::from(src));
     }
 
     // Many GStreamer buffers are padded per row (stride). We conservatively try to
@@ -63,7 +69,7 @@ pub fn rgba_tightly_packed_copy(src: &[u8], width: u32, height: u32) -> Option<V
         out[dst_start..dst_end].copy_from_slice(&src[src_start..src_end]);
     }
 
-    Some(out)
+    Some(Arc::from(out))
 }
 
 pub fn build_pipeline(frame_tx: std::sync::mpsc::SyncSender<Frame>) -> Result<gst::Pipeline> {
@@ -121,8 +127,7 @@ pub fn build_pipeline(frame_tx: std::sync::mpsc::SyncSender<Frame>) -> Result<gs
                         let width = structure.get::<i32>("width").unwrap_or(640) as u32;
                         let height = structure.get::<i32>("height").unwrap_or(480) as u32;
                         if let Ok(map) = buffer.map_readable()
-                            && let Some(data) =
-                                rgba_tightly_packed_copy(map.as_slice(), width, height)
+                            && let Some(data) = rgba_tightly_packed(map.as_slice(), width, height)
                         {
                             resource_monitor::record_camera_frame();
 
@@ -130,7 +135,7 @@ pub fn build_pipeline(frame_tx: std::sync::mpsc::SyncSender<Frame>) -> Result<gs
 
                             let _ = frame_tx.try_send(Frame {
                                 id,
-                                data: Arc::new(data),
+                                data,
                                 width,
                                 height,
                             });

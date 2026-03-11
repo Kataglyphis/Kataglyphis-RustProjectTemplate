@@ -3,7 +3,7 @@
 /// This struct is always compiled (not feature-gated) so that public API
 /// surfaces (`api::onnx`) can reference it regardless of which ONNX backend
 /// is enabled.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 #[allow(dead_code)] // Used only when ONNX features are enabled.
 pub struct Detection {
     pub x1: f32,
