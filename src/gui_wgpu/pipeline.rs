@@ -41,15 +41,9 @@ pub fn rgba_tightly_packed(src: &[u8], width: u32, height: u32) -> Option<Arc<[u
     }
 
     let h = height as usize;
-    let mut stride = src.len() / h;
-    if stride < row_bytes {
-        return None;
-    }
-
-    // Ensure the stride lets us safely index all rows.  The largest valid
-    // stride is `src.len() / h` (integer division already rounds down), so
-    // the product `stride * h <= src.len()` is guaranteed — no loop needed.
-    stride = src.len() / h;
+    // The largest valid stride is `src.len() / h` (integer division rounds
+    // down), so `stride * h <= src.len()` is guaranteed — no loop needed.
+    let stride = src.len() / h;
     if stride < row_bytes {
         return None;
     }

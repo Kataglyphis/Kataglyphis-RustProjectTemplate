@@ -29,36 +29,36 @@ pub struct ResourceMonitorConfig {
 // ── Global atomic counters ─────────────────────────────────────────
 
 /// Inference-completions counter (increment once per successful inference).
-pub static INFERENCE_COMPLETIONS: AtomicU64 = AtomicU64::new(0);
+pub(crate) static INFERENCE_COMPLETIONS: AtomicU64 = AtomicU64::new(0);
 
 /// Camera frames counter (increment once per received camera frame).
-pub static CAMERA_FRAMES: AtomicU64 = AtomicU64::new(0);
+pub(crate) static CAMERA_FRAMES: AtomicU64 = AtomicU64::new(0);
 
 /// Sum of observed inference durations in nanoseconds.
-pub static INFERENCE_TIME_NS_TOTAL: AtomicU64 = AtomicU64::new(0);
+pub(crate) static INFERENCE_TIME_NS_TOTAL: AtomicU64 = AtomicU64::new(0);
 
 /// Number of inference duration samples recorded.
-pub static INFERENCE_TIME_SAMPLES: AtomicU64 = AtomicU64::new(0);
+pub(crate) static INFERENCE_TIME_SAMPLES: AtomicU64 = AtomicU64::new(0);
 
 // ── Counter helpers (always compiled; callers live behind feature gates) ─
 
 /// Record a single inference completion.
 #[inline]
-#[allow(dead_code)]
+#[cfg_attr(not(gui_wgpu_backend), allow(dead_code))]
 pub fn record_inference_completion() {
     INFERENCE_COMPLETIONS.fetch_add(1, Ordering::Relaxed);
 }
 
 /// Record a single camera frame arrival.
 #[inline]
-#[allow(dead_code)]
+#[cfg_attr(not(gui_wgpu_backend), allow(dead_code))]
 pub fn record_camera_frame() {
     CAMERA_FRAMES.fetch_add(1, Ordering::Relaxed);
 }
 
 /// Record one inference duration sample.
 #[inline]
-#[allow(dead_code)]
+#[cfg_attr(not(gui_wgpu_backend), allow(dead_code))]
 pub fn record_inference_duration(duration: Duration) {
     let ns = duration.as_nanos().min(u128::from(u64::MAX)) as u64;
     INFERENCE_TIME_NS_TOTAL.fetch_add(ns, Ordering::Relaxed);
@@ -197,7 +197,7 @@ fn run_monitor_loop(config: ResourceMonitorConfig, stop: Arc<AtomicBool>) {
 // ── Counter snapshot (delta tracking) ──────────────────────────────
 
 /// Per-tick rate metrics computed from atomic counter deltas.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Rates {
     pub cam_fps: f64,
     pub infer_fps: f64,

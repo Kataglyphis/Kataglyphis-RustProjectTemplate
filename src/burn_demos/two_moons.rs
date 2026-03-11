@@ -171,7 +171,7 @@ fn train_two_moons_epoch(
         let pred = model.forward(x);
 
         // Binary cross-entropy.
-        let loss = losses::binary_cross_entropy(pred, y.clone());
+        let loss = losses::binary_cross_entropy(pred, y);
 
         let loss_val = loss.clone().into_scalar();
         let grads = GradientsParams::from_grads(loss.backward(), &model);

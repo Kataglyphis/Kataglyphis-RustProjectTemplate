@@ -510,15 +510,6 @@ fn ensure_ort_cuda_provider_dylibs_next_to_exe() -> Result<()> {
         info!("Copied '{}' -> '{}'", src.display(), dst.display());
     }
 
-    for name in required {
-        if !exe_dir.join(name).is_file() {
-            bail!(
-                "ORT CUDA DLL missing after copy: '{}'",
-                exe_dir.join(name).display()
-            );
-        }
-    }
-
     Ok(())
 }
 

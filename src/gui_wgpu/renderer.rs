@@ -533,9 +533,9 @@ impl WgpuState {
             0
         };
         #[cfg(onnx)]
-        let detector_error = self.inference.detector_error.clone();
+        let detector_error = self.inference.detector_error.as_deref();
         #[cfg(onnx)]
-        let model_path = self.inference.model_path.clone();
+        let model_path = self.inference.model_path.as_deref();
         #[cfg(onnx)]
         let score_threshold = self.inference.score_threshold;
 
@@ -556,10 +556,10 @@ impl WgpuState {
                             );
                             Self::draw_onnx_panel(
                                 ui,
-                                model_path.as_deref(),
+                                model_path,
                                 score_threshold,
                                 detections_count,
-                                detector_error.as_deref(),
+                                detector_error,
                                 &mut infer_enabled,
                             );
                         }

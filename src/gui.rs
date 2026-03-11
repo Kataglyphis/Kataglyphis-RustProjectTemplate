@@ -115,6 +115,8 @@ fn try_build_ui(app: &Application) -> Result<()> {
     let bus = pipeline.bus().context("Pipeline has no bus")?;
     let pipeline_weak = pipeline.downgrade();
 
+    // Guard: dropping this removes the bus watch, so it MUST remain alive
+    // for the duration of the GTK main loop.
     let _bus_watch = bus
         .add_watch_local(move |_, msg| {
             use gst::MessageView;

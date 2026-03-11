@@ -24,6 +24,12 @@ pub(crate) struct OverlayStats {
     cpu_history_cap: usize,
 }
 
+impl Default for OverlayStats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OverlayStats {
     pub fn new() -> Self {
         let pid = Pid::from_u32(std::process::id());

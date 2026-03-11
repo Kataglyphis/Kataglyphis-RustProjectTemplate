@@ -21,7 +21,7 @@ use pipeline::{Frame, build_pipeline};
 use renderer::WgpuState;
 
 /// WGPU backend selection for the GUI.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GpuBackend {
     /// Automatically pick the best backend for the platform.
     Auto,

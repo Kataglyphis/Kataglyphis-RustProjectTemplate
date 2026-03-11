@@ -18,20 +18,18 @@ pub fn draw_cpu_history(ui: &mut egui::Ui, history: &VecDeque<f32>) {
 
     let max_points = history.len().max(2) as f32 - 1.0;
     let step_x = rect.width() / max_points;
-    let mut prev = None;
+    let stroke = egui::Stroke::new(1.5, egui::Color32::LIGHT_BLUE);
 
-    for (i, &value) in history.iter().enumerate() {
-        let x = rect.left() + (i as f32) * step_x;
-        let y_norm = (value / 100.0).clamp(0.0, 1.0);
-        let y = rect.bottom() - y_norm * rect.height();
-        let pos = egui::pos2(x, y);
+    let points: Vec<egui::Pos2> = history
+        .iter()
+        .enumerate()
+        .map(|(i, &value)| {
+            let x = rect.left() + (i as f32) * step_x;
+            let y_norm = (value / 100.0).clamp(0.0, 1.0);
+            let y = rect.bottom() - y_norm * rect.height();
+            egui::pos2(x, y)
+        })
+        .collect();
 
-        if let Some(prev) = prev {
-            painter.line_segment(
-                [prev, pos],
-                egui::Stroke::new(1.5, egui::Color32::LIGHT_BLUE),
-            );
-        }
-        prev = Some(pos);
-    }
+    painter.add(egui::Shape::line(points, stroke));
 }

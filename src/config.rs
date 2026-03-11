@@ -47,9 +47,10 @@ macro_rules! env_cached {
 
 // ── Preprocessing ──────────────────────────────────────────────────
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PreprocessMode {
     Letterbox,
+    #[default]
     Stretch,
 }
 
