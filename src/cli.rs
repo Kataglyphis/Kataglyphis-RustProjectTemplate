@@ -2,18 +2,10 @@
 
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 
-/// WGPU backend selection for the GUI.
-#[derive(Clone, Debug, ValueEnum)]
-pub enum GpuBackend {
-    /// Automatically pick the best backend for the platform.
-    Auto,
-    /// Vulkan.
-    Vulkan,
-    /// DirectX 12 (Windows only).
-    Dx12,
-}
+#[cfg(feature = "gui_windows")]
+use kataglyphis_rustprojecttemplate::gui_wgpu::GpuBackend;
 
 #[derive(Parser)]
 #[command(name = "kataglyphis")]
@@ -64,7 +56,11 @@ pub enum Commands {
     Gui {
         /// WGPU backend to use.
         /// Note: dx12 is only available on Windows.
+        #[cfg(feature = "gui_windows")]
         #[arg(long, value_enum, default_value_t = GpuBackend::Auto)]
         backend: GpuBackend,
+        #[cfg(not(feature = "gui_windows"))]
+        #[arg(long, default_value = "")]
+        backend: String,
     },
 }

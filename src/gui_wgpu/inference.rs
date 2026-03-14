@@ -8,22 +8,10 @@ use std::sync::mpsc::{Receiver, SyncSender};
 use crate::detection::Detection;
 
 #[cfg(onnx)]
-pub(crate) struct InferRequest {
-    pub frame_id: u64,
-    pub rgba: Arc<[u8]>,
-    pub width: u32,
-    pub height: u32,
-    pub score_threshold: f32,
-}
-
+use super::inference_bridge::{InferRequest, InferResult};
 #[cfg(onnx)]
-pub(crate) struct InferResult {
-    pub frame_id: u64,
-    pub detections: Vec<Detection>,
-    pub error: Option<String>,
-}
+use super::pipeline::Frame;
 
-/// State for the background inference thread and its results.
 #[cfg(onnx)]
 pub(crate) struct InferenceState {
     pub detector_error: Option<String>,
@@ -52,7 +40,7 @@ impl InferenceState {
         }
     }
 
-    pub(crate) fn maybe_infer(&mut self, frame: &super::pipeline::Frame) {
+    pub(crate) fn maybe_infer(&mut self, frame: &Frame) {
         let Some(tx) = self.infer_tx.as_ref() else {
             return;
         };

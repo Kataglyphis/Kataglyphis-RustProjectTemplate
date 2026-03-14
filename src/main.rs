@@ -5,21 +5,8 @@ use log::info;
 
 mod cli;
 
-#[cfg(feature = "gui_windows")]
-use cli::GpuBackend as CliGpuBackend;
 use cli::{Cli, Commands};
 use kataglyphis_rustprojecttemplate::{logging, resource_monitor, utils};
-
-#[cfg(feature = "gui_windows")]
-impl From<CliGpuBackend> for kataglyphis_rustprojecttemplate::gui_wgpu::GpuBackend {
-    fn from(b: CliGpuBackend) -> Self {
-        match b {
-            CliGpuBackend::Auto => Self::Auto,
-            CliGpuBackend::Vulkan => Self::Vulkan,
-            CliGpuBackend::Dx12 => Self::Dx12,
-        }
-    }
-}
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::main)]
 #[cfg_attr(target_arch = "wasm32", tokio::main(flavor = "current_thread"))]
@@ -55,9 +42,7 @@ async fn main() -> Result<()> {
         Commands::Gui { backend } => {
             #[cfg(feature = "gui_windows")]
             {
-                let lib_backend: kataglyphis_rustprojecttemplate::gui_wgpu::GpuBackend =
-                    backend.into();
-                kataglyphis_rustprojecttemplate::gui_wgpu::run_with_backend(&lib_backend)?;
+                kataglyphis_rustprojecttemplate::gui_wgpu::run_with_backend(&backend)?;
             }
 
             #[cfg(all(feature = "gui_unix", not(windows), not(feature = "gui_windows")))]

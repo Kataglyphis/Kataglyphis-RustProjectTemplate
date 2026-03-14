@@ -13,11 +13,62 @@ use std::time::{Duration, Instant};
 use log::info;
 use sysinfo::{Pid, ProcessesToUpdate, System};
 
-// ── Constants ──────────────────────────────────────────────────────
-
 const BYTES_PER_MIB: f64 = 1024.0 * 1024.0;
 
-// ── Configuration ──────────────────────────────────────────────────
+/// Global counters singleton for tracking inference and camera metrics.
+///
+/// This struct encapsulates all atomic counters in a single type,
+/// making it easier to manage and reducing global state sprawl.
+static GLOBAL_COUNTERS: GlobalCounters = GlobalCounters {
+    inference_completions: AtomicU64::new(0),
+    camera_frames: AtomicU64::new(0),
+    inference_time_ns_total: AtomicU64::new(0),
+    inference_time_samples: AtomicU64::new(0),
+};
+
+struct GlobalCounters {
+    inference_completions: AtomicU64,
+    camera_frames: AtomicU64,
+    inference_time_ns_total: AtomicU64,
+    inference_time_samples: AtomicU64,
+}
+
+impl GlobalCounters {
+    #[inline]
+    fn record_inference_completion(&self) {
+        self.inference_completions.fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[inline]
+    fn record_camera_frame(&self) {
+        self.camera_frames.fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[inline]
+    fn record_inference_duration(&self, duration: Duration) {
+        let ns = duration.as_nanos().min(u128::from(u64::MAX)) as u64;
+        self.inference_time_ns_total
+            .fetch_add(ns, Ordering::Relaxed);
+        self.inference_time_samples.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn snapshot(&self) -> CounterValues {
+        CounterValues {
+            camera_frames: self.camera_frames.load(Ordering::Relaxed),
+            inference_completions: self.inference_completions.load(Ordering::Relaxed),
+            inference_time_ns_total: self.inference_time_ns_total.load(Ordering::Relaxed),
+            inference_time_samples: self.inference_time_samples.load(Ordering::Relaxed),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CounterValues {
+    camera_frames: u64,
+    inference_completions: u64,
+    inference_time_ns_total: u64,
+    inference_time_samples: u64,
+}
 
 #[derive(Clone, Debug)]
 pub struct ResourceMonitorConfig {
@@ -26,46 +77,28 @@ pub struct ResourceMonitorConfig {
     pub include_gpu: bool,
 }
 
-// ── Global atomic counters ─────────────────────────────────────────
-
-/// Inference-completions counter (increment once per successful inference).
-pub(crate) static INFERENCE_COMPLETIONS: AtomicU64 = AtomicU64::new(0);
-
-/// Camera frames counter (increment once per received camera frame).
-pub(crate) static CAMERA_FRAMES: AtomicU64 = AtomicU64::new(0);
-
-/// Sum of observed inference durations in nanoseconds.
-pub(crate) static INFERENCE_TIME_NS_TOTAL: AtomicU64 = AtomicU64::new(0);
-
-/// Number of inference duration samples recorded.
-pub(crate) static INFERENCE_TIME_SAMPLES: AtomicU64 = AtomicU64::new(0);
-
-// ── Counter helpers (always compiled; callers live behind feature gates) ─
-
-/// Record a single inference completion.
 #[inline]
 #[cfg_attr(not(gui_wgpu_backend), allow(dead_code))]
 pub(crate) fn record_inference_completion() {
-    INFERENCE_COMPLETIONS.fetch_add(1, Ordering::Relaxed);
+    GLOBAL_COUNTERS.record_inference_completion();
 }
 
-/// Record a single camera frame arrival.
 #[inline]
 #[cfg_attr(not(gui_wgpu_backend), allow(dead_code))]
 pub(crate) fn record_camera_frame() {
-    CAMERA_FRAMES.fetch_add(1, Ordering::Relaxed);
+    GLOBAL_COUNTERS.record_camera_frame();
 }
 
-/// Record one inference duration sample.
 #[inline]
 #[cfg_attr(not(gui_wgpu_backend), allow(dead_code))]
 pub(crate) fn record_inference_duration(duration: Duration) {
-    let ns = duration.as_nanos().min(u128::from(u64::MAX)) as u64;
-    INFERENCE_TIME_NS_TOTAL.fetch_add(ns, Ordering::Relaxed);
-    INFERENCE_TIME_SAMPLES.fetch_add(1, Ordering::Relaxed);
+    GLOBAL_COUNTERS.record_inference_duration(duration);
 }
 
-// ── ResourceMonitor ────────────────────────────────────────────────
+#[inline]
+pub(crate) fn bytes_to_mib(bytes: u64) -> f64 {
+    (bytes as f64) / BYTES_PER_MIB
+}
 
 pub struct ResourceMonitor {
     stop: Arc<AtomicBool>,
@@ -101,14 +134,76 @@ impl Drop for ResourceMonitor {
     }
 }
 
-// ── Unit conversions ───────────────────────────────────────────────
-
-#[inline]
-pub(crate) fn bytes_to_mib(bytes: u64) -> f64 {
-    (bytes as f64) / BYTES_PER_MIB
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Rates {
+    pub cam_fps: f64,
+    pub infer_fps: f64,
+    pub infer_latency_ms: f64,
+    pub infer_capacity_fps: f64,
 }
 
-// ── Monitor loop ───────────────────────────────────────────────────
+pub(crate) struct CounterSnapshot {
+    at: Instant,
+    values: CounterValues,
+}
+
+impl Default for CounterSnapshot {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CounterSnapshot {
+    pub(crate) fn new() -> Self {
+        Self {
+            at: Instant::now(),
+            values: GLOBAL_COUNTERS.snapshot(),
+        }
+    }
+
+    pub(crate) fn tick(&mut self, now: Instant) -> Rates {
+        let dt_s = now.duration_since(self.at).as_secs_f64().max(0.001);
+        self.at = now;
+
+        let new_values = GLOBAL_COUNTERS.snapshot();
+
+        let cam_fps = new_values
+            .camera_frames
+            .wrapping_sub(self.values.camera_frames) as f64
+            / dt_s;
+        let infer_fps = new_values
+            .inference_completions
+            .wrapping_sub(self.values.inference_completions) as f64
+            / dt_s;
+
+        let ns_delta = new_values
+            .inference_time_ns_total
+            .wrapping_sub(self.values.inference_time_ns_total);
+        let samples_delta = new_values
+            .inference_time_samples
+            .wrapping_sub(self.values.inference_time_samples);
+
+        self.values = new_values;
+
+        let infer_latency_ms = if samples_delta > 0 {
+            (ns_delta as f64 / samples_delta as f64) / 1_000_000.0
+        } else {
+            0.0
+        };
+        let infer_capacity_fps = if infer_latency_ms > 0.0 {
+            1000.0 / infer_latency_ms
+        } else {
+            0.0
+        };
+
+        Rates {
+            cam_fps,
+            infer_fps,
+            infer_latency_ms,
+            infer_capacity_fps,
+        }
+    }
+}
 
 fn run_monitor_loop(config: ResourceMonitorConfig, stop: Arc<AtomicBool>) {
     let pid = Pid::from_u32(std::process::id());
@@ -120,7 +215,6 @@ fn run_monitor_loop(config: ResourceMonitorConfig, stop: Arc<AtomicBool>) {
         .and_then(|path| OpenOptions::new().create(true).append(true).open(path).ok())
         .map(BufWriter::new);
 
-    // Create the WMI connection once (Windows only) and reuse it every tick.
     #[cfg(target_os = "windows")]
     let wmi_conn = if config.include_gpu {
         gpu_connect()
@@ -194,95 +288,12 @@ fn run_monitor_loop(config: ResourceMonitorConfig, stop: Arc<AtomicBool>) {
     }
 }
 
-// ── Counter snapshot (delta tracking) ──────────────────────────────
-
-/// Per-tick rate metrics computed from atomic counter deltas.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct Rates {
-    pub cam_fps: f64,
-    pub infer_fps: f64,
-    pub infer_latency_ms: f64,
-    pub infer_capacity_fps: f64,
-}
-
-/// Tracks atomic counter values between ticks and computes delta-based rates.
-///
-/// Shared between the background `ResourceMonitor` loop and the GUI overlay so
-/// that the rate-computation logic is defined in exactly one place.
-pub(crate) struct CounterSnapshot {
-    at: Instant,
-    cam: u64,
-    infer: u64,
-    infer_ns: u64,
-    infer_samples: u64,
-}
-
-impl Default for CounterSnapshot {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl CounterSnapshot {
-    pub(crate) fn new() -> Self {
-        Self {
-            at: Instant::now(),
-            cam: CAMERA_FRAMES.load(Ordering::Relaxed),
-            infer: INFERENCE_COMPLETIONS.load(Ordering::Relaxed),
-            infer_ns: INFERENCE_TIME_NS_TOTAL.load(Ordering::Relaxed),
-            infer_samples: INFERENCE_TIME_SAMPLES.load(Ordering::Relaxed),
-        }
-    }
-
-    pub(crate) fn tick(&mut self, now: Instant) -> Rates {
-        let dt_s = now.duration_since(self.at).as_secs_f64().max(0.001);
-        self.at = now;
-
-        let cam_now = CAMERA_FRAMES.load(Ordering::Relaxed);
-        let cam_fps = (cam_now.wrapping_sub(self.cam) as f64) / dt_s;
-        self.cam = cam_now;
-
-        let infer_now = INFERENCE_COMPLETIONS.load(Ordering::Relaxed);
-        let infer_fps = (infer_now.wrapping_sub(self.infer) as f64) / dt_s;
-        self.infer = infer_now;
-
-        let ns_now = INFERENCE_TIME_NS_TOTAL.load(Ordering::Relaxed);
-        let samples_now = INFERENCE_TIME_SAMPLES.load(Ordering::Relaxed);
-        let ns_delta = ns_now.wrapping_sub(self.infer_ns);
-        let samples_delta = samples_now.wrapping_sub(self.infer_samples);
-        self.infer_ns = ns_now;
-        self.infer_samples = samples_now;
-
-        let infer_latency_ms = if samples_delta > 0 {
-            (ns_delta as f64 / samples_delta as f64) / 1_000_000.0
-        } else {
-            0.0
-        };
-        let infer_capacity_fps = if infer_latency_ms > 0.0 {
-            1000.0 / infer_latency_ms
-        } else {
-            0.0
-        };
-
-        Rates {
-            cam_fps,
-            infer_fps,
-            infer_latency_ms,
-            infer_capacity_fps,
-        }
-    }
-}
-
-// ── File writer helper ─────────────────────────────────────────────
-
 fn write_line(writer: &mut Option<BufWriter<std::fs::File>>, line: &str) {
     let Some(w) = writer.as_mut() else {
         return;
     };
     let _ = writeln!(w, "{line}");
 }
-
-// ── GPU sampling ───────────────────────────────────────────────────
 
 #[derive(Clone, Debug, Default)]
 struct GpuSample {
@@ -308,9 +319,6 @@ fn append_gpu_metrics(line: &mut String, sample: &GpuSample) {
     }
 }
 
-/// Create a WMI connection for GPU queries (Windows only).
-///
-/// Returns `None` (with a one-time warning) if the connection cannot be established.
 #[cfg(target_os = "windows")]
 fn gpu_connect() -> Option<wmi::WMIConnection> {
     use std::sync::atomic::AtomicBool;

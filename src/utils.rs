@@ -10,26 +10,23 @@ pub struct FileStats {
     pub bytes: u64,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub async fn read_file(path: impl AsRef<Path>) -> Result<String> {
-    let path = path.as_ref();
-    let content = tokio::fs::read_to_string(path)
+    do_read_file(path.as_ref()).await
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn do_read_file(path: &Path) -> Result<String> {
+    tokio::fs::read_to_string(path)
         .await
-        .with_context(|| format!("Failed to read file at '{}'", path.display()))?;
-    Ok(content)
+        .with_context(|| format!("Failed to read file at '{}'", path.display()))
 }
 
 #[cfg(target_arch = "wasm32")]
-pub async fn read_file(path: impl AsRef<Path>) -> Result<String> {
-    let path = path.as_ref();
-    let content = std::fs::read_to_string(path)
-        .with_context(|| format!("Failed to read file at '{}'", path.display()))?;
-    Ok(content)
+async fn do_read_file(path: &Path) -> Result<String> {
+    std::fs::read_to_string(path)
+        .with_context(|| format!("Failed to read file at '{}'", path.display()))
 }
 
-/// Count lines and words by streaming a file through a buffered reader.
-///
-/// This is the shared implementation used by both native and wasm `file_stats`.
 fn count_lines_and_words(path: &Path) -> Result<(usize, usize)> {
     use std::io::{BufRead, BufReader};
     let file = std::fs::File::open(path)
@@ -46,15 +43,9 @@ fn count_lines_and_words(path: &Path) -> Result<(usize, usize)> {
     Ok((lines, words))
 }
 
-/// Compute line, word, and byte statistics for a file.
-///
-/// Uses a buffered reader to stream the file line-by-line, avoiding loading the
-/// entire contents into memory at once.  The byte count comes from filesystem
-/// metadata so it reflects the on-disk size.
 pub async fn file_stats(path: impl AsRef<Path>) -> Result<FileStats> {
     let path = path.as_ref();
 
-    // Fetch byte size from metadata — cheap and works for any file size.
     #[cfg(not(target_arch = "wasm32"))]
     let bytes = tokio::fs::metadata(path)
         .await
@@ -66,8 +57,6 @@ pub async fn file_stats(path: impl AsRef<Path>) -> Result<FileStats> {
         .with_context(|| format!("Failed to read metadata for '{}'", path.display()))?
         .len();
 
-    // Stream the file line-by-line to count lines and words without holding the
-    // entire file in memory.
     let path_owned = path.to_path_buf();
 
     #[cfg(not(target_arch = "wasm32"))]

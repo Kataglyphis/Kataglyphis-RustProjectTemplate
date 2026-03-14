@@ -1,8 +1,10 @@
 pub(crate) mod inference;
+pub(crate) mod inference_bridge;
 pub(crate) mod overlay;
 pub(crate) mod overlay_stats;
 pub(crate) mod pipeline;
 pub(crate) mod renderer;
+pub(crate) mod wgpu_init;
 
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, sync_channel};
@@ -22,6 +24,7 @@ use renderer::WgpuState;
 
 /// WGPU backend selection for the GUI.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "gui_windows", derive(clap::ValueEnum))]
 pub enum GpuBackend {
     /// Automatically pick the best backend for the platform.
     Auto,
