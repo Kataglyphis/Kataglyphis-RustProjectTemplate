@@ -23,7 +23,7 @@ pub fn onnx_yolov10_demo<TrainB: AutodiffBackend>(
     let builder = Session::builder().with_ort_context("Failed to create ORT SessionBuilder")?;
 
     #[cfg(all(feature = "onnxruntime_directml", windows))]
-    let builder = {
+    let mut builder = {
         use ort::execution_providers::DirectMLExecutionProvider;
         builder
             .with_execution_providers([DirectMLExecutionProvider::default().build()])

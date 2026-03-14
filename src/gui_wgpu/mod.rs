@@ -173,21 +173,22 @@ impl ApplicationHandler for GuiApp {
         if window_id != window.id() {
             return;
         }
-        let Some(state) = self.state.as_mut() else {
-            return;
-        };
 
         state.handle_window_event(window, &event);
 
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
-                state.resize(size);
+                if let Some(state) = self.state.as_mut() {
+                    state.resize(size);
+                }
                 window.request_redraw();
             }
             WindowEvent::ScaleFactorChanged { .. } => {
                 let size = window.inner_size();
-                state.resize(size);
+                if let Some(state) = self.state.as_mut() {
+                    state.resize(size);
+                }
                 window.request_redraw();
             }
             WindowEvent::RedrawRequested => {
@@ -197,12 +198,16 @@ impl ApplicationHandler for GuiApp {
                 if let Some(frame) = self.latest_frame.as_ref()
                     && self.uploaded_frame_id != self.latest_frame_id
                 {
-                    state.upload_frame(frame);
-                    self.uploaded_frame_id = self.latest_frame_id;
+                    if let Some(state) = self.state.as_mut() {
+                        state.upload_frame(frame);
+                        self.uploaded_frame_id = self.latest_frame_id;
+                    }
                 }
-                if let Err(err) = state.render(window) {
-                    eprintln!("Render error: {err:?}");
-                    event_loop.exit();
+                if let Some(state) = self.state.as_mut() {
+                    if let Err(err) = state.render(window) {
+                        eprintln!("Render error: {err:?}");
+                        event_loop.exit();
+                    }
                 }
             }
             _ => {}
@@ -213,11 +218,11 @@ impl ApplicationHandler for GuiApp {
         // Keep the UI responsive even if the video source is low-FPS.
         // We upload new video frames only when they arrive, but we redraw at a steady cadence
         // so egui interactions feel smooth.
+        let got_frame = self.drain_frames();
+
         let Some(window) = self.window.as_ref() else {
             return;
         };
-
-        let got_frame = self.drain_frames();
 
         let now = Instant::now();
         if now >= self.next_redraw_deadline {
