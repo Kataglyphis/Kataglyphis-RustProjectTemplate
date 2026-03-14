@@ -5,6 +5,7 @@ use log::info;
 
 use super::model_utils::validate_model_path;
 use crate::config;
+use crate::ort_ext::OrtResultExt;
 
 const DEFAULT_INPUT_DIMS: (u32, u32) = (640, 640);
 

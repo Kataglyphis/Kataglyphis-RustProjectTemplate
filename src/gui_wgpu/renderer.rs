@@ -237,16 +237,17 @@ impl WgpuState {
 
         let full_output = self.run_egui_overlay(raw_input);
 
+        let shapes = full_output.shapes.clone();
         let clipped_primitives = self
             .egui_ctx
-            .tessellate(full_output.shapes, self.egui_screen.pixels_per_point);
+            .tessellate(shapes, self.egui_screen.pixels_per_point);
 
         for (id, image_delta) in &full_output.textures_delta.set {
             self.egui_renderer
                 .update_texture(&self.device, &self.queue, *id, image_delta);
         }
 
-        self.submit_frame(window, &clipped_primitives, &full_output)?;
+        self.submit_frame(window, &clipped_primitives, full_output)?;
 
         for id in &full_output.textures_delta.free {
             self.egui_renderer.free_texture(id);
@@ -407,9 +408,9 @@ impl WgpuState {
 
     fn submit_frame(
         &mut self,
-        window: &Window,
+        _window: &Window,
         clipped_primitives: &[egui::ClippedPrimitive],
-        full_output: &egui::FullOutput,
+        _full_output: &egui::FullOutput,
     ) -> Result<(), wgpu::SurfaceError> {
         let frame = self.surface.get_current_texture()?;
         let view = frame
