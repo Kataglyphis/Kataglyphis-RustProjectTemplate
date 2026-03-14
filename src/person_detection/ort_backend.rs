@@ -3,26 +3,11 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use log::info;
 
+use super::model_utils::validate_model_path;
 use crate::config;
 
-fn validate_model_path(model_path: &str) -> Result<std::path::PathBuf> {
-    let path = Path::new(model_path);
-    let canonical = path
-        .canonicalize()
-        .with_context(|| format!("Model path does not exist or is inaccessible: '{model_path}'"))?;
-    if !canonical.is_file() {
-        bail!("Model path is not a file: '{}'", canonical.display());
-    }
-    let ext = canonical.extension().and_then(|s| s.to_str()).unwrap_or("");
-    if ext != "onnx" {
-        bail!(
-            "Model file should have .onnx extension, got '{}': {}",
-            ext,
-            canonical.display()
-        );
-    }
-    Ok(canonical)
-}
+const DEFAULT_INPUT_DIMS: (u32, u32) = (640, 640);
+use crate::config;
 
 #[cfg(all(feature = "onnxruntime_cuda", windows))]
 use anyhow::warn;
@@ -100,17 +85,22 @@ pub(crate) fn load_ort_session(model_path: &str) -> Result<(ort::session::Sessio
 }
 
 fn extract_ort_input_dims(session: &ort::session::Session) -> (u32, u32) {
-    const DEFAULT: (u32, u32) = (640, 640);
-
     let Some(first) = session.inputs().first() else {
-        return DEFAULT;
+        return DEFAULT_INPUT_DIMS;
     };
     let Some(shape) = first.dtype().tensor_shape() else {
-        return DEFAULT;
+        return DEFAULT_INPUT_DIMS;
     };
     if shape.len() != 4 {
-        return DEFAULT;
+        return DEFAULT_INPUT_DIMS;
     }
+    let h = shape[2];
+    let w = shape[3];
+    if h <= 0 || w <= 0 {
+        return DEFAULT_INPUT_DIMS;
+    }
+    (w as u32, h as u32)
+}
     let h = shape[2];
     let w = shape[3];
     if h <= 0 || w <= 0 {

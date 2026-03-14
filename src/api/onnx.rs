@@ -57,9 +57,15 @@ fn detect_persons_rgba_impl(
     static DETECTOR: OnceLock<Mutex<Option<Cached>>> = OnceLock::new();
     let mutex = DETECTOR.get_or_init(|| Mutex::new(None));
 
+    let lock_guard = || {
+        mutex
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    };
+
     // Check whether a reload is needed while holding the lock briefly.
     let needs_reload = {
-        let guard = mutex.lock().expect("Detector mutex poisoned");
+        let guard = lock_guard();
         guard
             .as_ref()
             .map(|c| c.model_path != model_path)
@@ -70,7 +76,7 @@ fn detect_persons_rgba_impl(
     // for the (potentially multi-second) model load.
     if needs_reload {
         let detector = PersonDetector::new(model_path)?;
-        let mut guard = mutex.lock().expect("Detector mutex poisoned");
+        let mut guard = lock_guard();
         // Re-check: another thread may have loaded the same model while we
         // were loading ours.
         let still_needs = guard
@@ -85,7 +91,7 @@ fn detect_persons_rgba_impl(
         }
     }
 
-    let mut guard = mutex.lock().expect("Detector mutex poisoned");
+    let mut guard = lock_guard();
     let detector = guard.as_mut().expect("Detector missing");
     detector
         .detector

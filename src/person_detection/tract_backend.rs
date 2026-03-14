@@ -1,6 +1,6 @@
-use std::path::Path;
+use anyhow::Context;
 
-use anyhow::{Context, Result, bail};
+use super::model_utils::validate_model_path;
 
 type TractPlan = tract_onnx::prelude::SimplePlan<
     tract_onnx::prelude::TypedFact,
@@ -8,26 +8,7 @@ type TractPlan = tract_onnx::prelude::SimplePlan<
     tract_onnx::prelude::TypedModel,
 >;
 
-fn validate_model_path(model_path: &str) -> Result<std::path::PathBuf> {
-    let path = Path::new(model_path);
-    let canonical = path
-        .canonicalize()
-        .with_context(|| format!("Model path does not exist or is inaccessible: '{model_path}'"))?;
-    if !canonical.is_file() {
-        bail!("Model path is not a file: '{}'", canonical.display());
-    }
-    let ext = canonical.extension().and_then(|s| s.to_str()).unwrap_or("");
-    if ext != "onnx" {
-        bail!(
-            "Model file should have .onnx extension, got '{}': {}",
-            ext,
-            canonical.display()
-        );
-    }
-    Ok(canonical)
-}
-
-pub(crate) fn load_tract_model(model_path: &str) -> Result<(TractPlan, (u32, u32))> {
+pub(crate) fn load_tract_model(model_path: &str) -> anyhow::Result<(TractPlan, (u32, u32))> {
     use tract_onnx::prelude::*;
 
     let canonical_path = validate_model_path(model_path)?;

@@ -48,10 +48,12 @@ pub(crate) fn spawn_inference_thread() -> (
     let detector = match PersonDetector::new(&path) {
         Ok(detector) => Some(detector),
         Err(e) => {
+            let err_msg = format!("Failed to load model '{path}': {e:#}");
+            log::error!("{err_msg}");
             let _ = res_tx.try_send(InferResult {
                 frame_id: 0,
                 detections: Vec::new(),
-                error: Some(format!("Failed to load model '{path}': {e:#}")),
+                error: Some(err_msg),
             });
             None
         }
@@ -75,11 +77,15 @@ pub(crate) fn spawn_inference_thread() -> (
                     detections: dets,
                     error: None,
                 },
-                Err(e) => InferResult {
-                    frame_id: req.frame_id,
-                    detections: Vec::new(),
-                    error: Some(format!("Inference failed: {e:#}")),
-                },
+                Err(e) => {
+                    let err_msg = format!("Inference failed: {e:#}");
+                    log::warn!("{err_msg}");
+                    InferResult {
+                        frame_id: req.frame_id,
+                        detections: Vec::new(),
+                        error: Some(err_msg),
+                    }
+                }
             };
 
             resource_monitor::record_inference_duration(infer_start.elapsed());

@@ -22,6 +22,8 @@ use winit::window::{Window, WindowAttributes, WindowId};
 use pipeline::{Frame, build_pipeline};
 use renderer::WgpuState;
 
+const REDRAW_INTERVAL_MS: u64 = 16;
+
 /// WGPU backend selection for the GUI.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "gui_windows", derive(clap::ValueEnum))]
@@ -245,7 +247,7 @@ fn start_window(
         latest_frame_id: 0,
         uploaded_frame_id: 0,
         next_redraw_deadline: Instant::now(),
-        redraw_interval: Duration::from_millis(16),
+        redraw_interval: Duration::from_millis(REDRAW_INTERVAL_MS),
         init_error: None,
     };
 

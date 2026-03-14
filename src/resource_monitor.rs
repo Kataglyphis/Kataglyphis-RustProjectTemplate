@@ -283,8 +283,10 @@ fn run_monitor_loop(config: ResourceMonitorConfig, stop: Arc<AtomicBool>) {
         thread::sleep(sleep_for);
     }
 
-    if let Some(mut w) = file_writer {
-        let _ = w.flush();
+    if let Some(mut w) = file_writer
+        && let Err(e) = w.flush()
+    {
+        log::warn!("Failed to flush resource log file: {e}");
     }
 }
 
@@ -292,7 +294,9 @@ fn write_line(writer: &mut Option<BufWriter<std::fs::File>>, line: &str) {
     let Some(w) = writer.as_mut() else {
         return;
     };
-    let _ = writeln!(w, "{line}");
+    if let Err(e) = writeln!(w, "{line}") {
+        log::warn!("Failed to write resource log line: {e}");
+    }
 }
 
 #[derive(Clone, Debug, Default)]

@@ -1,5 +1,7 @@
 use anyhow::{Context, Result, bail};
 
+const LETTERBOX_FILL_VALUE: f32 = 114.0 / 255.0;
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ImageMapping {
     pub src_w: u32,
@@ -62,10 +64,9 @@ pub(crate) fn rgba_to_nchw_f32_letterboxed(
 
     let plane = (dst_w * dst_h) as usize;
     let total = 3 * plane;
-    let fill = 114.0 / 255.0;
 
     buf.clear();
-    buf.resize(total, fill);
+    buf.resize(total, LETTERBOX_FILL_VALUE);
 
     let content_x_end = pad_x_i + new_w;
     let content_y_end = pad_y_i + new_h;

@@ -1,3 +1,4 @@
+mod model_utils;
 mod preprocess;
 
 #[cfg(feature = "onnx_tract")]
@@ -245,10 +246,11 @@ impl PersonDetector {
 
             #[cfg(feature = "onnxruntime")]
             Backend::Ort { session } => {
-                // TODO: ORT's `Tensor::from_array` requires owned data.  If a
-                // future ort release exposes a zero-copy `Tensor::from_slice`
-                // for borrowed buffers, we could eliminate the `input.to_vec()`
-                // copy and feed `self.preprocess_buf` directly.
+                // NOTE: ORT's `Tensor::from_array` requires owned data (Box<[f32]>).
+                // The `to_vec().into_boxed_slice()` pattern performs a single allocation
+                // (Vec allocates with exact capacity, then converts to Box without reallocation).
+                // This is optimal for the current ort API. If ort exposes a borrowed-data
+                // constructor in the future, we could eliminate this allocation entirely.
                 let input_tensor = ort::value::Tensor::from_array((
                     [1usize, 3usize, input_h as usize, input_w as usize],
                     input.to_vec().into_boxed_slice(),
