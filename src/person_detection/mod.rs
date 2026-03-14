@@ -42,6 +42,11 @@ type TractPlan = tract_onnx::prelude::SimplePlan<
     tract_onnx::prelude::TypedModel,
 >;
 
+struct BackendLoad {
+    backend: Backend,
+    input_dims: (u32, u32),
+}
+
 pub(crate) struct PersonDetector {
     backend: Backend,
     input_w: u32,
@@ -79,44 +84,70 @@ impl PersonDetector {
 
         let requested_backend = config::onnx_backend();
 
-        match requested_backend.as_deref() {
+        let BackendLoad {
+            backend,
+            input_dims,
+        } = Self::load_backend(model_path, requested_backend.as_deref())?;
+        let (input_w, input_h) = input_dims;
+
+        Ok(Self::from_parts(
+            backend, input_w, input_h, preprocess, swap_xy,
+        ))
+    }
+
+    #[cfg(feature = "onnxruntime")]
+    fn try_load_ort(model_path: &str, require_ort: bool) -> Result<BackendLoad> {
+        match ort_backend::load_ort_session(model_path) {
+            Ok((session, dims)) => {
+                info!("ONNX backend: ort ({}x{})", dims.0, dims.1);
+                Ok(BackendLoad {
+                    backend: Backend::Ort { session },
+                    input_dims: dims,
+                })
+            }
+            Err(err) => {
+                if require_ort {
+                    return Err(err);
+                }
+                warn!("ORT session unavailable, falling back to tract: {err:#}");
+                Err(err)
+            }
+        }
+    }
+
+    #[cfg(feature = "onnx_tract")]
+    fn load_tract(model_path: &str) -> Result<BackendLoad> {
+        let (model, dims) = tract_backend::load_tract_model(model_path)?;
+        info!("ONNX backend: tract ({}x{})", dims.0, dims.1);
+        Ok(BackendLoad {
+            backend: Backend::Tract {
+                model: Box::new(model),
+            },
+            input_dims: dims,
+        })
+    }
+
+    fn load_backend(model_path: &str, requested: Option<&str>) -> Result<BackendLoad> {
+        match requested {
             Some("ort") | Some("onnxruntime") => {
                 #[cfg(feature = "onnxruntime")]
                 {
-                    let (session, (input_w, input_h)) = ort_backend::load_ort_session(model_path)?;
-                    info!("ONNX backend: ort ({input_w}x{input_h})");
-                    Ok(Self::from_parts(
-                        Backend::Ort { session },
-                        input_w,
-                        input_h,
-                        preprocess,
-                        swap_xy,
-                    ))
+                    Self::try_load_ort(model_path, true)
                 }
-
                 #[cfg(not(feature = "onnxruntime"))]
                 {
+                    let _ = model_path;
                     bail!("Requested ONNX backend 'ort', but feature 'onnxruntime' is not enabled")
                 }
             }
             Some("tract") => {
                 #[cfg(feature = "onnx_tract")]
                 {
-                    let (model, (input_w, input_h)) = tract_backend::load_tract_model(model_path)?;
-                    info!("ONNX backend: tract ({input_w}x{input_h})");
-                    Ok(Self::from_parts(
-                        Backend::Tract {
-                            model: Box::new(model),
-                        },
-                        input_w,
-                        input_h,
-                        preprocess,
-                        swap_xy,
-                    ))
+                    Self::load_tract(model_path)
                 }
-
                 #[cfg(not(feature = "onnx_tract"))]
                 {
+                    let _ = model_path;
                     bail!("Requested ONNX backend 'tract', but feature 'onnx_tract' is not enabled")
                 }
             }
@@ -129,39 +160,14 @@ impl PersonDetector {
                     let device = config::ort_device();
                     let require_ort = device == "cuda" || device == "auto";
 
-                    match ort_backend::load_ort_session(model_path) {
-                        Ok((session, (input_w, input_h))) => {
-                            info!("ONNX backend: ort ({input_w}x{input_h})");
-                            return Ok(Self::from_parts(
-                                Backend::Ort { session },
-                                input_w,
-                                input_h,
-                                preprocess,
-                                swap_xy,
-                            ));
-                        }
-                        Err(err) => {
-                            if require_ort {
-                                return Err(err);
-                            }
-                            warn!("ORT session unavailable, falling back to tract: {err:#}");
-                        }
+                    if let Ok(load) = Self::try_load_ort(model_path, require_ort) {
+                        return Ok(load);
                     }
                 }
 
                 #[cfg(feature = "onnx_tract")]
                 {
-                    let (model, (input_w, input_h)) = tract_backend::load_tract_model(model_path)?;
-                    info!("ONNX backend: tract ({input_w}x{input_h})");
-                    Ok(Self::from_parts(
-                        Backend::Tract {
-                            model: Box::new(model),
-                        },
-                        input_w,
-                        input_h,
-                        preprocess,
-                        swap_xy,
-                    ))
+                    return Self::load_tract(model_path);
                 }
 
                 #[cfg(not(feature = "onnx_tract"))]
@@ -343,4 +349,90 @@ fn parse_yolo_like_detections(
     }
 
     Ok(detections)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_mapping(src_w: u32, src_h: u32) -> ImageMapping {
+        ImageMapping {
+            src_w,
+            src_h,
+            scale_x: 1.0,
+            scale_y: 1.0,
+            pad_x: 0.0,
+            pad_y: 0.0,
+        }
+    }
+
+    #[test]
+    fn test_parse_yolo_like_detections_empty() {
+        let shape = vec![0usize, 6];
+        let data: Vec<f32> = vec![];
+        let mapping = make_mapping(100, 100);
+        let result = parse_yolo_like_detections(&shape, &data, 0.5, mapping, false);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_parse_yolo_like_detections_below_threshold() {
+        let shape = vec![1usize, 6];
+        let data: Vec<f32> = vec![10.0, 20.0, 30.0, 40.0, 0.3, 0.0];
+        let mapping = make_mapping(100, 100);
+        let result = parse_yolo_like_detections(&shape, &data, 0.5, mapping, false);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_parse_yolo_like_detections_single() {
+        let shape = vec![1usize, 6];
+        let data: Vec<f32> = vec![10.0, 20.0, 30.0, 40.0, 0.8, 0.0];
+        let mapping = make_mapping(100, 100);
+        let result = parse_yolo_like_detections(&shape, &data, 0.5, mapping, false);
+        assert!(result.is_ok());
+        let detections = result.unwrap();
+        assert_eq!(detections.len(), 1);
+        let d = &detections[0];
+        assert!((d.x1 - 10.0).abs() < 0.001);
+        assert!((d.y1 - 20.0).abs() < 0.001);
+        assert!((d.x2 - 30.0).abs() < 0.001);
+        assert!((d.y2 - 40.0).abs() < 0.001);
+        assert!((d.score - 0.8).abs() < 0.001);
+        assert_eq!(d.class_id, 0);
+    }
+
+    #[test]
+    fn test_parse_yolo_like_detections_3d_shape() {
+        let shape = vec![1usize, 1, 6];
+        let data: Vec<f32> = vec![5.0, 10.0, 15.0, 20.0, 0.9, 1.0];
+        let mapping = make_mapping(50, 50);
+        let result = parse_yolo_like_detections(&shape, &data, 0.5, mapping, false);
+        assert!(result.is_ok());
+        let detections = result.unwrap();
+        assert_eq!(detections.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_yolo_like_detections_swap_xy() {
+        let shape = vec![1usize, 6];
+        let data: Vec<f32> = vec![10.0, 20.0, 30.0, 40.0, 0.7, 0.0];
+        let mapping = make_mapping(100, 100);
+        let result = parse_yolo_like_detections(&shape, &data, 0.5, mapping, true);
+        assert!(result.is_ok());
+        let d = &result.unwrap()[0];
+        assert!((d.x1 - 20.0).abs() < 0.001); // swapped
+        assert!((d.y1 - 10.0).abs() < 0.001); // swapped
+    }
+
+    #[test]
+    fn test_parse_yolo_like_detections_invalid_shape() {
+        let shape = vec![1usize, 4usize];
+        let data: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0];
+        let mapping = make_mapping(100, 100);
+        let result = parse_yolo_like_detections(&shape, &data, 0.5, mapping, false);
+        assert!(result.is_err());
+    }
 }

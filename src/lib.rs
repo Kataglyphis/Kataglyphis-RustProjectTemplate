@@ -16,6 +16,9 @@ pub mod logging;
 pub mod resource_monitor;
 pub mod utils;
 
+#[cfg(target_os = "windows")]
+pub(crate) mod gpu_wmi;
+
 #[cfg(feature = "onnxruntime")]
 pub(crate) mod ort_ext;
 
