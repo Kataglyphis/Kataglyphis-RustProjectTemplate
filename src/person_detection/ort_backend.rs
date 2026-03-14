@@ -1,13 +1,36 @@
+use std::path::Path;
+
 use anyhow::{Context, Result, bail};
 use log::info;
 
 use crate::config;
+
+fn validate_model_path(model_path: &str) -> Result<std::path::PathBuf> {
+    let path = Path::new(model_path);
+    let canonical = path
+        .canonicalize()
+        .with_context(|| format!("Model path does not exist or is inaccessible: '{model_path}'"))?;
+    if !canonical.is_file() {
+        bail!("Model path is not a file: '{}'", canonical.display());
+    }
+    let ext = canonical.extension().and_then(|s| s.to_str()).unwrap_or("");
+    if ext != "onnx" {
+        bail!(
+            "Model file should have .onnx extension, got '{}': {}",
+            ext,
+            canonical.display()
+        );
+    }
+    Ok(canonical)
+}
 
 #[cfg(all(feature = "onnxruntime_cuda", windows))]
 use anyhow::warn;
 
 pub(crate) fn load_ort_session(model_path: &str) -> Result<(ort::session::Session, (u32, u32))> {
     use ort::session::Session;
+
+    let canonical_path = validate_model_path(model_path)?;
 
     let mut builder = Session::builder().with_ort_context("Failed to create ORT SessionBuilder")?;
 
@@ -64,9 +87,12 @@ pub(crate) fn load_ort_session(model_path: &str) -> Result<(ort::session::Sessio
     }
 
     let session = builder
-        .commit_from_file(model_path)
+        .commit_from_file(&canonical_path)
         .with_ort_context("Failed to load ONNX model (ort)")?;
-    info!("ORT session created from model file: {model_path}");
+    info!(
+        "ORT session created from model file: {}",
+        canonical_path.display()
+    );
 
     let (input_w, input_h) = extract_ort_input_dims(&session);
 
@@ -94,23 +120,38 @@ fn extract_ort_input_dims(session: &ort::session::Session) -> (u32, u32) {
 }
 
 #[cfg(all(feature = "onnxruntime_cuda", windows))]
-fn ensure_ort_cuda_provider_dylibs_next_to_exe() -> Result<()> {
-    use std::ffi::OsStr;
-    use std::time::SystemTime;
+mod cuda_dylib {
+    use super::*;
 
-    fn cache_root() -> Result<std::path::PathBuf> {
+    const REQUIRED_DLLS: &[&str] = &[
+        "onnxruntime_providers_shared.dll",
+        "onnxruntime_providers_cuda.dll",
+    ];
+
+    fn ort_cache_dir() -> Result<std::path::PathBuf> {
         if let Some(p) = std::env::var_os("ORT_CACHE_DIR") {
             return Ok(std::path::PathBuf::from(p));
         }
-
         let local_appdata = std::env::var_os("LOCALAPPDATA")
             .map(std::path::PathBuf::from)
             .context("LOCALAPPDATA is not set")?;
-
         Ok(local_appdata.join("ort.pyke.io"))
     }
 
-    fn find_latest_file(root: &std::path::Path, file_name: &OsStr) -> Result<std::path::PathBuf> {
+    fn exe_directory() -> Result<std::path::PathBuf> {
+        std::env::current_exe()
+            .context("current_exe failed")?
+            .parent()
+            .map(|p| p.to_path_buf())
+            .context("current_exe has no parent directory")
+    }
+
+    fn find_latest_file(
+        root: &std::path::Path,
+        file_name: &std::ffi::OsStr,
+    ) -> Result<std::path::PathBuf> {
+        use std::time::SystemTime;
+
         let mut stack = vec![root.to_path_buf()];
         let mut best: Option<(SystemTime, std::path::PathBuf)> = None;
 
@@ -142,45 +183,49 @@ fn ensure_ort_cuda_provider_dylibs_next_to_exe() -> Result<()> {
         })
     }
 
-    let exe_dir = std::env::current_exe()
-        .context("current_exe failed")?
-        .parent()
-        .map(|p| p.to_path_buf())
-        .context("current_exe has no parent directory")?;
+    fn copy_dlls_from_cache(exe_dir: &std::path::Path, src_dir: &std::path::Path) -> Result<()> {
+        for name in REQUIRED_DLLS {
+            let dst = exe_dir.join(name);
+            if dst.is_file() {
+                continue;
+            }
 
-    let required = [
-        "onnxruntime_providers_shared.dll",
-        "onnxruntime_providers_cuda.dll",
-    ];
+            let src = src_dir.join(name);
+            if !src.is_file() {
+                bail!("Required ORT CUDA DLL not found: '{}'", src.display());
+            }
 
-    let already_present = required.iter().all(|name| exe_dir.join(name).is_file());
-    if already_present {
-        return Ok(());
+            std::fs::copy(&src, &dst).with_context(|| {
+                format!("Failed to copy '{}' -> '{}'", src.display(), dst.display())
+            })?;
+            info!("Copied '{}' -> '{}'", src.display(), dst.display());
+        }
+        Ok(())
     }
 
-    let dfbin_dir = cache_root()?.join("dfbin");
-    let shared_path = find_latest_file(&dfbin_dir, OsStr::new("onnxruntime_providers_shared.dll"))?;
-    let src_dir = shared_path
-        .parent()
-        .map(|p| p.to_path_buf())
-        .context("providers_shared.dll has no parent directory")?;
+    pub(crate) fn ensure_ort_cuda_provider_dylibs_next_to_exe() -> Result<()> {
+        let exe_dir = exe_directory()?;
 
-    for name in required {
-        let dst = exe_dir.join(name);
-        if dst.is_file() {
-            continue;
+        if REQUIRED_DLLS
+            .iter()
+            .all(|name| exe_dir.join(name).is_file())
+        {
+            return Ok(());
         }
 
-        let src = src_dir.join(name);
-        if !src.is_file() {
-            bail!("Required ORT CUDA DLL not found: '{}'", src.display());
-        }
+        let dfbin_dir = ort_cache_dir()?.join("dfbin");
+        let shared_path = find_latest_file(
+            &dfbin_dir,
+            std::ffi::OsStr::new("onnxruntime_providers_shared.dll"),
+        )?;
+        let src_dir = shared_path
+            .parent()
+            .map(|p| p.to_path_buf())
+            .context("providers_shared.dll has no parent directory")?;
 
-        std::fs::copy(&src, &dst).with_context(|| {
-            format!("Failed to copy '{}' -> '{}'", src.display(), dst.display())
-        })?;
-        info!("Copied '{}' -> '{}'", src.display(), dst.display());
+        copy_dlls_from_cache(&exe_dir, &src_dir)
     }
-
-    Ok(())
 }
+
+#[cfg(all(feature = "onnxruntime_cuda", windows))]
+pub(crate) use cuda_dylib::ensure_ort_cuda_provider_dylibs_next_to_exe;
