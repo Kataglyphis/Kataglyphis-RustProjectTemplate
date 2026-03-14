@@ -1,4 +1,8 @@
 // src/main.rs — Thin CLI driver.  All logic lives in the library crate.
+
+/// Minimum resource logging interval in milliseconds.
+/// Values below this threshold are clamped to prevent excessive logging overhead.
+const MIN_RESOURCE_LOG_INTERVAL_MS: u64 = 100;
 use anyhow::Result;
 use clap::Parser;
 use log::info;
@@ -17,7 +21,10 @@ async fn main() -> Result<()> {
     let _resource_monitor = if cli.resource_log {
         Some(resource_monitor::ResourceMonitor::start(
             resource_monitor::ResourceMonitorConfig {
-                interval: std::time::Duration::from_millis(cli.resource_log_interval_ms.max(100)),
+                interval: std::time::Duration::from_millis(
+                    cli.resource_log_interval_ms
+                        .max(MIN_RESOURCE_LOG_INTERVAL_MS),
+                ),
                 log_file: cli.resource_log_file.clone(),
                 include_gpu: cli.resource_log_gpu,
             },

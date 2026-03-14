@@ -1,5 +1,7 @@
 use anyhow::{Context, Result, bail};
 
+/// Standard YOLO letterbox padding value (114/255 ≈ 0.447).
+/// This is the conventional gray value used for padding during letterbox resizing.
 const LETTERBOX_FILL_VALUE: f32 = 114.0 / 255.0;
 
 #[derive(Clone, Copy, Debug)]

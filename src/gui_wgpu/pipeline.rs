@@ -135,12 +135,14 @@ pub(crate) fn build_pipeline(
 
                             let id = frame_id.fetch_add(1, Ordering::Relaxed);
 
-                            let _ = frame_tx.try_send(Frame {
+                            if let Err(e) = frame_tx.try_send(Frame {
                                 id,
                                 data,
                                 width,
                                 height,
-                            });
+                            }) {
+                                warn!("Frame channel full, dropping frame {id}: {e}");
+                            }
                         }
                     }
                 }

@@ -92,8 +92,10 @@ fn detect_persons_rgba_impl(
     }
 
     let mut guard = lock_guard();
-    let detector = guard.as_mut().expect("Detector missing");
-    detector
+    let Some(cached) = guard.as_mut() else {
+        return Ok(Vec::new());
+    };
+    cached
         .detector
         .infer_persons_rgba(rgba, width, height, score_threshold)
 }

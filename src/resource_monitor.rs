@@ -128,8 +128,10 @@ impl ResourceMonitor {
 impl Drop for ResourceMonitor {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+        if let Some(handle) = self.handle.take()
+            && let Err(e) = handle.join()
+        {
+            log::warn!("Resource monitor thread panicked: {e:?}");
         }
     }
 }

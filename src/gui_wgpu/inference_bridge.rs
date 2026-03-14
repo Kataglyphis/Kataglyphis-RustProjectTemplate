@@ -91,7 +91,9 @@ pub(crate) fn spawn_inference_thread() -> (
             resource_monitor::record_inference_duration(infer_start.elapsed());
             resource_monitor::record_inference_completion();
 
-            let _ = res_tx.try_send(result);
+            if let Err(e) = res_tx.try_send(result) {
+                log::warn!("Inference result channel full, dropping result: {e}");
+            }
         }
     });
 

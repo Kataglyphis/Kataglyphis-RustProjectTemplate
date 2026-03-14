@@ -182,5 +182,7 @@ fn make_demo_image_1x3x640x640(seed: u64) -> Array4<f32> {
         data.push(rng.next_f32());
     }
 
-    Array4::from_shape_vec((B, C, H, W), data).expect("shape should be valid")
+    Array4::from_shape_vec((B, C, H, W), data).unwrap_or_else(|e| {
+        panic!("Failed to create demo image tensor (B={B}, C={C}, H={H}, W={W}): {e}")
+    })
 }

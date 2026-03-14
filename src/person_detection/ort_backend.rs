@@ -7,7 +7,6 @@ use super::model_utils::validate_model_path;
 use crate::config;
 
 const DEFAULT_INPUT_DIMS: (u32, u32) = (640, 640);
-use crate::config;
 
 #[cfg(all(feature = "onnxruntime_cuda", windows))]
 use anyhow::warn;
@@ -98,13 +97,6 @@ fn extract_ort_input_dims(session: &ort::session::Session) -> (u32, u32) {
     let w = shape[3];
     if h <= 0 || w <= 0 {
         return DEFAULT_INPUT_DIMS;
-    }
-    (w as u32, h as u32)
-}
-    let h = shape[2];
-    let w = shape[3];
-    if h <= 0 || w <= 0 {
-        return DEFAULT;
     }
     (w as u32, h as u32)
 }
