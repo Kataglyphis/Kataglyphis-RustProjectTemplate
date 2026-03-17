@@ -1,8 +1,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Context;
-use wgpu::util::DeviceExt;
 use winit::window::Window;
 
 use egui::Context as EguiContext;
@@ -10,7 +8,6 @@ use egui_wgpu::ScreenDescriptor;
 
 #[cfg(onnx)]
 use crate::detection::Detection;
-use crate::resource_monitor;
 
 #[cfg(onnx)]
 use super::inference::InferenceState;
@@ -247,7 +244,7 @@ impl WgpuState {
                 .update_texture(&self.device, &self.queue, *id, image_delta);
         }
 
-        self.submit_frame(window, &clipped_primitives, full_output)?;
+        self.submit_frame(window, &clipped_primitives, &full_output)?;
 
         for id in &full_output.textures_delta.free {
             self.egui_renderer.free_texture(id);
