@@ -167,7 +167,7 @@ impl PersonDetector {
 
                 #[cfg(feature = "onnx_tract")]
                 {
-                    return Self::load_tract(model_path);
+                    Self::load_tract(model_path)
                 }
 
                 #[cfg(not(feature = "onnx_tract"))]
