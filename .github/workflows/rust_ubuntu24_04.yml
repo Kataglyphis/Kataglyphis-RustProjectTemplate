@@ -72,6 +72,19 @@ jobs:
           echo "Failed to pull container after 3 attempts"
           exit 1
 
+      - name: Debug build
+        run: |
+          docker run --rm \
+            --platform ${{ env.PLATFORM }} \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest \
+            bash -lc '
+            set -e
+            git config --global --add safe.directory /workspace || true
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_debug.sh
+            '
+
       - name: Security checks (cargo audit + cargo deny)
         continue-on-error: true
         run: |
@@ -84,19 +97,6 @@ jobs:
             set -e
             git config --global --add safe.directory /workspace || true
             bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_security_checks.sh
-            '
-
-      - name: Debug build
-        run: |
-          docker run --rm \
-            --platform ${{ env.PLATFORM }} \
-            -v ${{ github.workspace }}:/workspace \
-            -w /workspace \
-            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest \
-            bash -lc '
-            set -e
-            git config --global --add safe.directory /workspace || true
-            cargo build --verbose
             '
 
       - name: Check formatting
@@ -123,10 +123,10 @@ jobs:
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
-            cargo test --all --verbose
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_test.sh
             '
 
-      - name: Install coverage tool and run coverage
+      - name: Run coverage
         run: |
           docker run --rm \
             --platform ${{ env.PLATFORM }} \
@@ -137,7 +137,6 @@ jobs:
             set -e
             git config --global --add safe.directory /workspace || true
             bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_coverage.sh
-
             '
 
       - name: Upload coverage artifacts
@@ -148,7 +147,7 @@ jobs:
             tarpaulin-report.html
             tarpaulin-report.xml
 
-      - name: Run benchmarks (cargo bench)
+      - name: Run benchmarks
         run: |
           docker run --rm \
             --platform ${{ env.PLATFORM }} \
@@ -158,7 +157,7 @@ jobs:
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
-            cargo bench
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_bench.sh
             '
 
       - name: 🛠️ Build release binary
@@ -171,30 +170,33 @@ jobs:
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
-            cargo build --release
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_release.sh
+            '
+
+      - name: 📦 Create archive
+        run: |
+          docker run --rm \
+            --platform ${{ env.PLATFORM }} \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            -e BINARY=${{ env.BINARY }} \
+            -e BINARY_FILE=${{ env.BINARY_FILE }} \
+            -e VERSION=${{ env.VERSION }} \
+            -e PLATFORM=${{ env.PLATFORM }} \
+            -e ARCH=${{ env.ARCH }} \
+            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest \
+            bash -lc '
+            set -e
+            git config --global --add safe.directory /workspace || true
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/package_archive.sh
             '
 
       - name: 📦 Prepare archive variables
         shell: bash
         id: vars
         run: |
-          # sanitize VERSION (replace slashes with hyphens)
           VERSION_SAFE=${VERSION//\//-}
-          ARCHIVE_NAME="dist/${BINARY}-${VERSION_SAFE}-${{ matrix.runner }}-${ARCH}.tar.gz"
-          echo "VERSION_SAFE=$VERSION_SAFE" >> "$GITHUB_OUTPUT"
-          echo "archive_name=$ARCHIVE_NAME" >> "$GITHUB_OUTPUT"
-
-      - name: 📦 Create archive
-        shell: bash
-        run: |
-          # ensure archive parent dir exists
-          ARCHIVE="dist/${{ steps.vars.outputs.archive_name }}"
-          # note: steps.vars.outputs.archive_name already starts with "dist/...", avoid double-dist
-          ARCHIVE="${{ steps.vars.outputs.archive_name }}"
-          mkdir -p "$(dirname "$ARCHIVE")"
-          # copy binary to staging dir and create tar (archive will contain only the binary filename)
-          cp "target/release/$BINARY_FILE" "dist/$BINARY"
-          tar -C dist -czvf "$ARCHIVE" "$BINARY"
+          echo "archive_name=dist/${BINARY}-${VERSION_SAFE}-${{ matrix.runner }}-${ARCH}.tar.gz" >> "$GITHUB_OUTPUT"
 
       - name: 📤 Upload build artifact
         uses: actions/upload-artifact@v7.0.0
@@ -213,7 +215,6 @@ jobs:
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
-
             bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_build_doc.sh
             '
 

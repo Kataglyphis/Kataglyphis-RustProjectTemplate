@@ -61,7 +61,7 @@ jobs:
             powershell -NoProfile -ExecutionPolicy Bypass -File "C:\workspace\ExternalLib\Kataglyphis-ContainerHub\windows\scripts\rust\Build-Windows.ps1"
 
       - name: 📦 Create MSIX package
-        shell: pwsh
+        shell: powershell
         run: |
           # Normalise version: strip leading "v" and ensure four-part (Major.Minor.Build.Revision)
           $ver = "${{ env.VERSION }}" -replace '^v',''
@@ -86,18 +86,29 @@ jobs:
               -CreateTestCertificate `
               -CertificatePassword "${{ secrets.MSIX_CERT_PASSWORD }}"
 
+      - name: 📦 Create archive
+        shell: powershell
+        run: |
+          $ver = "${{ env.VERSION }}" -replace '^v',''
+          if ($ver -match '^\d+\.\d+\.\d+$') { $ver = "$ver.0" }
+          if (-not ($ver -match '^\d+\.\d+\.\d+\.\d+$')) { $ver = "0.1.0.0" }
+
+          docker run --rm `
+            --mount "type=bind,source=${{ github.workspace }},target=C:\workspace" `
+            -w "C:\workspace" `
+            -e BINARY="${{ env.BINARY }}" `
+            -e VERSION="$ver" `
+            -e PLATFORM="windows-2025" `
+            -e ARCH="x64" `
+            ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64 `
+            powershell -NoProfile -ExecutionPolicy Bypass -File "C:\workspace\ExternalLib\Kataglyphis-ContainerHub\windows\scripts\rust\New-Archive.ps1"
+
       - name: 📦 Prepare archive variables
         id: vars
         shell: pwsh
         run: |
           $archive = "$env:BINARY-$env:VERSION-windows-2025-x64.zip"
           echo "archive_name=$archive" >> $env:GITHUB_OUTPUT
-
-      - name: 📦 Create archive
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Compress-Archive -Path "target/release/$env:BINARY.exe" -DestinationPath "dist/${{ steps.vars.outputs.archive_name }}" -Force
 
       - name: 📤 Upload build artifact
         uses: actions/upload-artifact@v6.0.0
