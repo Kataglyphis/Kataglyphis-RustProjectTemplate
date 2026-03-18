@@ -151,10 +151,10 @@ fn try_build_ui(app: &Application) -> Result<gst::bus::BusWatchGuard> {
                     );
                 }
                 MessageView::Eos(..) => {
-                    if let Some(pipeline) = pipeline_weak.upgrade() {
-                        if let Err(err) = pipeline.set_state(gst::State::Null) {
-                            error!("Failed to stop pipeline on EOS: {err}");
-                        }
+                    if let Some(pipeline) = pipeline_weak.upgrade()
+                        && let Err(err) = pipeline.set_state(gst::State::Null)
+                    {
+                        error!("Failed to stop pipeline on EOS: {err}");
                     }
                 }
                 _ => (),
