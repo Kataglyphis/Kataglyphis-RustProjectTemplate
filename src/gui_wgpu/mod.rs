@@ -179,9 +179,9 @@ impl ApplicationHandler for GuiApp {
             return;
         }
 
-        self.state
-            .as_mut()
-            .map(|s| s.handle_window_event(window, &event));
+        if let Some(s) = self.state.as_mut() {
+            s.handle_window_event(window, &event);
+        }
 
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
@@ -201,17 +201,16 @@ impl ApplicationHandler for GuiApp {
             WindowEvent::RedrawRequested => {
                 if let Some(frame) = self.latest_frame.as_ref()
                     && self.uploaded_frame_id != self.latest_frame_id
+                    && let Some(state) = self.state.as_mut()
                 {
-                    if let Some(state) = self.state.as_mut() {
-                        state.upload_frame(frame);
-                        self.uploaded_frame_id = self.latest_frame_id;
-                    }
+                    state.upload_frame(frame);
+                    self.uploaded_frame_id = self.latest_frame_id;
                 }
-                if let Some(state) = self.state.as_mut() {
-                    if let Err(err) = state.render(window) {
-                        eprintln!("Render error: {err:?}");
-                        event_loop.exit();
-                    }
+                if let Some(state) = self.state.as_mut()
+                    && let Err(err) = state.render(window)
+                {
+                    eprintln!("Render error: {err:?}");
+                    event_loop.exit();
                 }
             }
             _ => {}

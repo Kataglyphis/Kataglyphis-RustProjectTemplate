@@ -24,12 +24,15 @@ pub(crate) struct InferResult {
 }
 
 #[cfg(onnx)]
-pub(crate) fn spawn_inference_thread() -> (
+pub(crate) type InferChannels = (
     Option<SyncSender<InferRequest>>,
     Option<Receiver<InferResult>>,
     Option<String>,
     Option<String>,
-) {
+);
+
+#[cfg(onnx)]
+pub(crate) fn spawn_inference_thread() -> InferChannels {
     use crate::config;
     use crate::person_detection::{PersonDetector, default_model_path};
     use crate::resource_monitor;
