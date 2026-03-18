@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use log::info;
 
 use super::model_utils::validate_model_path;
