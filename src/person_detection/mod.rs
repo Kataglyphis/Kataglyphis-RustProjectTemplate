@@ -14,7 +14,7 @@ use log::info;
 use log::warn;
 
 #[cfg(feature = "onnxruntime")]
-use crate::ort_ext::{OrtResultExt, extract_first_f32_output};
+use crate::ort_ext::extract_first_f32_output;
 
 use crate::config::{self, PreprocessMode};
 use crate::detection::Detection;

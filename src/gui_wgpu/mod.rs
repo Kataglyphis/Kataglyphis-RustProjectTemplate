@@ -174,7 +174,9 @@ impl ApplicationHandler for GuiApp {
             return;
         }
 
-        state.handle_window_event(window, &event);
+        self.state
+            .as_mut()
+            .map(|s| s.handle_window_event(window, &event));
 
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),

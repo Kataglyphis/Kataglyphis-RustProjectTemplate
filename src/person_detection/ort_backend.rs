@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use anyhow::{Context, Result, bail};
 use log::info;
 
@@ -10,7 +8,7 @@ use crate::ort_ext::OrtResultExt;
 const DEFAULT_INPUT_DIMS: (u32, u32) = (640, 640);
 
 #[cfg(all(feature = "onnxruntime_cuda", windows))]
-use anyhow::warn;
+use log::warn;
 
 pub(crate) fn load_ort_session(model_path: &str) -> Result<(ort::session::Session, (u32, u32))> {
     use ort::session::Session;

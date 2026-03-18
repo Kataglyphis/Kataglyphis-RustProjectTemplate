@@ -8,9 +8,6 @@ use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use crate::detection::Detection;
 
 #[cfg(onnx)]
-use super::pipeline::Frame;
-
-#[cfg(onnx)]
 pub(crate) struct InferRequest {
     pub frame_id: u64,
     pub rgba: Arc<[u8]>,
