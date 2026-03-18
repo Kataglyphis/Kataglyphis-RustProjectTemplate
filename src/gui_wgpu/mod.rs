@@ -167,6 +167,11 @@ impl ApplicationHandler for GuiApp {
         window_id: WindowId,
         event: WindowEvent,
     ) {
+        // Drain frames before borrowing window to avoid borrow conflicts
+        if matches!(event, WindowEvent::RedrawRequested) {
+            self.drain_frames();
+        }
+
         let Some(window) = self.window.as_ref() else {
             return;
         };
@@ -194,9 +199,6 @@ impl ApplicationHandler for GuiApp {
                 window.request_redraw();
             }
             WindowEvent::RedrawRequested => {
-                // Never block the UI thread; if there is a new frame, upload it once.
-                self.drain_frames();
-
                 if let Some(frame) = self.latest_frame.as_ref()
                     && self.uploaded_frame_id != self.latest_frame_id
                 {
