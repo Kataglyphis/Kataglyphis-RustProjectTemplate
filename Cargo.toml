@@ -123,6 +123,9 @@ tempfile = "3"
 [target.'cfg(not(target_arch = "wasm32"))'.build-dependencies]
 cxx-build = "1.0"
 
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
+
 # ── Release profile ─────────────────────────────────────────────────
 [profile.release]
 opt-level = 3
