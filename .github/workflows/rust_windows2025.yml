@@ -9,6 +9,10 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+defaults:
+  run:
+    shell: pwsh
+
 jobs:
   windows-pipeline:
     if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message || '', '[build-win]') }}
@@ -26,7 +30,6 @@ jobs:
     steps:
       - name: Enable Git long paths
         run: git config --global core.longpaths true
-        shell: pwsh
 
       - name: 📥 Checkout repository
         uses: actions/checkout@v6.0.2
@@ -45,79 +48,66 @@ jobs:
           password: ${{ secrets.GHCR_PAT }}
 
       - name: Pull image
-        run: |
-          docker pull ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64 
+        run: docker pull ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64
 
       - name: Run build inside container
-        shell: pwsh
         run: |
-          # 1. Run Docker with EncodedCommand
+          $ErrorActionPreference = 'Stop'
           docker run --rm `
             --env BINARY="${{ env.BINARY }}" `
             --env VERSION="${{ env.VERSION }}" `
             --mount "type=bind,source=${{ github.workspace }},target=C:\workspace" `
             -w "C:\workspace" `
             ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64 `
-            powershell -NoProfile -ExecutionPolicy Bypass -File "C:\workspace\ExternalLib\Kataglyphis-ContainerHub\windows\scripts\rust\Build-Windows.ps1"
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+            "C:\workspace\ExternalLib\Kataglyphis-ContainerHub\windows\scripts\rust\Build-Windows.ps1"
 
       - name: 📦 Create MSIX package
-        shell: pwsh
         run: |
-          # Normalise version: strip leading "v" and ensure four-part (Major.Minor.Build.Revision)
+          $ErrorActionPreference = 'Stop'
+          
           $ver = "${{ env.VERSION }}" -replace '^v',''
           if ($ver -match '^\d+\.\d+\.\d+$') { $ver = "$ver.0" }
           if (-not ($ver -match '^\d+\.\d+\.\d+\.\d+$')) { $ver = "0.1.0.0" }
 
-          # Build docker arguments as an array to avoid quoting issues
-          $dockerArgs = @(
-            'run', '--rm',
-            '--mount', "type=bind,source=${{ github.workspace }},target=C:\workspace",
-            '-w', 'C:\workspace',
-            'ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64',
-            'powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
-            'C:\workspace\ExternalLib\Kataglyphis-ContainerHub\windows\scripts\rust\New-MsixPackage.ps1',
-            '-Workspace', 'C:\workspace',
-            '-Binary', '${{ env.BINARY }}',
-            '-PackageName', '${{ env.MSIX_PACKAGE_NAME }}',
-            '-Publisher', '${{ env.MSIX_PUBLISHER }}',
-            '-PublisherDisplayName', '${{ env.MSIX_PUBLISHER_DISPLAY_NAME }}',
-            '-DisplayName', '${{ env.MSIX_DISPLAY_NAME }}',
-            '-Description', '${{ env.MSIX_DESCRIPTION }}',
-            '-Version', $ver,
-            '-CargoTargetDir', 'target',
-            '-SkipBuild',
-            '-CreateTestCertificate',
-            '-CertificatePassword', '${{ secrets.MSIX_CERT_PASSWORD }}'
-          )
-
-          & docker @dockerArgs
+          docker run --rm `
+            --mount "type=bind,source=${{ github.workspace }},target=C:\workspace" `
+            -w "C:\workspace" `
+            ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64 `
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+            "C:\workspace\ExternalLib\Kataglyphis-ContainerHub\windows\scripts\rust\New-MsixPackage.ps1" `
+            -Workspace "C:\workspace" `
+            -Binary "${{ env.BINARY }}" `
+            -PackageName "${{ env.MSIX_PACKAGE_NAME }}" `
+            -Publisher "${{ env.MSIX_PUBLISHER }}" `
+            -PublisherDisplayName "${{ env.MSIX_PUBLISHER_DISPLAY_NAME }}" `
+            -DisplayName "${{ env.MSIX_DISPLAY_NAME }}" `
+            -Description "${{ env.MSIX_DESCRIPTION }}" `
+            -Version $ver `
+            -CargoTargetDir "target" `
+            -SkipBuild
 
       - name: 📦 Create archive
-        shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          
           $ver = "${{ env.VERSION }}" -replace '^v',''
           if ($ver -match '^\d+\.\d+\.\d+$') { $ver = "$ver.0" }
           if (-not ($ver -match '^\d+\.\d+\.\d+\.\d+$')) { $ver = "0.1.0.0" }
 
-          # Build docker arguments as an array to avoid quoting issues
-          $dockerArgs = @(
-            'run', '--rm',
-            '--mount', "type=bind,source=${{ github.workspace }},target=C:\workspace",
-            '-w', 'C:\workspace',
-            '-e', "BINARY=${{ env.BINARY }}",
-            '-e', "VERSION=$ver",
-            '-e', 'PLATFORM=windows-2025',
-            '-e', 'ARCH=x64',
-            'ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64',
-            'powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
-            'C:\workspace\ExternalLib\Kataglyphis-ContainerHub\windows\scripts\rust\New-Archive.ps1'
-          )
-
-          & docker @dockerArgs
+          docker run --rm `
+            --mount "type=bind,source=${{ github.workspace }},target=C:\workspace" `
+            -w "C:\workspace" `
+            -e "BINARY=${{ env.BINARY }}" `
+            -e "VERSION=$ver" `
+            -e "PLATFORM=windows-2025" `
+            -e "ARCH=x64" `
+            ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64 `
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+            "C:\workspace\ExternalLib\Kataglyphis-ContainerHub\windows\scripts\rust\New-Archive.ps1"
 
       - name: 📦 Prepare archive variables
         id: vars
-        shell: pwsh
         run: |
           $archive = "$env:BINARY-$env:VERSION-windows-2025-x64.zip"
           echo "archive_name=$archive" >> $env:GITHUB_OUTPUT
