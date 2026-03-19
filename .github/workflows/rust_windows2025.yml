@@ -51,6 +51,7 @@ jobs:
         run: docker pull ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64
 
       - name: Run build inside container
+        shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           docker run --rm `
@@ -63,6 +64,7 @@ jobs:
             "C:\workspace\ExternalLib\Kataglyphis-ContainerHub\windows\scripts\rust\Build-Windows.ps1"
 
       - name: 📦 Create MSIX package
+        shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           
@@ -88,6 +90,7 @@ jobs:
             -SkipBuild
 
       - name: 📦 Create archive
+        shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           
