@@ -18,6 +18,9 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message || '', '[build-win]') }}
     name: Build, test, and package (windows-2025)
     runs-on: windows-2025
+    defaults:
+      run:
+        shell: pwsh
     env:
       BINARY: kataglyphis_rustprojecttemplate
       VERSION: ${{ github.ref_name }}
