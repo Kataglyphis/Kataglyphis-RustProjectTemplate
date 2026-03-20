@@ -34,7 +34,7 @@ jobs:
       - name: Enable Git long paths
         run: git config --global core.longpaths true
 
-      - name: 📥 Checkout repository
+      - name: Checkout repository
         uses: actions/checkout@v6.0.2
         with:
           fetch-depth: 0
@@ -53,53 +53,46 @@ jobs:
       - name: Pull image
         run: docker pull ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64
 
-      - name: Run build inside container
+      - name: Build, test, and package MSIX
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+
+          $ver = "${{ env.VERSION }}" -replace '^v',''
+          if ($ver -match '^\d+\.\d+\.\d+$') { $ver = "$ver.0" }
+          if (-not ($ver -match '^\d+\.\d+\.\d+\.\d+$')) { $ver = "0.1.0.0" }
+
           docker run --rm `
             --env BINARY="${{ env.BINARY }}" `
-            --env VERSION="${{ env.VERSION }}" `
+            --env VERSION="$ver" `
+            --env MSIX_PACKAGE_NAME="${{ env.MSIX_PACKAGE_NAME }}" `
+            --env MSIX_PUBLISHER="${{ env.MSIX_PUBLISHER }}" `
+            --env MSIX_PUBLISHER_DISPLAY_NAME="${{ env.MSIX_PUBLISHER_DISPLAY_NAME }}" `
+            --env MSIX_DISPLAY_NAME="${{ env.MSIX_DISPLAY_NAME }}" `
+            --env MSIX_DESCRIPTION="${{ env.MSIX_DESCRIPTION }}" `
+            --env MSIX_VERSION="$ver" `
             --mount "type=bind,source=${{ github.workspace }},target=C:\workspace" `
             -w "C:\workspace" `
             ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64 `
             powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
-            "C:\workspace\ExternalLib\Kataglyphis-ContainerHub\windows\scripts\rust\Build-Windows.ps1"
+            "C:\workspace\Scripts\Windows\Build-Windows.ps1"
 
-      - name: 📦 Create MSIX package
+      - name: Prepare archive variables
+        id: vars
+        run: |
+          $ver = "$env:VERSION" -replace '^v',''
+          if ($ver -match '^\d+\.\d+\.\d+$') { $ver = "$ver.0" }
+          if (-not ($ver -match '^\d+\.\d+\.\d+\.\d+$')) { $ver = "0.1.0.0" }
+          $archive = "$env:BINARY-$ver-windows-2025-x64.zip"
+          echo "archive_name=$archive" >> $env:GITHUB_OUTPUT
+          echo "version=$ver" >> $env:GITHUB_OUTPUT
+
+      - name: Create archive
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          
-          $ver = "${{ env.VERSION }}" -replace '^v',''
-          if ($ver -match '^\d+\.\d+\.\d+$') { $ver = "$ver.0" }
-          if (-not ($ver -match '^\d+\.\d+\.\d+\.\d+$')) { $ver = "0.1.0.0" }
-
-          docker run --rm `
-            --mount "type=bind,source=${{ github.workspace }},target=C:\workspace" `
-            -w "C:\workspace" `
-            ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64 `
-            powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
-            "C:\workspace\ExternalLib\Kataglyphis-ContainerHub\windows\scripts\rust\New-MsixPackage.ps1" `
-            -Workspace "C:\workspace" `
-            -Binary "${{ env.BINARY }}" `
-            -PackageName "${{ env.MSIX_PACKAGE_NAME }}" `
-            -Publisher "${{ env.MSIX_PUBLISHER }}" `
-            -PublisherDisplayName "${{ env.MSIX_PUBLISHER_DISPLAY_NAME }}" `
-            -DisplayName "${{ env.MSIX_DISPLAY_NAME }}" `
-            -Description "${{ env.MSIX_DESCRIPTION }}" `
-            -Version $ver `
-            -CargoTargetDir "target" `
-            -SkipBuild
-
-      - name: 📦 Create archive
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          
-          $ver = "${{ env.VERSION }}" -replace '^v',''
-          if ($ver -match '^\d+\.\d+\.\d+$') { $ver = "$ver.0" }
-          if (-not ($ver -match '^\d+\.\d+\.\d+\.\d+$')) { $ver = "0.1.0.0" }
+          $ver = "${{ steps.vars.outputs.version }}"
+          $archive = "${{ steps.vars.outputs.archive_name }}"
 
           docker run --rm `
             --mount "type=bind,source=${{ github.workspace }},target=C:\workspace" `
@@ -112,19 +105,13 @@ jobs:
             powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
             "C:\workspace\ExternalLib\Kataglyphis-ContainerHub\windows\scripts\rust\New-Archive.ps1"
 
-      - name: 📦 Prepare archive variables
-        id: vars
-        run: |
-          $archive = "$env:BINARY-$env:VERSION-windows-2025-x64.zip"
-          echo "archive_name=$archive" >> $env:GITHUB_OUTPUT
-
-      - name: 📤 Upload build artifact
+      - name: Upload build artifact
         uses: actions/upload-artifact@v6.0.0
         with:
           name: ${{ env.BINARY }}-${{ github.ref_name }}-windows-2025-x64
           path: dist/${{ steps.vars.outputs.archive_name }}
 
-      - name: 📤 Upload MSIX artifact
+      - name: Upload MSIX artifact
         uses: actions/upload-artifact@v6.0.0
         with:
           name: ${{ env.MSIX_PACKAGE_NAME }}-${{ github.ref_name }}-x64-msix
