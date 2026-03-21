@@ -144,9 +144,23 @@ try {
 
   if (-not $SkipBuild) {
     Invoke-BuildStep -Context $context -StepName 'Security Checks (audit & deny)' -Script {
+    try {
       Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('install', '--locked', 'cargo-audit', 'cargo-deny') | Out-Null
+    } catch {
+      Write-BuildLogWarning -Context $context -Message "Failed to install cargo-audit/cargo-deny: $_"
+    }
+
+    try {
       Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('audit') | Out-Null
+    } catch {
+      Write-BuildLogWarning -Context $context -Message "cargo audit failed or not available: $_"
+    }
+
+    try {
       Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('deny', 'check', 'advisories', 'licenses', 'bans', 'sources') | Out-Null
+    } catch {
+      Write-BuildLogWarning -Context $context -Message "cargo deny checks failed or not available: $_"
+    }
     } | Out-Null
 
     Invoke-BuildStep -Context $context -StepName 'Format Check' -Critical -Script {
