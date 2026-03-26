@@ -62,7 +62,7 @@ jobs:
           if ($ver -match '^\d+\.\d+\.\d+$') { $ver = "$ver.0" }
           if (-not ($ver -match '^\d+\.\d+\.\d+\.\d+$')) { $ver = "0.1.0.0" }
 
-          docker run --rm `
+            docker run --rm `
             --env BINARY="${{ env.BINARY }}" `
             --env VERSION="$ver" `
             --env MSIX_PACKAGE_NAME="${{ env.MSIX_PACKAGE_NAME }}" `
@@ -71,6 +71,7 @@ jobs:
             --env MSIX_DISPLAY_NAME="${{ env.MSIX_DISPLAY_NAME }}" `
             --env MSIX_DESCRIPTION="${{ env.MSIX_DESCRIPTION }}" `
             --env MSIX_VERSION="$ver" `
+            --env EXTRA_CARGO_ARGS="--features with_cxxbridge" `
             --mount "type=bind,source=${{ github.workspace }},target=C:\workspace" `
             -w "C:\workspace" `
             ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64 `

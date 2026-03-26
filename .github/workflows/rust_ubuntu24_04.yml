@@ -82,7 +82,7 @@ jobs:
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_debug.sh
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_debug.sh --features with_cxxbridge
             '
 
       - name: Security checks (cargo audit + cargo deny)
@@ -110,7 +110,7 @@ jobs:
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_fmt_clippy.sh
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_fmt_clippy.sh --features with_cxxbridge
             '
 
       - name: Run unit, integration, and doc tests
@@ -123,7 +123,7 @@ jobs:
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_test.sh
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_test.sh --features with_cxxbridge
             '
 
       - name: Run coverage
@@ -136,7 +136,7 @@ jobs:
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_coverage.sh
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_coverage.sh --features with_cxxbridge
             '
 
       - name: Upload coverage artifacts
@@ -157,7 +157,7 @@ jobs:
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_bench.sh
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_bench.sh --features with_cxxbridge
             '
 
       - name: 🛠️ Build release binary
@@ -170,7 +170,7 @@ jobs:
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_release.sh
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_release.sh --features with_cxxbridge
             '
 
       - name: 📦 Create archive
