@@ -15,6 +15,8 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 [features]
 # CLI-only by default to avoid GTK/GStreamer on Windows.
 default = []
+# Enable the Rust <-> C++ cxx bridge. Not enabled by default; enable for native builds.
+with_cxxbridge = []
 gui = ["dep:gstreamer"]
 gui_unix = ["gui", "dep:gtk"]
 gui_linux = [

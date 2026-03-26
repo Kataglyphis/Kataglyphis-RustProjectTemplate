@@ -3,7 +3,6 @@
 
 #[cxx::bridge]
 mod ffi {
-    #[cfg(not(target_arch = "wasm32"))]
     extern "Rust" {
         fn rusty_cxxbridge_integer() -> i32;
     }
@@ -35,8 +34,15 @@ pub mod gui;
 pub mod gui_wgpu;
 
 /// CXX bridge demo stub — returns a fixed integer to verify the Rust-C++ bridge works.
+#[cfg(all(feature = "with_cxxbridge", not(target_arch = "wasm32")))]
 pub fn rusty_cxxbridge_integer() -> i32 {
     322
+}
+
+/// wasm fallback when building for wasm32 (or when the bridge feature is not enabled for wasm).
+#[cfg(target_arch = "wasm32")]
+pub fn rusty_cxxbridge_integer() -> i32 {
+    0
 }
 
 /// C FFI demo stub — returns a fixed integer to verify `extern "C"` linkage works.
