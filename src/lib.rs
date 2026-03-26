@@ -1,9 +1,9 @@
 #![doc = include_str!("../README.md")]
 #![doc(html_logo_url = "../logo.png")]
 
-#[cfg(not(target_arch = "wasm32"))]
 #[cxx::bridge]
 mod ffi {
+    #[cfg(not(target_arch = "wasm32"))]
     extern "Rust" {
         fn rusty_cxxbridge_integer() -> i32;
     }
