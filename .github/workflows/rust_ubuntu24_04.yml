@@ -207,6 +207,9 @@ jobs:
             --platform ${{ env.PLATFORM }} \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
+            # Ask AppImage binaries to extract-and-run instead of using FUSE.
+            # This avoids needing --privileged or kernel FUSE on the runner.
+            -e APPIMAGE_EXTRACT_AND_RUN=1 \
             -e BINARY=${{ env.BINARY }} \
             -e BINARY_FILE=${{ env.BINARY_FILE }} \
             -e VERSION=${{ env.VERSION }} \
