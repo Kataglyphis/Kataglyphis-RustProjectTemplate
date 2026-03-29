@@ -202,13 +202,13 @@ jobs:
 
           # Run the packaging container and expose /dev/fuse into it so AppImage
           # creation can use FUSE. Passing --device is preferred to --privileged.
+          # Ask AppImage binaries to extract-and-run instead of using FUSE. This
+          # avoids needing --privileged or kernel FUSE on the runner.
           docker run --rm \
             --device /dev/fuse \
             --platform ${{ env.PLATFORM }} \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
-            # Ask AppImage binaries to extract-and-run instead of using FUSE.
-            # This avoids needing --privileged or kernel FUSE on the runner.
             -e APPIMAGE_EXTRACT_AND_RUN=1 \
             -e BINARY=${{ env.BINARY }} \
             -e BINARY_FILE=${{ env.BINARY_FILE }} \
