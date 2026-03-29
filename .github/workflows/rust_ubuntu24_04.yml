@@ -9,8 +9,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
-  jobs:
-    linux-pipeline:
+jobs:
+  linux-pipeline:
     name: Build, test, package, and docs (${{ matrix.name }})
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -30,7 +30,7 @@ env:
             arch: arm64
             coverage_name: coverage-report-arm64
             artifact_suffix: ubuntu-24.04-arm64
-          docs: false
+            docs: false
     env:
       PLATFORM: ${{ matrix.platform }}
       ARCH: ${{ matrix.arch }}
