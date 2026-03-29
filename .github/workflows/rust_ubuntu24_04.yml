@@ -182,9 +182,28 @@ jobs:
             bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_release.sh --features with_cxxbridge
             '
 
+      - name: Ensure FUSE available on runner
+        run: |
+          echo "Installing FUSE packages on runner and attempting to load kernel module..."
+          sudo apt-get update
+          # Install userland and runtime libraries commonly required by AppImage
+          sudo apt-get install -y --no-install-recommends fuse libfuse2 || true
+          # Try to load the fuse kernel module; non-fatal if it fails on hosted runners
+          sudo modprobe fuse || true
+
       - name: 📦 Create archive (tar, deb, AppImage, Flatpak)
         run: |
+          # Try to load the FUSE kernel module on the runner so the container can
+          # use /dev/fuse. This requires sudo; failure is non-fatal here so we can
+          # surface a helpful error from the packaging step instead of hard-failing
+          # early.
+          echo "Attempting to load FUSE kernel module on runner..."
+          sudo modprobe fuse || true
+
+          # Run the packaging container and expose /dev/fuse into it so AppImage
+          # creation can use FUSE. Passing --device is preferred to --privileged.
           docker run --rm \
+            --device /dev/fuse \
             --platform ${{ env.PLATFORM }} \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
