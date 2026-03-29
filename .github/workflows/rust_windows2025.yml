@@ -23,7 +23,9 @@ jobs:
         shell: pwsh
     env:
       BINARY: kataglyphis_rustprojecttemplate
-      VERSION: ${{ github.ref_name }}
+      # Provide inputs for version computation script
+      REF_NAME: ${{ github.ref_name }}
+      RUN_NUMBER: ${{ github.run_number }}
       MSIX_PACKAGE_NAME: Kataglyphis.RustProjectTemplate
       MSIX_PUBLISHER: CN=Kataglyphis
       MSIX_PUBLISHER_DISPLAY_NAME: Kataglyphis
@@ -39,6 +41,11 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
+
+      - name: Compute version
+        id: compute_version
+        shell: bash
+        run: .github/scripts/compute_version.sh
 
       - name: Cleanup disk space
         uses: ./.github/actions/cleanup-disk-space
@@ -58,9 +65,8 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
 
-          $ver = "${{ env.VERSION }}" -replace '^v',''
-          if ($ver -match '^\d+\.\d+\.\d+$') { $ver = "$ver.0" }
-          if (-not ($ver -match '^\d+\.\d+\.\d+\.\d+$')) { $ver = "0.1.0.0" }
+          # Use MSIX_VERSION computed by the shared script
+          $ver = "${{ env.MSIX_VERSION }}"
 
             docker run --rm `
             --env BINARY="${{ env.BINARY }}" `
@@ -81,9 +87,8 @@ jobs:
       - name: Prepare archive variables
         id: vars
         run: |
-          $ver = "$env:VERSION" -replace '^v',''
-          if ($ver -match '^\d+\.\d+\.\d+$') { $ver = "$ver.0" }
-          if (-not ($ver -match '^\d+\.\d+\.\d+\.\d+$')) { $ver = "0.1.0.0" }
+          # Use version computed by shared script
+          $ver = "$env:VERSION"
           $archive = "$env:BINARY-$ver-windows-2025-x64.zip"
           echo "archive_name=$archive" >> $env:GITHUB_OUTPUT
           echo "version=$ver" >> $env:GITHUB_OUTPUT
@@ -109,11 +114,11 @@ jobs:
       - name: Upload build artifact
         uses: actions/upload-artifact@v6.0.0
         with:
-          name: ${{ env.BINARY }}-${{ github.ref_name }}-windows-2025-x64
+          name: ${{ env.BINARY }}-${{ steps.vars.outputs.version }}-windows-2025-x64
           path: dist/${{ steps.vars.outputs.archive_name }}
 
       - name: Upload MSIX artifact
         uses: actions/upload-artifact@v6.0.0
         with:
-          name: ${{ env.MSIX_PACKAGE_NAME }}-${{ github.ref_name }}-x64-msix
+          name: ${{ env.MSIX_PACKAGE_NAME }}-${{ steps.vars.outputs.version }}-x64-msix
           path: dist/msix/*.msix
