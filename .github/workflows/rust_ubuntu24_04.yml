@@ -199,9 +199,10 @@ jobs:
             set -e
             git config --global --add safe.directory /workspace || true
             # Ensure basic packaging tools are available in the container (best-effort)
-            if command -v apt-get >/dev/null 2>&1; then
+              if command -v apt-get >/dev/null 2>&1; then
               apt-get update
-              apt-get install -y --no-install-recommends ca-certificates wget xz-utils libfuse3-3 flatpak build-essential
+              # Install both libfuse2 (required by many AppImages) and libfuse3
+              apt-get install -y --no-install-recommends ca-certificates wget xz-utils libfuse2 libfuse3-3 flatpak build-essential
             fi
             # Install appimagetool if missing
             if ! command -v appimagetool >/dev/null 2>&1; then
