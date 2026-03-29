@@ -10,21 +10,11 @@ pub struct FileStats {
     pub bytes: u64,
 }
 
+/// Platform-agnostic read_file shim. Prefer using `crate::platform::read_file`
+/// for platform-specific implementations; this remains as a compatibility
+/// shim that delegates to the platform module.
 pub async fn read_file(path: impl AsRef<Path>) -> Result<String> {
-    do_read_file(path.as_ref()).await
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-async fn do_read_file(path: &Path) -> Result<String> {
-    tokio::fs::read_to_string(path)
-        .await
-        .with_context(|| format!("Failed to read file at '{}'", path.display()))
-}
-
-#[cfg(target_arch = "wasm32")]
-async fn do_read_file(path: &Path) -> Result<String> {
-    std::fs::read_to_string(path)
-        .with_context(|| format!("Failed to read file at '{}'", path.display()))
+    crate::platform::read_file(path).await
 }
 
 fn count_lines_and_words(path: &Path) -> Result<(usize, usize)> {

@@ -1,0 +1,1336 @@
+﻿[23:39:14] Workspace: C:\workspace
+[23:39:14] Binary: kataglyphis_rustprojecttemplate
+[23:39:14] MSIX: Kataglyphis.RustProjectTemplate
+
+[23:39:14] >>> Starting: Verify Toolchain
+[23:39:14] ============================================================
+[23:39:14] CMD: rustup --version
+[23:39:15] rustup 1.29.0 (28d1352db 2026-03-05)
+[23:39:15] info: This is the version for the rustup toolchain manager, not the rustc compiler.
+[23:39:15] info: the currently active `rustc` version is `rustc 1.94.1 (e408947bf 2026-03-25)`
+[23:39:15] CMD: cargo --version
+[23:39:16] cargo 1.94.1 (29ea6fb6a 2026-03-24)
+[23:39:16] SUCCESS: <<< Completed: Verify Toolchain (Duration: 00:02.144)
+
+[23:39:16] >>> Starting: Security Checks (audit & deny)
+[23:39:16] ============================================================
+[23:39:16] CMD: cargo install --locked cargo-audit cargo-deny
+[00:05:54]     Updating crates.io index
+[00:05:54]  Downloading crates ...
+[00:05:54]   Downloaded cargo-audit v0.22.1
+[00:05:54]     Updating crates.io index
+[00:05:54]  Downloading crates ...
+[00:05:54]   Downloaded cargo-deny v0.19.0
+[00:05:54]   Installing cargo-audit v0.22.1
+[00:05:54]     Updating crates.io index
+[00:05:54]     Updating crates.io index
+[00:05:54]  Downloading crates ...
+[00:05:54]   Downloaded anstyle-wincon v3.0.11
+[00:05:54]   Downloaded adler2 v2.0.1
+[00:05:54]   Downloaded allocator-api2 v0.2.21
+[00:05:54]   Downloaded futures-task v0.3.31
+[00:05:54]   Downloaded gix-command v0.7.0
+[00:05:54]   Downloaded gix-prompt v0.13.0
+[00:05:54]   Downloaded gix-lock v21.0.0
+[00:05:54]   Downloaded gix-glob v0.24.0
+[00:05:54]   Downloaded gix-config-value v0.17.0
+[00:05:54]   Downloaded gix-negotiate v0.26.0
+[00:05:54]   Downloaded canonical-path v2.0.2
+[00:05:54]   Downloaded gix-ignore v0.19.0
+[00:05:54]   Downloaded gix-date v0.13.0
+[00:05:54]   Downloaded gix-sec v0.13.0
+[00:05:54]   Downloaded pin-utils v0.1.0
+[00:05:54]   Downloaded gix-filter v0.25.0
+[00:05:54]   Downloaded rand_core v0.9.5
+[00:05:54]   Downloaded rand_chacha v0.9.0
+[00:05:54]   Downloaded itoa v1.0.17
+[00:05:54]   Downloaded gix-utils v0.3.1
+[00:05:54]   Downloaded rustc-hash v2.1.1
+[00:05:54]   Downloaded flate2 v1.1.9
+[00:05:54]   Downloaded serde_spanned v1.0.4
+[00:05:54]   Downloaded time-core v0.1.7
+[00:05:54]   Downloaded thiserror v2.0.18
+[00:05:54]   Downloaded try-lock v0.2.5
+[00:05:54]   Downloaded version_check v0.9.5
+[00:05:54]   Downloaded unicode-bom v2.0.3
+[00:05:54]   Downloaded winapi-util v0.1.11
+[00:05:54]   Downloaded windows-link v0.2.1
+[00:05:54]   Downloaded gix-traverse v0.52.0
+[00:05:54]   Downloaded walkdir v2.5.0
+[00:05:54]   Downloaded tower-layer v0.3.3
+[00:05:54]   Downloaded yoke-derive v0.8.1
+[00:05:54]   Downloaded tracing-attributes v0.1.31
+[00:05:54]   Downloaded tower-service v0.3.3
+[00:05:54]   Downloaded toml v0.9.11+spec-1.1.0
+[00:05:54]   Downloaded tinyvec_macros v0.1.1
+[00:05:54]   Downloaded sha1 v0.10.6
+[00:05:54]   Downloaded twox-hash v2.1.2
+[00:05:54]   Downloaded windows-targets v0.52.6
+[00:05:54]   Downloaded yoke v0.8.1
+[00:05:54]   Downloaded writeable v0.6.2
+[00:05:54]   Downloaded regex v1.12.3
+[00:05:54]   Downloaded ppv-lite86 v0.2.21
+[00:05:54]   Downloaded want v0.3.1
+[00:05:54]   Downloaded zerofrom-derive v0.1.6
+[00:05:54]   Downloaded zerofrom v0.1.6
+[00:05:54]   Downloaded windows-targets v0.53.5
+[00:05:54]   Downloaded gix-index v0.46.0
+[00:05:54]   Downloaded zmij v1.0.19
+[00:05:54]   Downloaded typenum v1.19.0
+[00:05:54]   Downloaded url v2.5.8
+[00:05:54]   Downloaded powerfmt v0.2.0
+[00:05:54]   Downloaded unicode-normalization v0.1.25
+[00:05:54]   Downloaded time v0.3.45
+[00:05:54]   Downloaded quinn-udp v0.5.14
+[00:05:54]   Downloaded zerotrie v0.2.3
+[00:05:54]   Downloaded proc-macro2 v1.0.106
+[00:05:54]   Downloaded winnow v0.7.14
+[00:05:54]   Downloaded zerovec v0.11.5
+[00:05:54]   Downloaded parking_lot_core v0.9.12
+[00:05:54]   Downloaded rustls v0.23.36
+[00:05:54]   Downloaded miniz_oxide v0.8.9
+[00:05:54]   Downloaded icu_provider v2.1.1
+[00:05:54]   Downloaded zlib-rs v0.5.5
+[00:05:54]   Downloaded icu_normalizer_data v2.1.1
+[00:05:54]   Downloaded quinn v0.11.9
+[00:05:54]   Downloaded zerocopy v0.8.38
+[00:05:54]   Downloaded tinyvec v1.10.0
+[00:05:54]   Downloaded tower v0.5.3
+[00:05:54]   Downloaded http v1.4.0
+[00:05:54]   Downloaded tower-http v0.6.8
+[00:05:54]   Downloaded tracing v0.1.44
+[00:05:54]   Downloaded wasmparser v0.207.0
+[00:05:54]   Downloaded h2 v0.4.13
+[00:05:54]   Downloaded icu_properties_data v2.1.2
+[00:05:54]   Downloaded quinn-proto v0.11.13
+[00:05:54]   Downloaded hyper v1.8.1
+[00:05:54]   Downloaded iri-string v0.7.10
+[00:05:54]   Downloaded idna v1.1.0
+[00:05:54]   Downloaded hashbrown v0.16.1
+[00:05:54]   Downloaded hashbrown v0.15.5
+[00:05:54]   Downloaded mio v1.1.1
+[00:05:54]   Downloaded indexmap v2.13.0
+[00:05:54]   Downloaded icu_collections v2.1.1
+[00:05:54]   Downloaded hyper-util v0.1.20
+[00:05:54]   Downloaded sha1-checked v0.10.0
+[00:05:54]   Downloaded gix-pack v0.65.0
+[00:05:54]   Downloaded color-eyre v0.6.5
+[00:05:54]   Downloaded rustls-webpki v0.103.9
+[00:05:54]   Downloaded tokio v1.49.0
+[00:05:54]   Downloaded prodash v31.0.0
+[00:05:54]   Downloaded windows_x86_64_msvc v0.53.1
+[00:05:54]   Downloaded windows_x86_64_msvc v0.52.6
+[00:05:54]   Downloaded jiff-static v0.2.18
+[00:05:54]   Downloaded regex-automata v0.4.14
+[00:05:54]   Downloaded memchr v2.7.6
+[00:05:54]   Downloaded icu_normalizer v2.1.1
+[00:05:54]   Downloaded heapless v0.8.0
+[00:05:54]   Downloaded gix-transport v0.53.0
+[00:05:54]   Downloaded icu_locale_core v2.1.1
+[00:05:54]   Downloaded tracing-subscriber v0.3.22
+[00:05:54]   Downloaded jiff v0.2.18
+[00:05:54]   Downloaded syn v2.0.114
+[00:05:54]   Downloaded regex-syntax v0.8.9
+[00:05:54]   Downloaded encoding_rs v0.8.35
+[00:05:54]   Downloaded log v0.4.29
+[00:05:54]   Downloaded jiff-tzdb v0.1.5
+[00:05:54]   Downloaded petgraph v0.8.3
+[00:05:54]   Downloaded libc v0.2.180
+[00:05:54]   Downloaded hyper-rustls v0.27.7
+[00:05:54]   Downloaded winapi v0.3.9
+[00:05:54]   Downloaded gix-ref v0.58.0
+[00:05:54]   Downloaded icu_properties v2.1.2
+[00:05:54]   Downloaded gix-odb v0.75.0
+[00:05:54]   Downloaded parking_lot v0.12.5
+[00:05:54]   Downloaded gix-protocol v0.56.0
+[00:05:54]   Downloaded gix-object v0.55.0
+[00:05:54]   Downloaded platforms v3.8.0
+[00:05:54]   Downloaded owo-colors v4.2.3
+[00:05:54]   Downloaded litemap v0.8.1
+[00:05:54]   Downloaded once_cell v1.21.3
+[00:05:54]   Downloaded bstr v1.12.1
+[00:05:54]   Downloaded tokio-util v0.7.18
+[00:05:54]   Downloaded memmap2 v0.9.9
+[00:05:54]   Downloaded gix v0.78.0
+[00:05:54]   Downloaded serde_json v1.0.149
+[00:05:54]   Downloaded zerovec-derive v0.11.2
+[00:05:54]   Downloaded zeroize v1.8.2
+[00:05:54]   Downloaded rayon v1.11.0
+[00:05:54]   Downloaded gix-worktree-state v0.25.0
+[00:05:54]   Downloaded gix-submodule v0.25.0
+[00:05:54]   Downloaded tame-index v0.26.0
+[00:05:54]   Downloaded reqwest v0.13.1
+[00:05:54]   Downloaded gix-worktree v0.47.0
+[00:05:54]   Downloaded wait-timeout v0.2.1
+[00:05:54]   Downloaded kstring v2.0.2
+[00:05:54]   Downloaded httparse v1.10.1
+[00:05:54]   Downloaded gix-shallow v0.8.0
+[00:05:54]   Downloaded pin-project-lite v0.2.16
+[00:05:54]   Downloaded maybe-async v0.2.10
+[00:05:54]   Downloaded ipnet v2.11.0
+[00:05:54]   Downloaded http-body-util v0.1.3
+[00:05:54]   Downloaded jobserver v0.1.34
+[00:05:54]   Downloaded aws-lc-rs v1.15.4
+[00:05:54]   Downloaded ring v0.17.14
+[00:05:54]   Downloaded nu-ansi-term v0.50.3
+[00:05:54]   Downloaded lock_api v0.4.14
+[00:05:54]   Downloaded unicode-ident v1.0.22
+[00:05:54]   Downloaded tracing-core v0.1.36
+[00:05:54]   Downloaded serde v1.0.228
+[00:05:54]   Downloaded gix-revwalk v0.26.0
+[00:05:54]   Downloaded socket2 v0.6.2
+[00:05:54]   Downloaded rustsec v0.32.0
+[00:05:54]   Downloaded jiff-tzdb-platform v0.1.3
+[00:05:54]   Downloaded gix-path v0.11.0
+[00:05:54]   Downloaded untrusted v0.9.0
+[00:05:54]   Downloaded toml_parser v1.0.6+spec-1.1.0
+[00:05:54]   Downloaded toml-span v0.6.0
+[00:05:54]   Downloaded tokio-rustls v0.26.4
+[00:05:54]   Downloaded sharded-slab v0.1.7
+[00:05:54]   Downloaded gix-url v0.35.0
+[00:05:54]   Downloaded gix-tempfile v21.0.0
+[00:05:54]   Downloaded gix-pathspec v0.15.0
+[00:05:54]   Downloaded clap_builder v4.5.57
+[00:05:54]   Downloaded tempfile v3.24.0
+[00:05:54]   Downloaded gix-revision v0.40.0
+[00:05:54]   Downloaded uluru v3.1.0
+[00:05:54]   Downloaded futures-util v0.3.31
+[00:05:54]   Downloaded utf8parse v0.2.2
+[00:05:54]   Downloaded windows-sys v0.59.0
+[00:05:54]   Downloaded utf8_iter v1.0.4
+[00:05:54]   Downloaded tracing-log v0.2.0
+[00:05:54]   Downloaded toml_writer v1.0.6+spec-1.1.0
+[00:05:54]   Downloaded toml_datetime v0.7.5+spec-1.1.0
+[00:05:54]   Downloaded smallvec v1.15.1
+[00:05:54]   Downloaded serde_core v1.0.228
+[00:05:54]   Downloaded topological-sort v0.2.2
+[00:05:54]   Downloaded tinystr v0.8.2
+[00:05:54]   Downloaded time-macros v0.2.25
+[00:05:54]   Downloaded thread_local v1.1.9
+[00:05:54]   Downloaded windows-sys v0.52.0
+[00:05:54]   Downloaded thiserror-impl v2.0.18
+[00:05:54]   Downloaded termcolor v1.4.1
+[00:05:54]   Downloaded synstructure v0.13.2
+[00:05:54]   Downloaded static_assertions v1.1.0
+[00:05:54]   Downloaded serde_derive v1.0.228
+[00:05:54]   Downloaded quitters v0.1.0
+[00:05:54]   Downloaded lazy_static v1.5.0
+[00:05:54]   Downloaded is_terminal_polyfill v1.70.2
+[00:05:54]   Downloaded indenter v0.3.4
+[00:05:54]   Downloaded http-body v1.0.1
+[00:05:54]   Downloaded gix-validate v0.11.0
+[00:05:54]   Downloaded aho-corasick v1.1.4
+[00:05:54]   Downloaded smol_str v0.3.2
+[00:05:54]   Downloaded rustls-platform-verifier v0.6.2
+[00:05:54]   Downloaded num-conv v0.1.0
+[00:05:54]   Downloaded sync_wrapper v1.0.2
+[00:05:54]   Downloaded subtle v2.6.1
+[00:05:54]   Downloaded windows-sys v0.61.2
+[00:05:54]   Downloaded windows-sys v0.60.2
+[00:05:54]   Downloaded strsim v0.11.1
+[00:05:54]   Downloaded stable_deref_trait v1.2.1
+[00:05:54]   Downloaded slab v0.4.12
+[00:05:54]   Downloaded simd-adler32 v0.3.8
+[00:05:54]   Downloaded shlex v1.3.0
+[00:05:54]   Downloaded shell-words v1.1.1
+[00:05:54]   Downloaded semver v1.0.27
+[00:05:54]   Downloaded rustls-pki-types v1.14.0
+[00:05:54]   Downloaded rustc-stable-hash v0.1.2
+[00:05:54]   Downloaded rayon-core v1.13.0
+[00:05:54]   Downloaded rand v0.9.2
+[00:05:54]   Downloaded cc v1.2.55
+[00:05:54]   Downloaded secrecy v0.10.3
+[00:05:54]   Downloaded scopeguard v1.2.0
+[00:05:54]   Downloaded same-file v1.0.6
+[00:05:54]   Downloaded rustversion v1.0.22
+[00:05:54]   Downloaded rustc-demangle v0.1.27
+[00:05:54]   Downloaded potential_utf v0.1.4
+[00:05:54]   Downloaded percent-encoding v2.3.2
+[00:05:54]   Downloaded once_cell_polyfill v1.70.2
+[00:05:54]   Downloaded mime v0.3.17
+[00:05:54]   Downloaded matchers v0.2.0
+[00:05:54]   Downloaded lru-slab v0.1.2
+[00:05:54]   Downloaded io-close v0.3.7
+[00:05:54]   Downloaded home v0.5.11
+[00:05:54]   Downloaded crossbeam-channel v0.5.15
+[00:05:54]   Downloaded async-compression v0.4.37
+[00:05:54]   Downloaded arc-swap v1.8.1
+[00:05:54]   Downloaded bytes v1.11.1
+[00:05:54]   Downloaded borsh v1.6.0
+[00:05:54]   Downloaded backtrace v0.3.76
+[00:05:54]   Downloaded base64 v0.22.1
+[00:05:54]   Downloaded gix-config v0.51.0
+[00:05:54]   Downloaded idna_adapter v1.2.1
+[00:05:54]   Downloaded gix-diff v0.58.0
+[00:05:54]   Downloaded getrandom v0.3.4
+[00:05:54]   Downloaded crc32fast v1.5.0
+[00:05:54]   Downloaded clap v4.5.57
+[00:05:54]   Downloaded bitflags v2.10.0
+[00:05:54]   Downloaded ident_case v1.0.1
+[00:05:54]   Downloaded hash32 v0.3.1
+[00:05:54]   Downloaded quote v1.0.44
+[00:05:54]   Downloaded heck v0.5.0
+[00:05:54]   Downloaded gix-features v0.46.0
+[00:05:54]   Downloaded cvss v2.2.0
+[00:05:54]   Downloaded crossbeam-epoch v0.9.18
+[00:05:54]   Downloaded clap_derive v4.5.55
+[00:05:54]   Downloaded cargo-lock v11.0.1
+[00:05:54]   Downloaded camino v1.2.2
+[00:05:54]   Downloaded binfarce v0.2.1
+[00:05:54]   Downloaded gix-error v0.0.0
+[00:05:54]   Downloaded getrandom v0.2.17
+[00:05:54]   Downloaded foldhash v0.1.5
+[00:05:54]   Downloaded eyre v0.6.12
+[00:05:54]   Downloaded displaydoc v0.2.5
+[00:05:54]   Downloaded deranged v0.5.5
+[00:05:54]   Downloaded crossbeam-utils v0.8.21
+[00:05:54]   Downloaded gix-trace v0.1.17
+[00:05:54]   Downloaded gix-refspec v0.36.0
+[00:05:54]   Downloaded gix-packetline v0.21.0
+[00:05:54]   Downloaded gix-hashtable v0.12.0
+[00:05:54]   Downloaded gix-hash v0.22.0
+[00:05:54]   Downloaded gix-fs v0.19.0
+[00:05:54]   Downloaded gix-commitgraph v0.32.0
+[00:05:54]   Downloaded foldhash v0.2.0
+[00:05:54]   Downloaded digest v0.10.7
+[00:05:54]   Downloaded compression-codecs v0.4.36
+[00:05:54]   Downloaded autocfg v1.5.0
+[00:05:54]   Downloaded anstream v0.6.21
+[00:05:54]   Downloaded gix-quote v0.6.1
+[00:05:54]   Downloaded gix-discover v0.46.0
+[00:05:54]   Downloaded gix-credentials v0.35.0
+[00:05:54]   Downloaded auditable-extract v0.3.5
+[00:05:54]   Downloaded anstyle-parse v0.2.7
+[00:05:54]   Downloaded anstyle v1.0.13
+[00:05:54]   Downloaded gix-attributes v0.30.0
+[00:05:54]   Downloaded futures-sink v0.3.31
+[00:05:54]   Downloaded futures-channel v0.3.31
+[00:05:54]   Downloaded fs_extra v1.3.0
+[00:05:54]   Downloaded fs-err v3.2.2
+[00:05:54]   Downloaded fixedbitset v0.5.7
+[00:05:54]   Downloaded find-msvc-tools v0.1.9
+[00:05:54]   Downloaded filetime v0.2.27
+[00:05:54]   Downloaded either v1.15.0
+[00:05:54]   Downloaded crossbeam-deque v0.8.6
+[00:05:54]   Downloaded cmake v0.1.57
+[00:05:54]   Downloaded clru v0.6.2
+[00:05:54]   Downloaded byteorder v1.5.0
+[00:05:54]   Downloaded arrayvec v0.7.6
+[00:05:54]   Downloaded crypto-common v0.1.7
+[00:05:54]   Downloaded clap_lex v0.7.7
+[00:05:54]   Downloaded auditable-info v0.10.0
+[00:05:54]   Downloaded anstyle-query v1.1.5
+[00:05:54]   Downloaded futures-io v0.3.31
+[00:05:54]   Downloaded futures-core v0.3.31
+[00:05:54]   Downloaded fastrand v2.3.0
+[00:05:54]   Downloaded dunce v1.0.5
+[00:05:54]   Downloaded display-error-chain v0.2.2
+[00:05:54]   Downloaded cfg_aliases v0.2.1
+[00:05:54]   Downloaded gix-bitmap v0.2.15
+[00:05:54]   Downloaded gix-actor v0.38.0
+[00:05:54]   Downloaded equivalent v1.0.2
+[00:05:54]   Downloaded colorchoice v1.0.4
+[00:05:54]   Downloaded gix-chunk v0.5.0
+[00:05:54]   Downloaded faster-hex v0.10.0
+[00:05:54]   Downloaded cpufeatures v0.2.17
+[00:05:54]   Downloaded compression-core v0.4.31
+[00:05:54]   Downloaded auditable-serde v0.9.0
+[00:05:54]   Downloaded atomic-waker v1.1.2
+[00:05:54]   Downloaded generic-array v0.14.7
+[00:05:54]   Downloaded block-buffer v0.10.4
+[00:05:54]   Downloaded form_urlencoded v1.2.2
+[00:05:54]   Downloaded fnv v1.0.7
+[00:05:54]   Downloaded cfg-if v1.0.4
+[00:05:54]   Downloaded abscissa_core v0.9.0
+[00:05:54]   Downloaded abscissa_derive v0.9.0
+[00:05:54]   Downloaded aws-lc-sys v0.37.0
+[00:05:54]    Compiling proc-macro2 v1.0.106
+[00:05:54]    Compiling quote v1.0.44
+[00:05:54]    Compiling unicode-ident v1.0.22
+[00:05:54]    Compiling memchr v2.7.6
+[00:05:54]    Compiling syn v2.0.114
+[00:05:54]    Compiling windows-link v0.2.1
+[00:05:54]    Compiling aho-corasick v1.1.4
+[00:05:54]    Compiling cfg-if v1.0.4
+[00:05:54]    Compiling windows_x86_64_msvc v0.52.6
+[00:05:54]    Compiling regex-syntax v0.8.9
+[00:05:54]    Compiling smallvec v1.15.1
+[00:05:54]    Compiling windows-targets v0.52.6
+[00:05:54]    Compiling once_cell v1.21.3
+[00:05:54]    Compiling bytes v1.11.1
+[00:05:54]    Compiling regex-automata v0.4.14
+[00:05:54]    Compiling bstr v1.12.1
+[00:05:54]    Compiling thiserror v2.0.18
+[00:05:54]    Compiling windows-sys v0.52.0
+[00:05:54]    Compiling thiserror-impl v2.0.18
+[00:05:54]    Compiling stable_deref_trait v1.2.1
+[00:05:54]    Compiling crc32fast v1.5.0
+[00:05:54]    Compiling gix-trace v0.1.17
+[00:05:54]    Compiling crossbeam-utils v0.8.21
+[00:05:54]    Compiling tinyvec_macros v0.1.1
+[00:05:54]    Compiling tinyvec v1.10.0
+[00:05:54]    Compiling gix-validate v0.11.0
+[00:05:54]    Compiling fastrand v2.3.0
+[00:05:54]    Compiling gix-path v0.11.0
+[00:05:54]    Compiling unicode-normalization v0.1.25
+[00:05:54]    Compiling gix-utils v0.3.1
+[00:05:54]    Compiling itoa v1.0.17
+[00:05:54]    Compiling winapi-util v0.1.11
+[00:05:54]    Compiling parking_lot_core v0.9.12
+[00:05:54]    Compiling scopeguard v1.2.0
+[00:05:54]    Compiling lock_api v0.4.14
+[00:05:54]    Compiling parking_lot v0.12.5
+[00:05:54]    Compiling same-file v1.0.6
+[00:05:54]    Compiling crossbeam-channel v0.5.15
+[00:05:54]    Compiling walkdir v2.5.0
+[00:05:54]    Compiling prodash v31.0.0
+[00:05:54]    Compiling zlib-rs v0.5.5
+[00:05:54]    Compiling version_check v0.9.5
+[00:05:54]    Compiling equivalent v1.0.2
+[00:05:54]    Compiling allocator-api2 v0.2.21
+[00:05:54]    Compiling gix-features v0.46.0
+[00:05:54]    Compiling foldhash v0.2.0
+[00:05:54]    Compiling typenum v1.19.0
+[00:05:54]    Compiling hashbrown v0.16.1
+[00:05:54]    Compiling generic-array v0.14.7
+[00:05:54]    Compiling heapless v0.8.0
+[00:05:54]    Compiling byteorder v1.5.0
+[00:05:54]    Compiling bitflags v2.10.0
+[00:05:54]    Compiling hash32 v0.3.1
+[00:05:54]    Compiling crypto-common v0.1.7
+[00:05:54]    Compiling block-buffer v0.10.4
+[00:05:54]    Compiling windows_x86_64_msvc v0.53.1
+[00:05:54]    Compiling faster-hex v0.10.0
+[00:05:54]    Compiling digest v0.10.7
+[00:05:54]    Compiling gix-error v0.0.0
+[00:05:54]    Compiling serde_core v1.0.228
+[00:05:54]    Compiling cpufeatures v0.2.17
+[00:05:54]    Compiling jiff-tzdb v0.1.5
+[00:05:54]    Compiling sha1 v0.10.6
+[00:05:54]    Compiling jiff-tzdb-platform v0.1.3
+[00:05:54]    Compiling synstructure v0.13.2
+[00:05:54]    Compiling winnow v0.7.14
+[00:05:54]    Compiling windows-targets v0.53.5
+[00:05:54]    Compiling jiff v0.2.18
+[00:05:54]    Compiling sha1-checked v0.10.0
+[00:05:54]    Compiling gix-hash v0.22.0
+[00:05:54]    Compiling windows-sys v0.60.2
+[00:05:54]    Compiling windows-sys v0.61.2
+[00:05:54]    Compiling gix-date v0.13.0
+[00:05:54]    Compiling getrandom v0.3.4
+[00:05:54]    Compiling zerofrom-derive v0.1.6
+[00:05:54]    Compiling pin-project-lite v0.2.16
+[00:05:54]    Compiling zerofrom v0.1.6
+[00:05:54]    Compiling gix-actor v0.38.0
+[00:05:54]    Compiling gix-hashtable v0.12.0
+[00:05:54]    Compiling yoke-derive v0.8.1
+[00:05:54]    Compiling yoke v0.8.1
+[00:05:54]    Compiling gix-object v0.55.0
+[00:05:54]    Compiling jobserver v0.1.34
+[00:05:54]    Compiling shlex v1.3.0
+[00:05:54]    Compiling find-msvc-tools v0.1.9
+[00:05:54]    Compiling cc v1.2.55
+[00:05:54]    Compiling zerovec-derive v0.11.2
+[00:05:54]    Compiling memmap2 v0.9.9
+[00:05:54]    Compiling cmake v0.1.57
+[00:05:54]    Compiling zerovec v0.11.5
+[00:05:54]    Compiling displaydoc v0.2.5
+[00:05:54]    Compiling futures-core v0.3.31
+[00:05:54]    Compiling fs_extra v1.3.0
+[00:05:54]    Compiling serde v1.0.228
+[00:05:54]    Compiling dunce v1.0.5
+[00:05:54]    Compiling aws-lc-sys v0.37.0
+[00:05:54]    Compiling mio v1.1.1
+[00:05:54]    Compiling socket2 v0.6.2
+[00:05:54]    Compiling serde_derive v1.0.228
+[00:05:54]    Compiling tokio v1.49.0
+[00:05:54]    Compiling tempfile v3.24.0
+[00:05:54]    Compiling gix-chunk v0.5.0
+[00:05:54]    Compiling gix-fs v0.19.0
+[00:05:54]    Compiling futures-sink v0.3.31
+[00:05:54]    Compiling zeroize v1.8.2
+[00:05:54]    Compiling gix-tempfile v21.0.0
+[00:05:54]    Compiling tinystr v0.8.2
+[00:05:54]    Compiling gix-quote v0.6.1
+[00:05:54]    Compiling tracing-core v0.1.36
+[00:05:54]    Compiling aws-lc-rs v1.15.4
+[00:05:54]    Compiling percent-encoding v2.3.2
+[00:05:54]    Compiling litemap v0.8.1
+[00:05:54]    Compiling writeable v0.6.2
+[00:05:54]    Compiling icu_locale_core v2.1.1
+[00:05:54]    Compiling zerotrie v0.2.3
+[00:05:54]    Compiling potential_utf v0.1.4
+[00:05:54]    Compiling http v1.4.0
+[00:05:54]    Compiling tracing-attributes v0.1.31
+[00:05:54]    Compiling slab v0.4.12
+[00:05:54]    Compiling fnv v1.0.7
+[00:05:54]    Compiling icu_properties_data v2.1.2
+[00:05:54]    Compiling icu_normalizer_data v2.1.1
+[00:05:54]    Compiling tracing v0.1.44
+[00:05:54]    Compiling icu_collections v2.1.1
+[00:05:54]    Compiling icu_provider v2.1.1
+[00:05:54]    Compiling gix-commitgraph v0.32.0
+[00:05:54]    Compiling gix-glob v0.24.0
+[00:05:54]    Compiling indexmap v2.13.0
+[00:05:54]    Compiling adler2 v2.0.1
+[00:05:54]    Compiling simd-adler32 v0.3.8
+[00:05:54]    Compiling pin-utils v0.1.0
+[00:05:54]    Compiling miniz_oxide v0.8.9
+[00:05:54]    Compiling gix-revwalk v0.26.0
+[00:05:54]    Compiling http-body v1.0.1
+[00:05:54]    Compiling gix-lock v21.0.0
+[00:05:54]    Compiling rustls-pki-types v1.14.0
+[00:05:54]    Compiling tokio-util v0.7.18
+[00:05:54]    Compiling futures-io v0.3.31
+[00:05:54]    Compiling futures-task v0.3.31
+[00:05:54]    Compiling untrusted v0.9.0
+[00:05:54]    Compiling httparse v1.10.1
+[00:05:54]    Compiling rustls v0.23.36
+[00:05:54]    Compiling futures-util v0.3.31
+[00:05:54]    Compiling icu_normalizer v2.1.1
+[00:05:54]    Compiling icu_properties v2.1.2
+[00:05:54]    Compiling libc v0.2.180
+[00:05:54]    Compiling unicode-bom v2.0.3
+[00:05:54]    Compiling log v0.4.29
+[00:05:54]    Compiling atomic-waker v1.1.2
+[00:05:54]    Compiling tower-service v0.3.3
+[00:05:54]    Compiling try-lock v0.2.5
+[00:05:54]    Compiling subtle v2.6.1
+[00:05:54]    Compiling want v0.3.1
+[00:05:54]    Compiling h2 v0.4.13
+[00:05:54]    Compiling idna_adapter v1.2.1
+[00:05:54]    Compiling flate2 v1.1.9
+[00:05:54]    Compiling futures-channel v0.3.31
+[00:05:54]    Compiling gix-config-value v0.17.0
+[00:05:54]    Compiling static_assertions v1.1.0
+[00:05:54]    Compiling shell-words v1.1.1
+[00:05:54]    Compiling utf8_iter v1.0.4
+[00:05:54]    Compiling compression-core v0.4.31
+[00:05:54]    Compiling compression-codecs v0.4.36
+[00:05:54]    Compiling idna v1.1.0
+[00:05:54]    Compiling gix-command v0.7.0
+[00:05:54]    Compiling kstring v2.0.2
+[00:05:54]    Compiling hyper v1.8.1
+[00:05:54]    Compiling form_urlencoded v1.2.2
+[00:05:54]    Compiling sync_wrapper v1.0.2
+[00:05:54]    Compiling gix-sec v0.13.0
+[00:05:54]    Compiling encoding_rs v0.8.35
+[00:05:54]    Compiling ipnet v2.11.0
+[00:05:54]    Compiling tower-layer v0.3.3
+[00:05:54]    Compiling base64 v0.22.1
+[00:05:54]    Compiling hyper-util v0.1.20
+[00:05:54]    Compiling tower v0.5.3
+[00:05:54]    Compiling url v2.5.8
+[00:05:54]    Compiling gix-attributes v0.30.0
+[00:05:54]    Compiling async-compression v0.4.37
+[00:05:54]    Compiling http-body-util v0.1.3
+[00:05:54]    Compiling semver v1.0.27
+[00:05:54]    Compiling rustversion v1.0.22
+[00:05:54]    Compiling zmij v1.0.19
+[00:05:54]    Compiling iri-string v0.7.10
+[00:05:54]    Compiling tower-http v0.6.8
+[00:05:54]    Compiling gix-ref v0.58.0
+[00:05:54]    Compiling rustls-webpki v0.103.9
+[00:05:54]    Compiling gix-url v0.35.0
+[00:05:54]    Compiling gix-packetline v0.21.0
+[00:05:54]    Compiling windows-sys v0.59.0
+[00:05:54]    Compiling tokio-rustls v0.26.4
+[00:05:54]    Compiling hyper-rustls v0.27.7
+[00:05:54]    Compiling rustls-platform-verifier v0.6.2
+[00:05:54]    Compiling serde_json v1.0.149
+[00:05:54]    Compiling winapi v0.3.9
+[00:05:54]    Compiling mime v0.3.17
+[00:05:54]    Compiling reqwest v0.13.1
+[00:05:54]    Compiling gix-prompt v0.13.0
+[00:05:54]    Compiling gix-revision v0.40.0
+[00:05:54]    Compiling gix-traverse v0.52.0
+[00:05:54]    Compiling crossbeam-epoch v0.9.18
+[00:05:54]    Compiling gix-bitmap v0.2.15
+[00:05:54]    Compiling filetime v0.2.27
+[00:05:54]    Compiling anstyle v1.0.13
+[00:05:54]    Compiling once_cell_polyfill v1.70.2
+[00:05:54]    Compiling utf8parse v0.2.2
+[00:05:54]    Compiling rayon-core v1.13.0
+[00:05:54]    Compiling autocfg v1.5.0
+[00:05:54]    Compiling arrayvec v0.7.6
+[00:05:54]    Compiling uluru v3.1.0
+[00:05:54]    Compiling fs-err v3.2.2
+[00:05:54]    Compiling anstyle-parse v0.2.7
+[00:05:54]    Compiling anstyle-wincon v3.0.11
+[00:05:54]    Compiling gix-index v0.46.0
+[00:05:54]    Compiling crossbeam-deque v0.8.6
+[00:05:54]    Compiling gix-refspec v0.36.0
+[00:05:54]    Compiling gix-credentials v0.35.0
+[00:05:54]    Compiling arc-swap v1.8.1
+[00:05:54]    Compiling gix-ignore v0.19.0
+[00:05:54]    Compiling anstyle-query v1.1.5
+[00:05:54]    Compiling serde_spanned v1.0.4
+[00:05:54]    Compiling toml_datetime v0.7.5+spec-1.1.0
+[00:05:54]    Compiling toml_parser v1.0.6+spec-1.1.0
+[00:05:54]    Compiling clru v0.6.2
+[00:05:54]    Compiling eyre v0.6.12
+[00:05:54]    Compiling colorchoice v1.0.4
+[00:05:54]    Compiling owo-colors v4.2.3
+[00:05:54]    Compiling foldhash v0.1.5
+[00:05:54]    Compiling toml_writer v1.0.6+spec-1.1.0
+[00:05:54]    Compiling camino v1.2.2
+[00:05:54]    Compiling is_terminal_polyfill v1.70.2
+[00:05:54]    Compiling toml v0.9.11+spec-1.1.0
+[00:05:54]    Compiling anstream v0.6.21
+[00:05:54]    Compiling hashbrown v0.15.5
+[00:05:54]    Compiling gix-pack v0.65.0
+[00:05:54]    Compiling gix-worktree v0.47.0
+[00:05:54]    Compiling io-close v0.3.7
+[00:05:54]    Compiling gix-transport v0.53.0
+[00:05:54]    Compiling gix-filter v0.25.0
+[00:05:54]    Compiling gix-config v0.51.0
+[00:05:54]    Compiling gix-pathspec v0.15.0
+[00:05:54]    Compiling gix-shallow v0.8.0
+[00:05:54]    Compiling gix-negotiate v0.26.0
+[00:05:54]    Compiling wasmparser v0.207.0
+[00:05:54]    Compiling regex v1.12.3
+[00:05:54]    Compiling maybe-async v0.2.10
+[00:05:54]    Compiling rustc-demangle v0.1.27
+[00:05:54]    Compiling powerfmt v0.2.0
+[00:05:54]    Compiling indenter v0.3.4
+[00:05:54]    Compiling clap_lex v0.7.7
+[00:05:54]    Compiling binfarce v0.2.1
+[00:05:54]    Compiling either v1.15.0
+[00:05:54]    Compiling fixedbitset v0.5.7
+[00:05:54]    Compiling strsim v0.11.1
+[00:05:54]    Compiling heck v0.5.0
+[00:05:54]    Compiling lazy_static v1.5.0
+[00:05:54]    Compiling topological-sort v0.2.2
+[00:05:54]    Compiling gix-discover v0.46.0
+[00:05:54]    Compiling auditable-serde v0.9.0
+[00:05:54]    Compiling sharded-slab v0.1.7
+[00:05:54]    Compiling clap_derive v4.5.55
+[00:05:54]    Compiling clap_builder v4.5.57
+[00:05:54]    Compiling petgraph v0.8.3
+[00:05:54]    Compiling rayon v1.11.0
+[00:05:54]    Compiling auditable-extract v0.3.5
+[00:05:54]    Compiling deranged v0.5.5
+[00:05:54]    Compiling backtrace v0.3.76
+[00:05:54]    Compiling gix-protocol v0.56.0
+[00:05:54]    Compiling gix-submodule v0.25.0
+[00:05:54]    Compiling gix-worktree-state v0.25.0
+[00:05:54]    Compiling gix-odb v0.75.0
+[00:05:54]    Compiling home v0.5.11
+[00:05:54]    Compiling nu-ansi-term v0.50.3
+[00:05:54]    Compiling tracing-log v0.2.0
+[00:05:54]    Compiling smol_str v0.3.2
+[00:05:54]    Compiling gix-diff v0.58.0
+[00:05:54]    Compiling matchers v0.2.0
+[00:05:54]    Compiling toml-span v0.6.0
+[00:05:54]    Compiling thread_local v1.1.9
+[00:05:54]    Compiling ident_case v1.0.1
+[00:05:54]    Compiling time-core v0.1.7
+[00:05:54]    Compiling twox-hash v2.1.2
+[00:05:54]    Compiling rustc-stable-hash v0.1.2
+[00:05:54]    Compiling num-conv v0.1.0
+[00:05:54]    Compiling time v0.3.45
+[00:05:54]    Compiling tame-index v0.26.0
+[00:05:54]    Compiling abscissa_derive v0.9.0
+[00:05:54]    Compiling tracing-subscriber v0.3.22
+[00:05:54]    Compiling gix v0.78.0
+[00:05:54]    Compiling color-eyre v0.6.5
+[00:05:54]    Compiling auditable-info v0.10.0
+[00:05:54]    Compiling cargo-lock v11.0.1
+[00:05:54]    Compiling clap v4.5.57
+[00:05:54]    Compiling quitters v0.1.0
+[00:05:54]    Compiling secrecy v0.10.3
+[00:05:54]    Compiling cvss v2.2.0
+[00:05:54]    Compiling platforms v3.8.0
+[00:05:54]    Compiling termcolor v1.4.1
+[00:05:54]    Compiling canonical-path v2.0.2
+[00:05:54]    Compiling wait-timeout v0.2.1
+[00:05:54]    Compiling abscissa_core v0.9.0
+[00:05:54]    Compiling rustsec v0.32.0
+[00:05:54]    Compiling display-error-chain v0.2.2
+[00:05:54]    Compiling cargo-audit v0.22.1
+[00:05:54]     Finished `release` profile [optimized] target(s) in 4m 45s
+[00:05:54]   Installing C:\Users\ContainerAdministrator\scoop\persist\rustup\.cargo\bin\cargo-audit.exe
+[00:05:54]    Installed package `cargo-audit v0.22.1` (executable `cargo-audit.exe`)
+[00:05:54]   Installing cargo-deny v0.19.0
+[00:05:54]     Updating crates.io index
+[00:05:54]     Updating crates.io index
+[00:05:54]  Downloading crates ...
+[00:05:54]   Downloaded codespan v0.13.1
+[00:05:54]   Downloaded funty v2.0.0
+[00:05:54]   Downloaded errno v0.3.14
+[00:05:54]   Downloaded crossbeam v0.8.4
+[00:05:54]   Downloaded time-core v0.1.6
+[00:05:54]   Downloaded gix-negotiate v0.25.0
+[00:05:54]   Downloaded crossbeam-queue v0.3.12
+[00:05:54]   Downloaded home v0.5.12
+[00:05:54]   Downloaded gix-prompt v0.12.0
+[00:05:54]   Downloaded thiserror-impl v2.0.17
+[00:05:54]   Downloaded time-macros v0.2.24
+[00:05:54]   Downloaded plain v0.2.3
+[00:05:54]   Downloaded zstd-safe v7.2.4
+[00:05:54]   Downloaded zstd v0.13.3
+[00:05:54]   Downloaded scroll_derive v0.13.1
+[00:05:54]   Downloaded toml v0.9.10+spec-1.1.0
+[00:05:54]   Downloaded slab v0.4.11
+[00:05:54]   Downloaded sha2 v0.10.9
+[00:05:54]   Downloaded rustls-pki-types v1.13.2
+[00:05:54]   Downloaded strum_macros v0.27.2
+[00:05:54]   Downloaded time v0.3.44
+[00:05:54]   Downloaded signal-hook v0.4.1
+[00:05:54]   Downloaded rustsec v0.31.0
+[00:05:54]   Downloaded hyper-util v0.1.19
+[00:05:54]   Downloaded gix-pack v0.64.1
+[00:05:54]   Downloaded regex v1.12.2
+[00:05:54]   Downloaded clap_builder v4.5.54
+[00:05:54]   Downloaded unicode-width v0.2.2
+[00:05:54]   Downloaded bitvec v1.0.1
+[00:05:54]   Downloaded rustls-webpki v0.103.8
+[00:05:54]   Downloaded prodash v30.0.1
+[00:05:54]   Downloaded krates v0.20.0
+[00:05:54]   Downloaded goblin v0.10.4
+[00:05:54]   Downloaded gix v0.77.0
+[00:05:54]   Downloaded fern v0.7.1
+[00:05:54]   Downloaded indexmap v2.12.1
+[00:05:54]   Downloaded cc v1.2.51
+[00:05:54]   Downloaded bytes v1.11.0
+[00:05:54]   Downloaded regex-syntax v0.8.8
+[00:05:54]   Downloaded async-compression v0.4.36
+[00:05:54]   Downloaded proc-macro2 v1.0.105
+[00:05:54]   Downloaded gix-transport v0.52.1
+[00:05:54]   Downloaded gix-config v0.50.0
+[00:05:54]   Downloaded flate2 v1.1.5
+[00:05:54]   Downloaded signal-hook v0.3.18
+[00:05:54]   Downloaded gix-object v0.54.1
+[00:05:54]   Downloaded gix-index v0.45.1
+[00:05:54]   Downloaded gix-diff v0.57.1
+[00:05:54]   Downloaded codespan-reporting v0.13.1
+[00:05:54]   Downloaded arc-swap v1.8.0
+[00:05:54]   Downloaded socket2 v0.6.1
+[00:05:54]   Downloaded regex-automata v0.4.13
+[00:05:54]   Downloaded platforms v3.7.0
+[00:05:54]   Downloaded gix-ref v0.57.0
+[00:05:54]   Downloaded gix-protocol v0.55.0
+[00:05:54]   Downloaded gix-odb v0.74.0
+[00:05:54]   Downloaded zstd-sys v2.0.16+zstd.1.5.7
+[00:05:54]   Downloaded quote v1.0.43
+[00:05:54]   Downloaded gix-filter v0.24.1
+[00:05:54]   Downloaded gix-features v0.45.2
+[00:05:54]   Downloaded libc v0.2.179
+[00:05:54]   Downloaded gix-discover v0.45.0
+[00:05:54]   Downloaded clap v4.5.54
+[00:05:54]   Downloaded gix-worktree-state v0.24.0
+[00:05:54]   Downloaded gix-path v0.10.22
+[00:05:54]   Downloaded gix-credentials v0.34.1
+[00:05:54]   Downloaded getrandom v0.2.16
+[00:05:54]   Downloaded clap_derive v4.5.49
+[00:05:54]   Downloaded anyhow v1.0.100
+[00:05:54]   Downloaded signal-hook-registry v1.4.8
+[00:05:54]   Downloaded gix-url v0.34.0
+[00:05:54]   Downloaded gix-traverse v0.51.1
+[00:05:54]   Downloaded gix-submodule v0.24.0
+[00:05:54]   Downloaded gix-shallow v0.7.0
+[00:05:54]   Downloaded gix-revwalk v0.25.0
+[00:05:54]   Downloaded gix-revision v0.39.0
+[00:05:54]   Downloaded gix-refspec v0.35.0
+[00:05:54]   Downloaded gix-pathspec v0.14.0
+[00:05:54]   Downloaded gix-packetline v0.20.0
+[00:05:54]   Downloaded gix-hash v0.21.2
+[00:05:54]   Downloaded gix-fs v0.18.2
+[00:05:54]   Downloaded gix-date v0.12.1
+[00:05:54]   Downloaded gix-commitgraph v0.31.0
+[00:05:54]   Downloaded gix-attributes v0.29.0
+[00:05:54]   Downloaded gix-actor v0.37.1
+[00:05:54]   Downloaded cfg-expr v0.20.5
+[00:05:54]   Downloaded cargo-lock v11.0.0
+[00:05:54]   Downloaded scroll v0.13.0
+[00:05:54]   Downloaded pkg-config v0.3.32
+[00:05:54]   Downloaded globset v0.4.18
+[00:05:54]   Downloaded gix-worktree v0.46.0
+[00:05:54]   Downloaded gix-validate v0.10.1
+[00:05:54]   Downloaded gix-tempfile v20.0.1
+[00:05:54]   Downloaded compression-codecs v0.4.35
+[00:05:54]   Downloaded wyz v0.5.1
+[00:05:54]   Downloaded tap v1.0.1
+[00:05:54]   Downloaded gix-hashtable v0.11.0
+[00:05:54]   Downloaded gix-config-value v0.16.0
+[00:05:54]   Downloaded gix-command v0.6.5
+[00:05:54]   Downloaded zmij v1.0.12
+[00:05:54]   Downloaded tower v0.5.2
+[00:05:54]   Downloaded strum v0.27.2
+[00:05:54]   Downloaded radium v0.7.0
+[00:05:54]   Downloaded gix-sec v0.12.2
+[00:05:54]   Downloaded gix-ignore v0.18.0
+[00:05:54]   Downloaded gix-glob v0.23.0
+[00:05:54]   Downloaded thiserror v2.0.17
+[00:05:54]   Downloaded target-lexicon v0.13.3
+[00:05:54]   Downloaded find-msvc-tools v0.1.6
+[00:05:54]   Downloaded filetime v0.2.26
+[00:05:54]   Downloaded gix-lock v20.0.1
+[00:05:54]   Downloaded gix-chunk v0.4.12
+[00:05:54]   Downloaded clap_lex v0.7.6
+[00:05:54]   Downloaded spdx v0.13.3
+[00:05:54]    Compiling proc-macro2 v1.0.105
+[00:05:54]    Compiling quote v1.0.43
+[00:05:54]    Compiling unicode-ident v1.0.22
+[00:05:54]    Compiling windows-link v0.2.1
+[00:05:54]    Compiling windows-sys v0.61.2
+[00:05:54]    Compiling syn v2.0.114
+[00:05:54]    Compiling memchr v2.7.6
+[00:05:54]    Compiling cfg-if v1.0.4
+[00:05:54]    Compiling smallvec v1.15.1
+[00:05:54]    Compiling thiserror v2.0.17
+[00:05:54]    Compiling aho-corasick v1.1.4
+[00:05:54]    Compiling thiserror-impl v2.0.17
+[00:05:54]    Compiling regex-syntax v0.8.8
+[00:05:54]    Compiling bytes v1.11.0
+[00:05:54]    Compiling regex-automata v0.4.13
+[00:05:54]    Compiling once_cell v1.21.3
+[00:05:54]    Compiling stable_deref_trait v1.2.1
+[00:05:55]    Compiling crc32fast v1.5.0
+[00:05:55]    Compiling bstr v1.12.1
+[00:05:55]    Compiling tinyvec_macros v0.1.1
+[00:05:55]    Compiling tinyvec v1.10.0
+[00:05:55]    Compiling winapi-util v0.1.11
+[00:05:55]    Compiling unicode-normalization v0.1.25
+[00:05:55]    Compiling gix-trace v0.1.17
+[00:05:55]    Compiling fastrand v2.3.0
+[00:05:55]    Compiling gix-validate v0.10.1
+[00:05:55]    Compiling gix-path v0.10.22
+[00:05:55]    Compiling gix-utils v0.3.1
+[00:05:55]    Compiling parking_lot_core v0.9.12
+[00:05:55]    Compiling scopeguard v1.2.0
+[00:05:55]    Compiling lock_api v0.4.14
+[00:05:55]    Compiling itoa v1.0.17
+[00:05:55]    Compiling parking_lot v0.12.5
+[00:05:55]    Compiling same-file v1.0.6
+[00:05:55]    Compiling walkdir v2.5.0
+[00:05:55]    Compiling prodash v30.0.1
+[00:05:55]    Compiling zlib-rs v0.5.5
+[00:05:55]    Compiling version_check v0.9.5
+[00:05:55]    Compiling typenum v1.19.0
+[00:05:55]    Compiling generic-array v0.14.7
+[00:05:55]    Compiling gix-features v0.45.2
+[00:05:55]    Compiling allocator-api2 v0.2.21
+[00:05:55]    Compiling equivalent v1.0.2
+[00:05:55]    Compiling foldhash v0.2.0
+[00:05:55]    Compiling hashbrown v0.16.1
+[00:05:55]    Compiling crypto-common v0.1.7
+[00:05:55]    Compiling block-buffer v0.10.4
+[00:05:55]    Compiling byteorder v1.5.0
+[00:05:55]    Compiling heapless v0.8.0
+[00:05:55]    Compiling hash32 v0.3.1
+[00:05:55]    Compiling digest v0.10.7
+[00:05:55]    Compiling cpufeatures v0.2.17
+[00:05:55]    Compiling getrandom v0.3.4
+[00:05:55]    Compiling jiff-tzdb v0.1.5
+[00:05:55]    Compiling faster-hex v0.10.0
+[00:05:55]    Compiling jiff-tzdb-platform v0.1.3
+[00:05:55]    Compiling sha1 v0.10.6
+[00:05:55]    Compiling winnow v0.7.14
+[00:05:55]    Compiling serde_core v1.0.228
+[00:05:55]    Compiling windows_x86_64_msvc v0.53.1
+[00:05:55]    Compiling bitflags v2.10.0
+[00:05:55]    Compiling libc v0.2.179
+[00:05:55]    Compiling sha1-checked v0.10.0
+[00:05:55]    Compiling jiff v0.2.18
+[00:05:55]    Compiling synstructure v0.13.2
+[00:05:55]    Compiling gix-hash v0.21.2
+[00:05:55]    Compiling jobserver v0.1.34
+[00:05:55]    Compiling find-msvc-tools v0.1.6
+[00:05:55]    Compiling gix-date v0.12.1
+[00:05:55]    Compiling shlex v1.3.0
+[00:05:55]    Compiling cc v1.2.51
+[00:05:55]    Compiling windows-targets v0.53.5
+[00:05:55]    Compiling zerofrom-derive v0.1.6
+[00:05:55]    Compiling zerofrom v0.1.6
+[00:05:55]    Compiling windows-sys v0.60.2
+[00:05:55]    Compiling yoke-derive v0.8.1
+[00:05:55]    Compiling yoke v0.8.1
+[00:05:55]    Compiling gix-actor v0.37.1
+[00:05:55]    Compiling gix-hashtable v0.11.0
+[00:05:55]    Compiling gix-object v0.54.1
+[00:05:55]    Compiling zerovec-derive v0.11.2
+[00:05:55]    Compiling pin-project-lite v0.2.16
+[00:05:55]    Compiling zerovec v0.11.5
+[00:05:55]    Compiling errno v0.3.14
+[00:05:55]    Compiling displaydoc v0.2.5
+[00:05:55]    Compiling futures-core v0.3.31
+[00:05:55]    Compiling serde v1.0.228
+[00:05:55]    Compiling memmap2 v0.9.9
+[00:05:55]    Compiling signal-hook-registry v1.4.8
+[00:05:55]    Compiling serde_derive v1.0.228
+[00:05:55]    Compiling signal-hook v0.4.1
+[00:05:55]    Compiling socket2 v0.6.1
+[00:05:55]    Compiling mio v1.1.1
+[00:05:55]    Compiling tokio v1.49.0
+[00:05:55]    Compiling tempfile v3.24.0
+[00:05:55]    Compiling tinystr v0.8.2
+[00:05:55]    Compiling gix-fs v0.18.2
+[00:05:55]    Compiling gix-chunk v0.4.12
+[00:05:55]    Compiling litemap v0.8.1
+[00:05:55]    Compiling percent-encoding v2.3.2
+[00:05:55]    Compiling writeable v0.6.2
+[00:05:55]    Compiling futures-sink v0.3.31
+[00:05:55]    Compiling icu_locale_core v2.1.1
+[00:05:55]    Compiling gix-tempfile v20.0.1
+[00:05:55]    Compiling zerotrie v0.2.3
+[00:05:55]    Compiling potential_utf v0.1.4
+[00:05:55]    Compiling ring v0.17.14
+[00:05:55]    Compiling gix-quote v0.6.1
+[00:05:55]    Compiling icu_normalizer_data v2.1.1
+[00:05:55]    Compiling icu_properties_data v2.1.2
+[00:05:55]    Compiling icu_collections v2.1.1
+[00:05:55]    Compiling icu_provider v2.1.1
+[00:05:55]    Compiling http v1.4.0
+[00:05:55]    Compiling fnv v1.0.7
+[00:05:55]    Compiling slab v0.4.11
+[00:05:55]    Compiling gix-commitgraph v0.31.0
+[00:05:55]    Compiling gix-glob v0.23.0
+[00:05:55]    Compiling indexmap v2.12.1
+[00:05:55]    Compiling getrandom v0.2.16
+[00:05:55]    Compiling zeroize v1.8.2
+[00:05:55]    Compiling crossbeam-utils v0.8.21
+[00:05:55]    Compiling pin-utils v0.1.0
+[00:05:55]    Compiling untrusted v0.9.0
+[00:05:55]    Compiling rustls-pki-types v1.13.2
+[00:05:55]    Compiling gix-revwalk v0.25.0
+[00:05:55]    Compiling icu_normalizer v2.1.1
+[00:05:55]    Compiling icu_properties v2.1.2
+[00:05:55]    Compiling http-body v1.0.1
+[00:05:55]    Compiling gix-lock v20.0.1
+[00:05:55]    Compiling tokio-util v0.7.18
+[00:05:55]    Compiling tracing-core v0.1.36
+[00:05:55]    Compiling simd-adler32 v0.3.8
+[00:05:55]    Compiling httparse v1.10.1
+[00:05:55]    Compiling adler2 v2.0.1
+[00:05:55]    Compiling futures-io v0.3.31
+[00:05:55]    Compiling rustls v0.23.36
+[00:05:55]    Compiling futures-task v0.3.31
+[00:05:55]    Compiling miniz_oxide v0.8.9
+[00:05:55]    Compiling futures-util v0.3.31
+[00:05:55]    Compiling tracing v0.1.44
+[00:05:55]    Compiling idna_adapter v1.2.1
+[00:05:55]    Compiling rustls-webpki v0.103.8
+[00:05:55]    Compiling unicode-bom v2.0.3
+[00:05:55]    Compiling tower-service v0.3.3
+[00:05:55]    Compiling utf8_iter v1.0.4
+[00:05:55]    Compiling atomic-waker v1.1.2
+[00:05:55]    Compiling try-lock v0.2.5
+[00:05:55]    Compiling log v0.4.29
+[00:05:55]    Compiling subtle v2.6.1
+[00:05:55]    Compiling want v0.3.1
+[00:05:55]    Compiling idna v1.1.0
+[00:05:55]    Compiling h2 v0.4.13
+[00:05:55]    Compiling flate2 v1.1.5
+[00:05:55]    Compiling futures-channel v0.3.31
+[00:05:55]    Compiling form_urlencoded v1.2.2
+[00:05:55]    Compiling gix-config-value v0.16.0
+[00:05:55]    Compiling shell-words v1.1.1
+[00:05:55]    Compiling compression-core v0.4.31
+[00:05:55]    Compiling static_assertions v1.1.0
+[00:05:55]    Compiling kstring v2.0.2
+[00:05:55]    Compiling compression-codecs v0.4.35
+[00:05:55]    Compiling gix-command v0.6.5
+[00:05:55]    Compiling url v2.5.8
+[00:05:55]    Compiling hyper v1.8.1
+[00:05:55]    Compiling sync_wrapper v1.0.2
+[00:05:55]    Compiling gix-sec v0.12.2
+[00:05:55]    Compiling encoding_rs v0.8.35
+[00:05:55]    Compiling ipnet v2.11.0
+[00:05:55]    Compiling pkg-config v0.3.32
+[00:05:55]    Compiling base64 v0.22.1
+[00:05:55]    Compiling tower-layer v0.3.3
+[00:05:55]    Compiling hyper-util v0.1.19
+[00:05:55]    Compiling tower v0.5.2
+[00:05:55]    Compiling zstd-sys v2.0.16+zstd.1.5.7
+[00:05:55]    Compiling async-compression v0.4.36
+[00:05:55]    Compiling gix-attributes v0.29.0
+[00:05:55]    Compiling tokio-rustls v0.26.4
+[00:05:55]    Compiling crossbeam-epoch v0.9.18
+[00:05:55]    Compiling http-body-util v0.1.3
+[00:05:55]    Compiling iri-string v0.7.10
+[00:05:55]    Compiling crossbeam-deque v0.8.6
+[00:05:55]    Compiling hyper-rustls v0.27.7
+[00:05:55]    Compiling tower-http v0.6.8
+[00:05:55]    Compiling rustls-platform-verifier v0.6.2
+[00:05:55]    Compiling gix-ref v0.57.0
+[00:05:55]    Compiling gix-url v0.34.0
+[00:05:55]    Compiling gix-packetline v0.20.0
+[00:05:55]    Compiling zmij v1.0.12
+[00:05:55]    Compiling rayon-core v1.13.0
+[00:05:55]    Compiling winapi v0.3.9
+[00:05:55]    Compiling mime v0.3.17
+[00:05:55]    Compiling rustversion v1.0.22
+[00:05:55]    Compiling reqwest v0.13.1
+[00:05:55]    Compiling gix-prompt v0.12.0
+[00:05:55]    Compiling gix-traverse v0.51.1
+[00:05:55]    Compiling gix-revision v0.39.0
+[00:05:55]    Compiling filetime v0.2.26
+[00:05:55]    Compiling semver v1.0.27
+[00:05:55]    Compiling termcolor v1.4.1
+[00:05:55]    Compiling gix-bitmap v0.2.15
+[00:05:55]    Compiling unicode-width v0.2.2
+[00:05:55]    Compiling utf8parse v0.2.2
+[00:05:55]    Compiling serde_json v1.0.149
+[00:05:55]    Compiling anstyle v1.0.13
+[00:05:55]    Compiling autocfg v1.5.0
+[00:05:55]    Compiling heck v0.5.0
+[00:05:55]    Compiling once_cell_polyfill v1.70.2
+[00:05:55]    Compiling target-lexicon v0.13.3
+[00:05:55]    Compiling zstd-safe v7.2.4
+[00:05:55]    Compiling camino v1.2.2
+[00:05:55]    Compiling anstyle-wincon v3.0.11
+[00:05:55]    Compiling fs-err v3.2.2
+[00:05:55]    Compiling anstyle-parse v0.2.7
+[00:05:55]    Compiling codespan-reporting v0.13.1
+[00:05:55]    Compiling gix-index v0.45.1
+[00:05:55]    Compiling gix-refspec v0.35.0
+[00:05:55]    Compiling gix-credentials v0.34.1
+[00:05:55]    Compiling gix-ignore v0.18.0
+[00:05:55]    Compiling toml_datetime v0.7.5+spec-1.1.0
+[00:05:55]    Compiling serde_spanned v1.0.4
+[00:05:55]    Compiling toml_parser v1.0.6+spec-1.1.0
+[00:05:55]    Compiling anstyle-query v1.1.5
+[00:05:55]    Compiling either v1.15.0
+[00:05:55]    Compiling colorchoice v1.0.4
+[00:05:55]    Compiling clru v0.6.2
+[00:05:55]    Compiling is_terminal_polyfill v1.70.2
+[00:05:55]    Compiling foldhash v0.1.5
+[00:05:55]    Compiling toml_writer v1.0.6+spec-1.1.0
+[00:05:55]    Compiling signal-hook v0.3.18
+[00:05:55]    Compiling radium v0.7.0
+[00:05:55]    Compiling toml v0.9.10+spec-1.1.0
+[00:05:55]    Compiling hashbrown v0.15.5
+[00:05:55]    Compiling anstream v0.6.21
+[00:05:55]    Compiling gix-pack v0.64.1
+[00:05:55]    Compiling rayon v1.11.0
+[00:05:55]    Compiling gix-worktree v0.46.0
+[00:05:55]    Compiling arc-swap v1.8.0
+[00:05:55]    Compiling io-close v0.3.7
+[00:05:55]    Compiling gix-transport v0.52.1
+[00:05:55]    Compiling gix-filter v0.24.1
+[00:05:55]    Compiling gix-config v0.50.0
+[00:05:55]    Compiling gix-pathspec v0.14.0
+[00:05:55]    Compiling crossbeam-channel v0.5.15
+[00:05:55]    Compiling gix-shallow v0.7.0
+[00:05:55]    Compiling gix-negotiate v0.25.0
+[00:05:55]    Compiling maybe-async v0.2.10
+[00:05:55]    Compiling scroll_derive v0.13.1
+[00:05:55]    Compiling tap v1.0.1
+[00:05:55]    Compiling powerfmt v0.2.0
+[00:05:55]    Compiling fixedbitset v0.5.7
+[00:05:55]    Compiling anyhow v1.0.100
+[00:05:55]    Compiling time-core v0.1.6
+[00:05:55]    Compiling num-conv v0.1.0
+[00:05:55]    Compiling clap_lex v0.7.6
+[00:05:55]    Compiling dunce v1.0.5
+[00:05:55]    Compiling strsim v0.11.1
+[00:05:55]    Compiling gix-discover v0.45.0
+[00:05:55]    Compiling clap_builder v4.5.54
+[00:05:55]    Compiling time-macros v0.2.24
+[00:05:55]    Compiling petgraph v0.8.3
+[00:05:55]    Compiling deranged v0.5.5
+[00:05:55]    Compiling wyz v0.5.1
+[00:05:55]    Compiling scroll v0.13.0
+[00:05:55]    Compiling gix-protocol v0.55.0
+[00:05:55]    Compiling gix-submodule v0.24.0
+[00:05:55]    Compiling gix-worktree-state v0.24.0
+[00:05:55]    Compiling cfg-expr v0.20.5
+[00:05:55]    Compiling zstd v0.13.3
+[00:05:55]    Compiling gix-odb v0.74.0
+[00:05:55]    Compiling cargo-lock v11.0.0
+[00:05:55]    Compiling toml-span v0.6.0
+[00:05:55]    Compiling clap_derive v4.5.49
+[00:05:55]    Compiling strum_macros v0.27.2
+[00:05:55]    Compiling crossbeam-queue v0.3.12
+[00:05:55]    Compiling platforms v3.7.0
+[00:05:55]    Compiling smol_str v0.3.2
+[00:05:55]    Compiling cvss v2.2.0
+[00:05:55]    Compiling gix-diff v0.57.1
+[00:05:55]    Compiling sha2 v0.10.9
+[00:05:55]    Compiling regex v1.12.2
+[00:05:55]    Compiling home v0.5.12
+[00:05:55]    Compiling plain v0.2.3
+[00:05:55]    Compiling twox-hash v2.1.2
+[00:05:55]    Compiling rustc-stable-hash v0.1.2
+[00:05:55]    Compiling funty v2.0.0
+[00:05:55]    Compiling tame-index v0.26.0
+[00:05:55]    Compiling bitvec v1.0.1
+[00:05:55]    Compiling time v0.3.44
+[00:05:55]    Compiling goblin v0.10.4
+[00:05:55]    Compiling spdx v0.13.3
+[00:05:55]    Compiling gix v0.77.0
+[00:05:55]    Compiling strum v0.27.2
+[00:05:55]    Compiling rustsec v0.31.0
+[00:05:55]    Compiling crossbeam v0.8.4
+[00:05:55]    Compiling clap v4.5.54
+[00:05:55]    Compiling krates v0.20.0
+[00:05:55]    Compiling codespan v0.13.1
+[00:05:55]    Compiling fern v0.7.1
+[00:05:55]    Compiling globset v0.4.18
+[00:05:55]    Compiling nu-ansi-term v0.50.3
+[00:05:55]    Compiling cargo-deny v0.19.0
+[00:05:55]     Finished `release` profile [optimized] target(s) in 11m 35s
+[00:05:55]   Installing C:\Users\ContainerAdministrator\scoop\persist\rustup\.cargo\bin\cargo-deny.exe
+[00:05:55]    Installed package `cargo-deny v0.19.0` (executable `cargo-deny.exe`)
+[00:05:55]      Summary Successfully installed cargo-audit, cargo-deny!
+[00:05:55] CMD: cargo audit
+[00:06:03] Crate:     rustls-webpki
+[00:06:03] Version:   0.103.9
+[00:06:03] Title:     CRLs not considered authoritative by Distribution Point due to faulty matching logic
+[00:06:03] Date:      2026-03-20
+[00:06:03] ID:        RUSTSEC-2026-0049
+[00:06:03] URL:       https://rustsec.org/advisories/RUSTSEC-2026-0049
+[00:06:03] Solution:  Upgrade to >=0.103.10
+[00:06:03] Dependency tree:
+[00:06:03] rustls-webpki 0.103.9
+[00:06:03] â””â”€â”€ rustls 0.23.37
+[00:06:03]     â”œâ”€â”€ tokio-rustls 0.26.4
+[00:06:03]     â”‚   â”œâ”€â”€ reqwest 0.12.28
+[00:06:03]     â”‚   â”‚   â””â”€â”€ tracel-llvm-bundler 20.1.4-7
+[00:06:03]     â”‚   â”‚       â”œâ”€â”€ tracel-tblgen-rs 20.1.4-7
+[00:06:03]     â”‚   â”‚       â”‚   â””â”€â”€ tracel-mlir-rs-macros 20.1.4-7
+[00:06:03]     â”‚   â”‚       â”‚       â””â”€â”€ tracel-mlir-rs 20.1.4-7
+[00:06:03]     â”‚   â”‚       â”‚           â””â”€â”€ tracel-llvm 20.1.4-7
+[00:06:03]     â”‚   â”‚       â”‚               â””â”€â”€ cubecl-cpu 0.9.0
+[00:06:03]     â”‚   â”‚       â”‚                   â””â”€â”€ cubecl 0.9.0
+[00:06:03]     â”‚   â”‚       â”‚                       â”œâ”€â”€ cubek-reduce 0.1.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â””â”€â”€ cubek 0.1.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚       â”œâ”€â”€ burn-cubecl-fusion 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚       â”‚   â””â”€â”€ burn-cubecl 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚       â”‚       â”œâ”€â”€ burn-wgpu 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚       â”‚       â”‚   â””â”€â”€ burn 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚       â”‚       â”‚       â””â”€â”€ kataglyphis_rustprojecttemplate 0.1.0
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚       â”‚       â”œâ”€â”€ burn-rocm 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚       â”‚       â”‚   â””â”€â”€ burn 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚       â”‚       â”œâ”€â”€ burn-cuda 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚       â”‚       â”‚   â””â”€â”€ burn 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚       â”‚       â””â”€â”€ burn-cpu 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚       â”‚           â””â”€â”€ burn 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚       â””â”€â”€ burn-cubecl 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”œâ”€â”€ cubek-random 0.1.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”œâ”€â”€ cubek-attention 0.1.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚   â””â”€â”€ cubek 0.1.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â””â”€â”€ cubek 0.1.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”œâ”€â”€ cubek-quant 0.1.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â””â”€â”€ cubek 0.1.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”œâ”€â”€ cubek-matmul 0.1.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”œâ”€â”€ cubek-convolution 0.1.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚   â””â”€â”€ cubek 0.1.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”œâ”€â”€ cubek-attention 0.1.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â””â”€â”€ cubek 0.1.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”œâ”€â”€ cubek-convolution 0.1.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”œâ”€â”€ cubek-attention 0.1.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”œâ”€â”€ cubek 0.1.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”œâ”€â”€ burn-wgpu 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”œâ”€â”€ burn-std 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”œâ”€â”€ burn-tensor 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚   â”œâ”€â”€ burn-store 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚   â”‚   â””â”€â”€ burn 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚   â””â”€â”€ burn-core 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚       â”œâ”€â”€ burn-store 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚       â”œâ”€â”€ burn-optim 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚       â”‚   â””â”€â”€ burn 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚       â”œâ”€â”€ burn-nn 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚       â”‚   â”œâ”€â”€ burn-store 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚       â”‚   â””â”€â”€ burn 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚       â””â”€â”€ burn 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”œâ”€â”€ burn-router 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚   â””â”€â”€ burn 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”œâ”€â”€ burn-ndarray 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚   â”œâ”€â”€ kataglyphis_rustprojecttemplate 0.1.0
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚   â””â”€â”€ burn 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”œâ”€â”€ burn-cubecl-fusion 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”œâ”€â”€ burn-cubecl 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”œâ”€â”€ burn-core 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”œâ”€â”€ burn-candle 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚   â””â”€â”€ burn 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”œâ”€â”€ burn-backend 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚   â”œâ”€â”€ burn-wgpu 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚   â”œâ”€â”€ burn-tensor 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚   â”œâ”€â”€ burn-router 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚   â”œâ”€â”€ burn-rocm 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚   â”œâ”€â”€ burn-ndarray 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚   â”œâ”€â”€ burn-ir 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚   â”‚   â”œâ”€â”€ burn-router 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚   â”‚   â”œâ”€â”€ burn-ndarray 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚   â”‚   â”œâ”€â”€ burn-fusion 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ burn-cubecl-fusion 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚   â”‚   â”‚   â””â”€â”€ burn-cubecl 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚   â”‚   â”œâ”€â”€ burn-cubecl-fusion 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚   â”‚   â””â”€â”€ burn-cubecl 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚   â”œâ”€â”€ burn-fusion 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚   â”œâ”€â”€ burn-cuda 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚   â”œâ”€â”€ burn-cubecl-fusion 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚   â”œâ”€â”€ burn-cubecl 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚   â”œâ”€â”€ burn-cpu 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚   â”œâ”€â”€ burn-candle 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚   â””â”€â”€ burn-autodiff 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚       â”œâ”€â”€ kataglyphis_rustprojecttemplate 0.1.0
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚       â”œâ”€â”€ burn-ndarray 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â”‚       â””â”€â”€ burn 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”‚   â””â”€â”€ burn-autodiff 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”œâ”€â”€ burn-rocm 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”œâ”€â”€ burn-cuda 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”œâ”€â”€ burn-cubecl-fusion 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”œâ”€â”€ burn-cubecl 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â”œâ”€â”€ burn-cpu 0.20.1
+[00:06:03]     â”‚   â”‚       â”‚                       â””â”€â”€ burn-backend 0.20.1
+[00:06:03]     â”‚   â”‚       â”œâ”€â”€ tracel-mlir-sys 20.1.4-7
+[00:06:03]     â”‚   â”‚       â”‚   â”œâ”€â”€ tracel-mlir-rs 20.1.4-7
+[00:06:03]     â”‚   â”‚       â”‚   â””â”€â”€ tracel-llvm 20.1.4-7
+[00:06:03]     â”‚   â”‚       â”œâ”€â”€ tracel-mlir-rs-macros 20.1.4-7
+[00:06:03]     â”‚   â”‚       â””â”€â”€ cubecl-cpu 0.9.0
+[00:06:03]     â”‚   â””â”€â”€ hyper-rustls 0.27.7
+[00:06:03]     â”‚       â””â”€â”€ reqwest 0.12.28
+[00:06:03]     â”œâ”€â”€ reqwest 0.12.28
+[00:06:03]     â”œâ”€â”€ quinn-proto 0.11.14
+[00:06:03]     â”‚   â””â”€â”€ quinn 0.11.9
+[00:06:03]     â”‚       â””â”€â”€ reqwest 0.12.28
+[00:06:03]     â”œâ”€â”€ quinn 0.11.9
+[00:06:03]     â””â”€â”€ hyper-rustls 0.27.7
+[00:06:03] Crate:     tar
+[00:06:03] Version:   0.4.44
+[00:06:03] Title:     `unpack_in` can chmod arbitrary directories by following symlinks
+[00:06:03] Date:      2026-03-19
+[00:06:03] ID:        RUSTSEC-2026-0067
+[00:06:03] URL:       https://rustsec.org/advisories/RUSTSEC-2026-0067
+[00:06:03] Severity:  5.1 (medium)
+[00:06:03] Solution:  Upgrade to >=0.4.45
+[00:06:03] Dependency tree:
+[00:06:03] tar 0.4.44
+[00:06:03] â”œâ”€â”€ tract-nnef 0.22.1
+[00:06:03] â”‚   â”œâ”€â”€ tract-onnx-opl 0.22.1
+[00:06:03] â”‚   â”‚   â””â”€â”€ tract-onnx 0.22.1
+[00:06:03] â”‚   â”‚       â””â”€â”€ kataglyphis_rustprojecttemplate 0.1.0
+[00:06:03] â”‚   â””â”€â”€ tract-onnx 0.22.1
+[00:06:03] â””â”€â”€ tracel-llvm-bundler 20.1.4-7
+[00:06:03]     â”œâ”€â”€ tracel-tblgen-rs 20.1.4-7
+[00:06:03]     â”‚   â””â”€â”€ tracel-mlir-rs-macros 20.1.4-7
+[00:06:03]     â”‚       â””â”€â”€ tracel-mlir-rs 20.1.4-7
+[00:06:03]     â”‚           â””â”€â”€ tracel-llvm 20.1.4-7
+[00:06:03]     â”‚               â””â”€â”€ cubecl-cpu 0.9.0
+[00:06:03]     â”‚                   â””â”€â”€ cubecl 0.9.0
+[00:06:03]     â”‚                       â”œâ”€â”€ cubek-reduce 0.1.1
+[00:06:03]     â”‚                       â”‚   â””â”€â”€ cubek 0.1.1
+[00:06:03]     â”‚                       â”‚       â”œâ”€â”€ burn-cubecl-fusion 0.20.1
+[00:06:03]     â”‚                       â”‚       â”‚   â””â”€â”€ burn-cubecl 0.20.1
+[00:06:03]     â”‚                       â”‚       â”‚       â”œâ”€â”€ burn-wgpu 0.20.1
+[00:06:03]     â”‚                       â”‚       â”‚       â”‚   â””â”€â”€ burn 0.20.1
+[00:06:03]     â”‚                       â”‚       â”‚       â”‚       â””â”€â”€ kataglyphis_rustprojecttemplate 0.1.0
+[00:06:03]     â”‚                       â”‚       â”‚       â”œâ”€â”€ burn-rocm 0.20.1
+[00:06:03]     â”‚                       â”‚       â”‚       â”‚   â””â”€â”€ burn 0.20.1
+[00:06:03]     â”‚                       â”‚       â”‚       â”œâ”€â”€ burn-cuda 0.20.1
+[00:06:03]     â”‚                       â”‚       â”‚       â”‚   â””â”€â”€ burn 0.20.1
+[00:06:03]     â”‚                       â”‚       â”‚       â””â”€â”€ burn-cpu 0.20.1
+[00:06:03]     â”‚                       â”‚       â”‚           â””â”€â”€ burn 0.20.1
+[00:06:03]     â”‚                       â”‚       â””â”€â”€ burn-cubecl 0.20.1
+[00:06:03]     â”‚                       â”œâ”€â”€ cubek-random 0.1.1
+[00:06:03]     â”‚                       â”‚   â”œâ”€â”€ cubek-attention 0.1.1
+[00:06:03]     â”‚                       â”‚   â”‚   â””â”€â”€ cubek 0.1.1
+[00:06:03]     â”‚                       â”‚   â””â”€â”€ cubek 0.1.1
+[00:06:03]     â”‚                       â”œâ”€â”€ cubek-quant 0.1.1
+[00:06:03]     â”‚                       â”‚   â””â”€â”€ cubek 0.1.1
+[00:06:03]     â”‚                       â”œâ”€â”€ cubek-matmul 0.1.1
+[00:06:03]     â”‚                       â”‚   â”œâ”€â”€ cubek-convolution 0.1.1
+[00:06:03]     â”‚                       â”‚   â”‚   â””â”€â”€ cubek 0.1.1
+[00:06:03]     â”‚                       â”‚   â”œâ”€â”€ cubek-attention 0.1.1
+[00:06:03]     â”‚                       â”‚   â””â”€â”€ cubek 0.1.1
+[00:06:03]     â”‚                       â”œâ”€â”€ cubek-convolution 0.1.1
+[00:06:03]     â”‚                       â”œâ”€â”€ cubek-attention 0.1.1
+[00:06:03]     â”‚                       â”œâ”€â”€ cubek 0.1.1
+[00:06:03]     â”‚                       â”œâ”€â”€ burn-wgpu 0.20.1
+[00:06:03]     â”‚                       â”œâ”€â”€ burn-std 0.20.1
+[00:06:03]     â”‚                       â”‚   â”œâ”€â”€ burn-tensor 0.20.1
+[00:06:03]     â”‚                       â”‚   â”‚   â”œâ”€â”€ burn-store 0.20.1
+[00:06:03]     â”‚                       â”‚   â”‚   â”‚   â””â”€â”€ burn 0.20.1
+[00:06:03]     â”‚                       â”‚   â”‚   â””â”€â”€ burn-core 0.20.1
+[00:06:03]     â”‚                       â”‚   â”‚       â”œâ”€â”€ burn-store 0.20.1
+[00:06:03]     â”‚                       â”‚   â”‚       â”œâ”€â”€ burn-optim 0.20.1
+[00:06:03]     â”‚                       â”‚   â”‚       â”‚   â””â”€â”€ burn 0.20.1
+[00:06:03]     â”‚                       â”‚   â”‚       â”œâ”€â”€ burn-nn 0.20.1
+[00:06:03]     â”‚                       â”‚   â”‚       â”‚   â”œâ”€â”€ burn-store 0.20.1
+[00:06:03]     â”‚                       â”‚   â”‚       â”‚   â””â”€â”€ burn 0.20.1
+[00:06:03]     â”‚                       â”‚   â”‚       â””â”€â”€ burn 0.20.1
+[00:06:03]     â”‚                       â”‚   â”œâ”€â”€ burn-router 0.20.1
+[00:06:03]     â”‚                       â”‚   â”‚   â””â”€â”€ burn 0.20.1
+[00:06:03]     â”‚                       â”‚   â”œâ”€â”€ burn-ndarray 0.20.1
+[00:06:03]     â”‚                       â”‚   â”‚   â”œâ”€â”€ kataglyphis_rustprojecttemplate 0.1.0
+[00:06:03]     â”‚                       â”‚   â”‚   â””â”€â”€ burn 0.20.1
+[00:06:03]     â”‚                       â”‚   â”œâ”€â”€ burn-cubecl-fusion 0.20.1
+[00:06:03]     â”‚                       â”‚   â”œâ”€â”€ burn-cubecl 0.20.1
+[00:06:03]     â”‚                       â”‚   â”œâ”€â”€ burn-core 0.20.1
+[00:06:03]     â”‚                       â”‚   â”œâ”€â”€ burn-candle 0.20.1
+[00:06:03]     â”‚                       â”‚   â”‚   â””â”€â”€ burn 0.20.1
+[00:06:03]     â”‚                       â”‚   â”œâ”€â”€ burn-backend 0.20.1
+[00:06:03]     â”‚                       â”‚   â”‚   â”œâ”€â”€ burn-wgpu 0.20.1
+[00:06:03]     â”‚                       â”‚   â”‚   â”œâ”€â”€ burn-tensor 0.20.1
+[00:06:03]     â”‚                       â”‚   â”‚   â”œâ”€â”€ burn-router 0.20.1
+[00:06:03]     â”‚                       â”‚   â”‚   â”œâ”€â”€ burn-rocm 0.20.1
+[00:06:03]     â”‚                       â”‚   â”‚   â”œâ”€â”€ burn-ndarray 0.20.1
+[00:06:03]     â”‚                       â”‚   â”‚   â”œâ”€â”€ burn-ir 0.20.1
+[00:06:03]     â”‚                       â”‚   â”‚   â”‚   â”œâ”€â”€ burn-router 0.20.1
+[00:06:03]     â”‚                       â”‚   â”‚   â”‚   â”œâ”€â”€ burn-ndarray 0.20.1
+[00:06:03]     â”‚                       â”‚   â”‚   â”‚   â”œâ”€â”€ burn-fusion 0.20.1
+[00:06:03]     â”‚                       â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ burn-cubecl-fusion 0.20.1
+[00:06:03]     â”‚                       â”‚   â”‚   â”‚   â”‚   â””â”€â”€ burn-cubecl 0.20.1
+[00:06:03]     â”‚                       â”‚   â”‚   â”‚   â”œâ”€â”€ burn-cubecl-fusion 0.20.1
+[00:06:03]     â”‚                       â”‚   â”‚   â”‚   â””â”€â”€ burn-cubecl 0.20.1
+[00:06:03]     â”‚                       â”‚   â”‚   â”œâ”€â”€ burn-fusion 0.20.1
+[00:06:03]     â”‚                       â”‚   â”‚   â”œâ”€â”€ burn-cuda 0.20.1
+[00:06:03]     â”‚                       â”‚   â”‚   â”œâ”€â”€ burn-cubecl-fusion 0.20.1
+[00:06:03]     â”‚                       â”‚   â”‚   â”œâ”€â”€ burn-cubecl 0.20.1
+[00:06:03]     â”‚                       â”‚   â”‚   â”œâ”€â”€ burn-cpu 0.20.1
+[00:06:03]     â”‚                       â”‚   â”‚   â”œâ”€â”€ burn-candle 0.20.1
+[00:06:03]     â”‚                       â”‚   â”‚   â””â”€â”€ burn-autodiff 0.20.1
+[00:06:03]     â”‚                       â”‚   â”‚       â”œâ”€â”€ kataglyphis_rustprojecttemplate 0.1.0
+[00:06:03]     â”‚                       â”‚   â”‚       â”œâ”€â”€ burn-ndarray 0.20.1
+[00:06:03]     â”‚                       â”‚   â”‚       â””â”€â”€ burn 0.20.1
+[00:06:03]     â”‚                       â”‚   â””â”€â”€ burn-autodiff 0.20.1
+[00:06:03]     â”‚                       â”œâ”€â”€ burn-rocm 0.20.1
+[00:06:03]     â”‚                       â”œâ”€â”€ burn-cuda 0.20.1
+[00:06:03]     â”‚                       â”œâ”€â”€ burn-cubecl-fusion 0.20.1
+[00:06:03]     â”‚                       â”œâ”€â”€ burn-cubecl 0.20.1
+[00:06:03]     â”‚                       â”œâ”€â”€ burn-cpu 0.20.1
+[00:06:03]     â”‚                       â””â”€â”€ burn-backend 0.20.1
+[00:06:03]     â”œâ”€â”€ tracel-mlir-sys 20.1.4-7
+[00:06:03]     â”‚   â”œâ”€â”€ tracel-mlir-rs 20.1.4-7
+[00:06:03]     â”‚   â””â”€â”€ tracel-llvm 20.1.4-7
+[00:06:03]     â”œâ”€â”€ tracel-mlir-rs-macros 20.1.4-7
+[00:06:03]     â””â”€â”€ cubecl-cpu 0.9.0
+[00:06:03] Crate:     tar
+[00:06:03] Version:   0.4.44
+[00:06:03] Title:     tar-rs incorrectly ignores PAX size headers if header size is nonzero
+[00:06:03] Date:      2026-03-19
+[00:06:03] ID:        RUSTSEC-2026-0068
+[00:06:03] URL:       https://rustsec.org/advisories/RUSTSEC-2026-0068
+[00:06:03] Severity:  5.1 (medium)
+[00:06:03] Solution:  Upgrade to >=0.4.45
+[00:06:03]     Fetching advisory database from `https://github.com/RustSec/advisory-db.git`
+[00:06:03]       Loaded 1017 security advisories (from C:\Users\ContainerAdministrator\scoop\persist\rustup\.cargo\advisory-db)
+[00:06:03]     Updating crates.io index
+[00:06:03]     Scanning Cargo.lock for vulnerabilities (836 crate dependencies)
+[00:06:03] error: 3 vulnerabilities found!
+[00:06:03] WARNING: cargo audit failed or not available: Command failed with exit code 1: cargo audit
+[00:06:03] CMD: cargo deny check advisories licenses bans sources
+[00:10:18] 2026-03-28 23:06:03 [ERROR] failed to fetch advisory database https://github.com/RustSec/advisory-db: Failed to consume the pack sent by the remote: A pack entry could not be extracted: An IO operation failed while streaming an entry: request or response body error: error reading a body from connection: connection reset
+[00:10:18] WARNING: cargo deny checks failed or not available: Command failed with exit code 1: cargo deny check advisories licenses bans sources
+[00:10:18] SUCCESS: <<< Completed: Security Checks (audit & deny) (Duration: 28:08.504)
+
+[00:10:18] >>> Starting: Format Check
+[00:10:18] ============================================================
+[00:10:18] CMD: rustup component add rustfmt
+[00:10:19] info: component rustfmt is up to date
+[00:10:19] CMD: cargo fmt --all -- --check
+[00:10:20] SUCCESS: <<< Completed: Format Check (Duration: 00:02.040)
+
+[00:10:20] >>> Starting: Linting (cargo clippy)
+[00:10:20] ============================================================
+[00:10:20] CMD: rustup component add clippy
+[00:10:21] info: component clippy is up to date
+[00:10:21] CMD: cargo clippy --all-targets --all-features -- -D warnings
+
+[10:24:53] ============================================================
+[10:24:53] === BUILD PIPELINE SUMMARY ===
+[10:24:53] ============================================================
+

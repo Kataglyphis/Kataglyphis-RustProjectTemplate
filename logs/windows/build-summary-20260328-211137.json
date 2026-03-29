@@ -1,0 +1,23 @@
+﻿{
+    "startedAt":  "2026-03-28T21:11:37.1715133+01:00",
+    "finishedAt":  "2026-03-28T21:38:55.5200616+01:00",
+    "workspace":  "C:\\workspace",
+    "logPath":  "C:\\workspace\\logs\\windows\\build-windows-20260328-211137.log",
+    "summaryPath":  "C:\\workspace\\logs\\windows\\build-summary-20260328-211137.json",
+    "totals":  {
+                   "total":  3,
+                   "succeeded":  2,
+                   "failed":  1,
+                   "successRate":  66.7
+               },
+    "succeededSteps":  [
+                           "Verify Toolchain",
+                           "Security Checks (audit \u0026 deny)"
+                       ],
+    "failedSteps":  [
+                        "Format Check"
+                    ],
+    "errors":  {
+                   "Format Check":  "Command failed with exit code 1: cargo fmt --all -- --check"
+               }
+}

@@ -175,7 +175,11 @@ try {
 
     if (-not $SkipTests) {
       Invoke-BuildStep -Context $context -StepName 'Unit Tests' -Critical -Script {
-        Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('test', '--all', '--verbose') | Out-Null
+        $testParams = @('test', '--all', '--verbose')
+        if (-not [string]::IsNullOrWhiteSpace($cargoFeatures)) {
+          $testParams += @('--features', $cargoFeatures)
+        }
+        Invoke-BuildExternal -Context $context -File 'cargo' -Parameters $testParams | Out-Null
       } | Out-Null
     }
 

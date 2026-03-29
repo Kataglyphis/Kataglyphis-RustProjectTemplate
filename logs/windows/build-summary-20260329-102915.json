@@ -1,0 +1,24 @@
+﻿{
+    "startedAt":  "2026-03-29T10:29:15.6708599+02:00",
+    "finishedAt":  "2026-03-29T10:57:13.7593871+02:00",
+    "workspace":  "C:\\workspace",
+    "logPath":  "C:\\workspace\\logs\\windows\\build-windows-20260329-102915.log",
+    "summaryPath":  "C:\\workspace\\logs\\windows\\build-summary-20260329-102915.json",
+    "totals":  {
+                   "total":  4,
+                   "succeeded":  3,
+                   "failed":  1,
+                   "successRate":  75
+               },
+    "succeededSteps":  [
+                           "Verify Toolchain",
+                           "Security Checks (audit \u0026 deny)",
+                           "Format Check"
+                       ],
+    "failedSteps":  [
+                        "Linting (cargo clippy)"
+                    ],
+    "errors":  {
+                   "Linting (cargo clippy)":  "Command failed with exit code 101: cargo clippy --all-targets --all-features -- -D warnings"
+               }
+}

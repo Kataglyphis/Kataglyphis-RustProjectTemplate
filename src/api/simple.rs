@@ -3,18 +3,13 @@ pub fn greet(name: String) -> String {
     format!("Hello, you {name}!")
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-#[flutter_rust_bridge::frb(init)]
-pub fn init_app() {
-    // Default utilities - feel free to customize
-    flutter_rust_bridge::setup_default_user_utils();
-}
+// `init_app` is platform-specific and provided from `crate::platform`.
+// Keep `greet`, `heavy_computation`, and async helpers here.
 
-#[cfg(target_arch = "wasm32")]
-#[flutter_rust_bridge::frb(sync)]
+/// Forwarding shim for platform-specific initialization.
+/// The real implementation lives in `crate::platform` (wasm/native).
 pub fn init_app() {
-    // Default utilities - feel free to customize
-    flutter_rust_bridge::setup_default_user_utils();
+    crate::platform::init_app();
 }
 
 /// Synchronous heavy computation demo (template stub).

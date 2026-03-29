@@ -12,6 +12,7 @@ pub mod api;
 pub mod config;
 pub mod detection;
 pub mod logging;
+pub mod platform;
 pub mod resource_monitor;
 pub mod utils;
 
@@ -34,15 +35,20 @@ pub mod gui;
 pub mod gui_wgpu;
 
 /// CXX bridge demo stub — returns a fixed integer to verify the Rust-C++ bridge works.
-#[cfg(all(feature = "with_cxxbridge", not(target_arch = "wasm32")))]
+///
+/// Provide a single, unconditional Rust function so the CXX bridge always finds
+/// `rusty_cxxbridge_integer`. The function picks an implementation based on
+/// cfg flags at compile time.
 pub fn rusty_cxxbridge_integer() -> i32 {
-    322
-}
-
-/// wasm fallback when building for wasm32 (or when the bridge feature is not enabled for wasm).
-#[cfg(target_arch = "wasm32")]
-pub fn rusty_cxxbridge_integer() -> i32 {
-    0
+    if cfg!(all(feature = "with_cxxbridge", not(target_arch = "wasm32"))) {
+        322
+    } else if cfg!(target_arch = "wasm32") {
+        0
+    } else {
+        // fallback: call the C-exported integer function so non-bridge builds
+        // still return a sensible value.
+        rusty_extern_c_integer()
+    }
 }
 
 /// C FFI demo stub — returns a fixed integer to verify `extern "C"` linkage works.

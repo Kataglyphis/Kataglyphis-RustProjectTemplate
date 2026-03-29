@@ -1,0 +1,25 @@
+﻿{
+    "startedAt":  "2026-03-28T17:07:21.0513609+01:00",
+    "finishedAt":  "2026-03-28T19:17:58.5564101+01:00",
+    "workspace":  "C:\\workspace",
+    "logPath":  "C:\\workspace\\logs\\windows\\build-windows-20260328-170721.log",
+    "summaryPath":  "C:\\workspace\\logs\\windows\\build-summary-20260328-170721.json",
+    "totals":  {
+                   "total":  5,
+                   "succeeded":  4,
+                   "failed":  1,
+                   "successRate":  80
+               },
+    "succeededSteps":  [
+                           "Verify Toolchain",
+                           "Security Checks (audit \u0026 deny)",
+                           "Format Check",
+                           "Linting (cargo clippy)"
+                       ],
+    "failedSteps":  [
+                        "Unit Tests"
+                    ],
+    "errors":  {
+                   "Unit Tests":  "Command failed with exit code 101: cargo test --all --verbose"
+               }
+}
