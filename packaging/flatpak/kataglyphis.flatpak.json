@@ -1,0 +1,24 @@
+{
+  "app-id": "io.kataglyphis.Kataglyphis",
+  "runtime": "org.freedesktop.Platform",
+  "runtime-version": "24.08",
+  "sdk": "org.freedesktop.Sdk",
+  "command": "kataglyphis_rustprojecttemplate",
+  "finish-args": [
+    "--share=network",
+    "--share=ipc",
+    "--socket=fallback-x11",
+    "--socket=wayland"
+  ],
+  "modules": [
+    {
+      "name": "kataglyphis-binary",
+      "buildsystem": "simple",
+      "build-commands": [
+        "install -D kataglyphis_rustprojecttemplate /app/bin/kataglyphis_rustprojecttemplate",
+        "install -D kataglyphis.desktop /app/share/applications/kataglyphis.desktop"
+      ],
+      "sources": []
+    }
+  ]
+}

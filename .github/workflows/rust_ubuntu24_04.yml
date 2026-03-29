@@ -9,8 +9,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
-jobs:
-  linux-pipeline:
+  jobs:
+    linux-pipeline:
     name: Build, test, package, and docs (${{ matrix.name }})
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -30,13 +30,14 @@ jobs:
             arch: arm64
             coverage_name: coverage-report-arm64
             artifact_suffix: ubuntu-24.04-arm64
-            docs: false
+          docs: false
     env:
       PLATFORM: ${{ matrix.platform }}
       ARCH: ${{ matrix.arch }}
       BINARY: kataglyphis-rustprojecttemplate
       BINARY_FILE: kataglyphis_rustprojecttemplate
       VERSION: ${{ github.ref_name }}
+      PACKAGE_TYPES: tar,deb,AppImage,Flatpak
     steps:
       - name: Free Disk Space on Host
         uses: jlumbroso/free-disk-space@main
@@ -173,7 +174,7 @@ jobs:
             bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_release.sh --features with_cxxbridge
             '
 
-      - name: 📦 Create archive
+      - name: 📦 Create archive (tar, deb, AppImage, Flatpak)
         run: |
           docker run --rm \
             --platform ${{ env.PLATFORM }} \
@@ -184,10 +185,22 @@ jobs:
             -e VERSION=${{ env.VERSION }} \
             -e PLATFORM=${{ env.PLATFORM }} \
             -e ARCH=${{ env.ARCH }} \
+            -e PACKAGE_TYPES=${{ env.PACKAGE_TYPES }} \
             ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest \
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
+            # Ensure basic packaging tools are available in the container (best-effort)
+            if command -v apt-get >/dev/null 2>&1; then
+              apt-get update
+              apt-get install -y --no-install-recommends ca-certificates wget xz-utils libfuse3-3 flatpak build-essential
+            fi
+            # Install appimagetool if missing
+            if ! command -v appimagetool >/dev/null 2>&1; then
+              echo "Installing appimagetool..."
+              wget -q -O /usr/local/bin/appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+              chmod +x /usr/local/bin/appimagetool
+            fi
             bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/package_archive.sh
             '
 
@@ -232,4 +245,40 @@ jobs:
           username: ${{ secrets.USERNAME }}
           password: ${{ secrets.PW }}
           local-dir: "./target/doc/"
+
+  flatpak-build:
+    name: Build Flatpak
+    runs-on: ubuntu-24.04
+    needs: linux-pipeline
+    if: always()
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Install flatpak-builder
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder
+
+      - name: Copy release binary
+        run: |
+          mkdir -p packaging/flatpak/build-dir
+          cp target/release/kataglyphis_rustprojecttemplate packaging/flatpak/build-dir/
+
+      - name: Build Flatpak bundle
+        run: |
+          flatpak-builder --force-clean --repo=packaging/flatpak/repo packaging/flatpak/build-dir packaging/flatpak/kataglyphis.flatpak.json
+
+      - name: Export Flatpak archive
+        run: |
+          mkdir -p dist
+          if [ -d packaging/flatpak/repo ]; then
+            flatpak build-bundle packaging/flatpak/repo dist/kataglyphis.flatpak  io.kataglyphis.Kataglyphis 1.0
+          else
+            echo "Flatpak repo not found; skipping bundle creation"
+            exit 1
+          fi
+
         

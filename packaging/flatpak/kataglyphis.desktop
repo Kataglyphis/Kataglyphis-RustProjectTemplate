@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Kataglyphis
+Exec=kataglyphis_rustprojecttemplate
+Type=Application
+Categories=Utility;
+Terminal=false
