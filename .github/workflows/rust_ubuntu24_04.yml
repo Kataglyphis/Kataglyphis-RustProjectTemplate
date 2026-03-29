@@ -196,14 +196,15 @@ jobs:
         id: vars
         run: |
           VERSION_SAFE=${VERSION//\//-}
-          echo "archive_name=dist/${BINARY}-${VERSION_SAFE}-${{ matrix.runner }}-${ARCH}.tar.gz" >> "$GITHUB_OUTPUT"
+          echo "archive_name=${BINARY}-${VERSION_SAFE}-${{ matrix.runner }}-${ARCH}.tar.gz" >> "$GITHUB_OUTPUT"
 
       - name: 📤 Upload build artifact
         uses: actions/upload-artifact@v7.0.0
         with:
           name: ${{ env.BINARY }}-${{ github.ref_name }}-${{ matrix.artifact_suffix }}
-          path: ./dist/${{ steps.vars.outputs.archive_name }}
-          
+          # Upload any generated tarball in dist/ so the step is resilient to
+          # minor filename differences coming from the packaging script.
+          path: dist/*.tar.gz
       - name: Create docs
         if: matrix.docs
         run: |
