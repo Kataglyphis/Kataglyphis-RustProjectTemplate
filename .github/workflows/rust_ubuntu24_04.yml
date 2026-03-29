@@ -204,11 +204,18 @@ jobs:
               # Install both libfuse2 (required by many AppImages) and libfuse3
               apt-get install -y --no-install-recommends ca-certificates wget xz-utils libfuse2 libfuse3-3 flatpak build-essential
             fi
-            # Install appimagetool if missing
+            # Install appimagetool if missing. Prefer an architecture-matching
+            # binary: use the aarch64 AppImage on arm64 runners to avoid Exec
+            # format errors when executing the downloaded file.
             if ! command -v appimagetool >/dev/null 2>&1; then
               echo "Installing appimagetool..."
-              wget -q -O /usr/local/bin/appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
-              chmod +x /usr/local/bin/appimagetool
+              if [ "${ARCH:-}" = "arm64" ] || [[ "${{ matrix.runner }}" == *"arm"* ]]; then
+                wget -q -O /usr/local/bin/appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-aarch64.AppImage || \
+                  wget -q -O /usr/local/bin/appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+              else
+                wget -q -O /usr/local/bin/appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+              fi
+              chmod +x /usr/local/bin/appimagetool || true
             fi
             bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/package_archive.sh
             '
