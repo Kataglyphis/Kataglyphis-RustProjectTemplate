@@ -328,6 +328,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends flatpak flatpak-builder
+          # Ensure Flathub remote is available and the required SDK/runtime are installed
+          # flatpak-builder requires the SDK/runtime matching runtime-version in the manifest
+          sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo || true
+          # Try to install the specific 24.08 SDK/platform used by the manifest. If this fails,
+          # fall back to installing the default org.freedesktop.Sdk and Platform available.
+          sudo flatpak install -y --reinstall flathub org.freedesktop.Sdk//24.08 org.freedesktop.Platform//24.08 || \
+            sudo flatpak install -y --reinstall flathub org.freedesktop.Sdk org.freedesktop.Platform || true
 
       - name: Download release artifact for current arch
         uses: actions/download-artifact@v4
