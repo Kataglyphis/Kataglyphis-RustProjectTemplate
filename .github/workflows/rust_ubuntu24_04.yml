@@ -253,10 +253,13 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7.0.0
         with:
-          # Upload the built binary for the current matrix arch so downstream
-          # jobs can pick the correct artifact.
+          # Upload the built release directory for the current matrix arch so
+          # downstream jobs receive the binary and any related artifacts.
+          # Use a glob so we preserve the target/release layout expected by
+          # the Flatpak packaging step when Download sets path: '.'.
           name: release-target-${{ matrix.arch }}
-          path: target/release/kataglyphis_rustprojecttemplate
+          path: |
+            target/release/**
 
 
       - name: 📦 Prepare archive variables
@@ -357,6 +360,7 @@ jobs:
             echo "Make sure the 'linux-pipeline' job uploaded the 'release-target-${{ matrix.arch }}' artifact"
             echo "and that the Download step succeeded."
             ls -la target || true
+            ls -la target/release || true
             exit 1
           fi
           mkdir -p packaging/flatpak/build-dir/files/bin packaging/flatpak/build-dir/files/share/applications packaging/flatpak/build-dir/files/share/icons/hicolor/256x256/apps
