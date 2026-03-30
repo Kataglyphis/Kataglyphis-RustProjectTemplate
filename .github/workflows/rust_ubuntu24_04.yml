@@ -200,11 +200,18 @@ jobs:
           echo "Attempting to load FUSE kernel module on runner..."
           sudo modprobe fuse || true
 
+          # Ensure packages that reduce AppImage warnings are present on the
+          # runner so the container can perform AppImage creation without noisy
+          # messages (appstreamcli / apt-utils are optional but helpful).
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends appstream apt-utils || true
+
           # Run the packaging container and expose /dev/fuse into it so AppImage
           # creation can use FUSE. Passing --device is preferred to --privileged.
           # Ask AppImage binaries to extract-and-run instead of using FUSE. This
           # avoids needing --privileged or kernel FUSE on the runner.
           docker run --rm \
+            --privileged \
             --device /dev/fuse \
             --platform ${{ env.PLATFORM }} \
             -v ${{ github.workspace }}:/workspace \
@@ -224,19 +231,17 @@ jobs:
               if command -v apt-get >/dev/null 2>&1; then
               apt-get update
               # Install both libfuse2 (required by many AppImages) and libfuse3
-              apt-get install -y --no-install-recommends ca-certificates wget xz-utils libfuse2 libfuse3-3 flatpak build-essential
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+                ca-certificates curl wget xz-utils libfuse2 libfuse3-3 flatpak flatpak-builder build-essential appstream apt-utils
             fi
             # Install appimagetool if missing. Prefer an architecture-matching
             # binary: use the aarch64 AppImage on arm64 runners to avoid Exec
             # format errors when executing the downloaded file.
             if ! command -v appimagetool >/dev/null 2>&1; then
               echo "Installing appimagetool..."
-              if [ "${ARCH:-}" = "arm64" ] || [[ "${{ matrix.runner }}" == *"arm"* ]]; then
-                wget -q -O /usr/local/bin/appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-aarch64.AppImage || \
-                  wget -q -O /usr/local/bin/appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
-              else
-                wget -q -O /usr/local/bin/appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
-              fi
+              APPIMAGETOOL_URL="https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-$( [ "${ARCH:-}" = "arm64" ] && echo aarch64 || echo x86_64 ).AppImage"
+              curl -fsSL -o /usr/local/bin/appimagetool "$APPIMAGETOOL_URL" || \
+                wget -q -O /usr/local/bin/appimagetool "$APPIMAGETOOL_URL" || true
               chmod +x /usr/local/bin/appimagetool || true
             fi
             bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/package_archive.sh

@@ -15,10 +15,27 @@
       "name": "kataglyphis-binary",
       "buildsystem": "simple",
       "build-commands": [
-        "install -D kataglyphis_rustprojecttemplate /app/bin/kataglyphis_rustprojecttemplate",
-        "install -D kataglyphis.desktop /app/share/applications/kataglyphis.desktop"
+        "mkdir -p /app/bin /app/share/applications /app/share/icons/hicolor/256x256/apps",
+        "sh -c 'for f in files/bin/*; do if [ -f \"$f\" ]; then install -D \"$f\" /app/bin/$(basename \"$f\"); chmod +x /app/bin/$(basename \"$f\"); fi; done'",
+        "sh -c 'if [ -f files/share/applications/kataglyphis.desktop ]; then install -D files/share/applications/kataglyphis.desktop /app/share/applications/kataglyphis.desktop; fi'"
       ],
-      "sources": []
+      "sources": [
+        {
+          "type": "file",
+          "path": "../../target/release/kataglyphis_rustprojecttemplate",
+          "dest": "files/bin"
+        },
+        {
+          "type": "file",
+          "path": "kataglyphis.desktop",
+          "dest": "files/share/applications"
+        },
+        {
+          "type": "file",
+          "path": "icon.png",
+          "dest": "files/share/icons/hicolor/256x256/apps"
+        }
+      ]
     }
   ]
 }

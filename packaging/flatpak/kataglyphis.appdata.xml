@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<component type="desktop">
+  <id>io.kataglyphis.Kataglyphis</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <name>Kataglyphis RustProjectTemplate</name>
+  <summary>Example Rust project template packaged by Kataglyphis</summary>
+  <description>
+    Kataglyphis RustProjectTemplate is an example application showing how to
+    package a Rust binary into multiple formats (tar, deb, AppImage, Flatpak).
+  </description>
+  <url type="homepage">https://github.com/kataglyphis/Kataglyphis-RustProjectTemplate</url>
+  <provides>
+    <binary>kataglyphis-rustprojecttemplate</binary>
+  </provides>
+</component>
