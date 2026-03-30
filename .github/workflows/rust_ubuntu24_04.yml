@@ -259,9 +259,10 @@ jobs:
         uses: actions/upload-artifact@v7.0.0
         with:
           name: ${{ env.BINARY }}-${{ github.ref_name }}-${{ matrix.artifact_suffix }}
-          # Upload any generated tarball in dist/ so the step is resilient to
-          # minor filename differences coming from the packaging script.
-          path: dist/*.tar.gz
+          # Upload any generated artifacts in dist/ so the step picks up
+          # tarballs, .deb, AppImage, zip, etc. produced by the packaging
+          # script running earlier in this job.
+          path: dist/*
       - name: Create docs
         if: matrix.docs
         run: |
@@ -324,5 +325,14 @@ jobs:
             echo "Flatpak repo not found; skipping bundle creation"
             exit 1
           fi
+
+      - name: Upload Flatpak artifact
+        if: always()
+        uses: actions/upload-artifact@v7.0.0
+        with:
+          # Upload the flatpak bundle(s) produced by this job. Use a
+          # specific pattern to avoid accidentally uploading unrelated files.
+          name: kataglyphis-flatpak-${{ github.ref_name }}
+          path: dist/*.flatpak
 
         
