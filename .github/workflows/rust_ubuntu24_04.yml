@@ -340,21 +340,27 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: release-target-${{ matrix.arch }}
-          path: target
+          # Download into the repository root so the artifact's original
+          # paths (e.g. target/release/...) are preserved. Downloading into
+          # 'target' previously produced target/target/... which broke the
+          # Flatpak manifest that expects target/release/kataglyphis_rustprojecttemplate
+          path: .
 
       - name: Copy release binary
         run: |
-          # If the release artifact was uploaded from the pipeline job, download
-          # it here so the Flatpak job has access to the built binary.
-          if [ ! -d target/release ] || [ ! -f target/release/kataglyphis_rustprojecttemplate ]; then
-            echo "Release binary not found locally; attempting to download artifact from previous job..."
-            mkdir -p /tmp/release_artifact
-            # actions/download-artifact is not available in this shell step; use curl to the artifact URL
-            # The recommended way is to use actions/download-artifact in a separate step, but keeping
-            # this change minimal: try to use the GitHub Actions provided environment if available.
+          # Ensure the release binary exists (download-artifact earlier places
+          # files at their original paths when path: '.' is used). Fail fast
+          # with a clear message if the binary is missing so CI logs are easier to
+          # interpret.
+          if [ ! -f target/release/kataglyphis_rustprojecttemplate ]; then
+            echo "ERROR: Release binary 'target/release/kataglyphis_rustprojecttemplate' not found."
+            echo "Make sure the 'linux-pipeline' job uploaded the 'release-target-${{ matrix.arch }}' artifact"
+            echo "and that the Download step succeeded."
+            ls -la target || true
+            exit 1
           fi
-          mkdir -p packaging/flatpak/build-dir
-          cp target/release/kataglyphis_rustprojecttemplate packaging/flatpak/build-dir/ || true
+          mkdir -p packaging/flatpak/build-dir/files/bin packaging/flatpak/build-dir/files/share/applications packaging/flatpak/build-dir/files/share/icons/hicolor/256x256/apps
+          cp target/release/kataglyphis_rustprojecttemplate packaging/flatpak/build-dir/files/bin/kataglyphis_rustprojecttemplate
 
       - name: Build Flatpak bundle
         run: |
