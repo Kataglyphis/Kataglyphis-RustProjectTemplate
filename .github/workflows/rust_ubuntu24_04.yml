@@ -239,7 +239,9 @@ jobs:
             # format errors when executing the downloaded file.
             if ! command -v appimagetool >/dev/null 2>&1; then
               echo "Installing appimagetool..."
-              APPIMAGETOOL_URL="https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-$( [ "${ARCH:-}" = "arm64" ] && echo aarch64 || echo x86_64 ).AppImage"
+              # Choose the AppImage asset that matches the runtime architecture
+              # inside the container to avoid Exec format errors on ARM runners.
+              APPIMAGETOOL_URL="https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-$( [ "$(uname -m)" = "aarch64" ] && echo aarch64 || echo x86_64 ).AppImage"
               curl -fsSL -o /usr/local/bin/appimagetool "$APPIMAGETOOL_URL" || \
                 wget -q -O /usr/local/bin/appimagetool "$APPIMAGETOOL_URL" || true
               chmod +x /usr/local/bin/appimagetool || true
