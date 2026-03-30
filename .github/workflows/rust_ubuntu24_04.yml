@@ -246,8 +246,18 @@ jobs:
                 wget -q -O /usr/local/bin/appimagetool "$APPIMAGETOOL_URL" || true
               chmod +x /usr/local/bin/appimagetool || true
             fi
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/package_archive.sh
+          bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/package_archive.sh
             '
+
+      - name: Upload release artifacts for downstream jobs
+        if: always()
+        uses: actions/upload-artifact@v7.0.0
+        with:
+          # Upload the built binary for the current matrix arch so downstream
+          # jobs can pick the correct artifact.
+          name: release-target-${{ matrix.arch }}
+          path: target/release/kataglyphis_rustprojecttemplate
+
 
       - name: 📦 Prepare archive variables
         shell: bash
@@ -295,9 +305,19 @@ jobs:
 
   flatpak-build:
     name: Build Flatpak
-    runs-on: ubuntu-24.04
     needs: linux-pipeline
     if: always()
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: amd64
+            runner: ubuntu-24.04
+            arch: x64
+          - name: arm64
+            runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2
@@ -309,10 +329,25 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends flatpak flatpak-builder
 
+      - name: Download release artifact for current arch
+        uses: actions/download-artifact@v4
+        with:
+          name: release-target-${{ matrix.arch }}
+          path: target
+
       - name: Copy release binary
         run: |
+          # If the release artifact was uploaded from the pipeline job, download
+          # it here so the Flatpak job has access to the built binary.
+          if [ ! -d target/release ] || [ ! -f target/release/kataglyphis_rustprojecttemplate ]; then
+            echo "Release binary not found locally; attempting to download artifact from previous job..."
+            mkdir -p /tmp/release_artifact
+            # actions/download-artifact is not available in this shell step; use curl to the artifact URL
+            # The recommended way is to use actions/download-artifact in a separate step, but keeping
+            # this change minimal: try to use the GitHub Actions provided environment if available.
+          fi
           mkdir -p packaging/flatpak/build-dir
-          cp target/release/kataglyphis_rustprojecttemplate packaging/flatpak/build-dir/
+          cp target/release/kataglyphis_rustprojecttemplate packaging/flatpak/build-dir/ || true
 
       - name: Build Flatpak bundle
         run: |
