@@ -257,12 +257,12 @@ jobs:
           # downstream jobs receive the binary and any related artifacts.
           # Use a glob so we preserve the target/release layout expected by
           # the Flatpak packaging step when Download sets path: '.'.
-      name: release-target-${{ matrix.arch }}
-      # Only upload the release binary itself to avoid scanning into
-      # transient build directories (e.g. packaging/flatpak/build-dir)
-      # which can contain system-owned paths and cause permission denied
-      # errors when the runner attempts to enumerate them.
-      path: |
+          name: release-target-${{ matrix.arch }}
+          # Only upload the release binary itself to avoid scanning into
+          # transient build directories (e.g. packaging/flatpak/build-dir)
+          # which can contain system-owned paths and cause permission denied
+          # errors when the runner attempts to enumerate them.
+          path: |
             target/release/${{ env.BINARY_FILE }}
 
 
