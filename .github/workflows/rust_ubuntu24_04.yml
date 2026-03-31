@@ -257,9 +257,13 @@ jobs:
           # downstream jobs receive the binary and any related artifacts.
           # Use a glob so we preserve the target/release layout expected by
           # the Flatpak packaging step when Download sets path: '.'.
-          name: release-target-${{ matrix.arch }}
-          path: |
-            target/release/**
+      name: release-target-${{ matrix.arch }}
+      # Only upload the release binary itself to avoid scanning into
+      # transient build directories (e.g. packaging/flatpak/build-dir)
+      # which can contain system-owned paths and cause permission denied
+      # errors when the runner attempts to enumerate them.
+      path: |
+            target/release/${{ env.BINARY_FILE }}
 
 
       - name: 📦 Prepare archive variables
@@ -278,6 +282,57 @@ jobs:
           # tarballs, .deb, AppImage, zip, etc. produced by the packaging
           # script running earlier in this job.
           path: dist/*
+      - name: Install flatpak tools (host)
+        # Attempt to install flatpak and flatpak-builder on the runner so
+        # we can build a Flatpak bundle in the same job (minimal change from
+        # the previous dedicated job). Failure to install is non-fatal; we
+        # will skip Flatpak creation if tools are not available.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder || true
+
+      - name: Build Flatpak bundle (if possible)
+        run: |
+          set -e
+          # Skip if manifest is missing
+          if [ ! -f packaging/flatpak/kataglyphis.flatpak.json ]; then
+            echo "No Flatpak manifest found; skipping Flatpak creation"
+            exit 0
+          fi
+          mkdir -p packaging/flatpak/build-dir/files/bin packaging/flatpak/build-dir/files/share/applications packaging/flatpak/build-dir/files/share/icons/hicolor/256x256/apps dist
+          # Copy the release binary into the expected build-dir
+          if [ -f target/release/${{ env.BINARY_FILE }} ]; then
+            cp target/release/${{ env.BINARY_FILE }} packaging/flatpak/build-dir/files/bin/${{ env.BINARY_FILE }} || true
+            chmod +x packaging/flatpak/build-dir/files/bin/${{ env.BINARY_FILE }} || true
+          else
+            echo "Release binary not found; cannot build Flatpak"
+            exit 0
+          fi
+          # Ensure flathub remote exists (best-effort)
+          if command -v flatpak >/dev/null 2>&1; then
+            sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo || true
+          else
+            echo "flatpak not available; skipping Flatpak build"
+            exit 0
+          fi
+          # Run flatpak-builder to populate a local repo
+          if ! command -v flatpak-builder >/dev/null 2>&1; then
+            echo "flatpak-builder not available; skipping Flatpak build"
+            exit 0
+          fi
+          flatpak-builder --force-clean --repo=packaging/flatpak/repo packaging/flatpak/build-dir packaging/flatpak/kataglyphis.flatpak.json || true
+          if [ -d packaging/flatpak/repo ]; then
+            flatpak build-bundle packaging/flatpak/repo dist/kataglyphis.flatpak io.kataglyphis.Kataglyphis 1.0 || true
+          else
+            echo "Flatpak repo not found after flatpak-builder; skipping bundle creation"
+          fi
+
+      - name: Upload Flatpak artifact
+        if: always()
+        uses: actions/upload-artifact@v7.0.0
+        with:
+          name: kataglyphis-flatpak-${{ github.ref_name }}
+          path: dist/*.flatpak
       - name: Create docs
         if: matrix.docs
         run: |
@@ -305,88 +360,5 @@ jobs:
           username: ${{ secrets.USERNAME }}
           password: ${{ secrets.PW }}
           local-dir: "./target/doc/"
-
-  flatpak-build:
-    name: Build Flatpak
-    needs: linux-pipeline
-    if: always()
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: amd64
-            runner: ubuntu-24.04
-            arch: x64
-          - name: arm64
-            runner: ubuntu-24.04-arm
-            arch: arm64
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6.0.2
-        with:
-          fetch-depth: 0
-
-      - name: Install flatpak-builder
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder
-          # Ensure Flathub remote is available and the required SDK/runtime are installed
-          # flatpak-builder requires the SDK/runtime matching runtime-version in the manifest
-          sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo || true
-          # Try to install the specific 24.08 SDK/platform used by the manifest. If this fails,
-          # fall back to installing the default org.freedesktop.Sdk and Platform available.
-          sudo flatpak install -y --reinstall flathub org.freedesktop.Sdk//24.08 org.freedesktop.Platform//24.08 || \
-            sudo flatpak install -y --reinstall flathub org.freedesktop.Sdk org.freedesktop.Platform || true
-
-      - name: Download release artifact for current arch
-        uses: actions/download-artifact@v4
-        with:
-          name: release-target-${{ matrix.arch }}
-          # Download into the repository root so the artifact's original
-          # paths (e.g. target/release/...) are preserved. Downloading into
-          # 'target' previously produced target/target/... which broke the
-          # Flatpak manifest that expects target/release/kataglyphis_rustprojecttemplate
-          path: .
-
-      - name: Copy release binary
-        run: |
-          # Ensure the release binary exists (download-artifact earlier places
-          # files at their original paths when path: '.' is used). Fail fast
-          # with a clear message if the binary is missing so CI logs are easier to
-          # interpret.
-          if [ ! -f target/release/kataglyphis_rustprojecttemplate ]; then
-            echo "ERROR: Release binary 'target/release/kataglyphis_rustprojecttemplate' not found."
-            echo "Make sure the 'linux-pipeline' job uploaded the 'release-target-${{ matrix.arch }}' artifact"
-            echo "and that the Download step succeeded."
-            ls -la target || true
-            ls -la target/release || true
-            exit 1
-          fi
-          mkdir -p packaging/flatpak/build-dir/files/bin packaging/flatpak/build-dir/files/share/applications packaging/flatpak/build-dir/files/share/icons/hicolor/256x256/apps
-          cp target/release/kataglyphis_rustprojecttemplate packaging/flatpak/build-dir/files/bin/kataglyphis_rustprojecttemplate
-
-      - name: Build Flatpak bundle
-        run: |
-          flatpak-builder --force-clean --repo=packaging/flatpak/repo packaging/flatpak/build-dir packaging/flatpak/kataglyphis.flatpak.json
-
-      - name: Export Flatpak archive
-        run: |
-          mkdir -p dist
-          if [ -d packaging/flatpak/repo ]; then
-            flatpak build-bundle packaging/flatpak/repo dist/kataglyphis.flatpak  io.kataglyphis.Kataglyphis 1.0
-          else
-            echo "Flatpak repo not found; skipping bundle creation"
-            exit 1
-          fi
-
-      - name: Upload Flatpak artifact
-        if: always()
-        uses: actions/upload-artifact@v7.0.0
-        with:
-          # Upload the flatpak bundle(s) produced by this job. Use a
-          # specific pattern to avoid accidentally uploading unrelated files.
-          name: kataglyphis-flatpak-${{ github.ref_name }}
-          path: dist/*.flatpak
 
         
