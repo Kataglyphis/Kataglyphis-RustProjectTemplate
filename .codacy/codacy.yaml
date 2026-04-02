@@ -1,5 +1,6 @@
 runtimes:
     - python@3.11.11
+    - go@1.24.13
 tools:
     - revive@1.7.0
     - semgrep@1.78.0

@@ -1,0 +1,24 @@
+[package]
+name = "kataglyphis_inference"
+version.workspace = true
+edition.workspace = true
+
+[features]
+default = []
+onnx_tract = ["dep:tract-onnx", "onnx"]
+onnxruntime = ["dep:ort", "ort/std", "ort/ndarray", "ort/download-binaries", "ort/tls-native", "onnx"]
+onnxruntime_directml = ["onnxruntime", "ort/directml"]
+onnxruntime_cuda = ["onnxruntime", "ort/cuda"]
+onnx = [] # Internal marker feature
+
+[dependencies]
+anyhow = { workspace = true }
+log = { workspace = true }
+kataglyphis_core = { path = "../core" }
+
+# ONNX inference (optional)
+tract-onnx = { version = "0.22", optional = true }
+ort = { workspace = true, optional = true }
+
+[lints]
+workspace = true

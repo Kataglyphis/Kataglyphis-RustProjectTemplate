@@ -89,6 +89,7 @@ cargo update
 # update versions in Cargo.toml
 cargo install cargo-edit
 cargo upgrade --dry-run --verbose
+# --pinned 
 cargo upgrade --incompatible
 ```
 

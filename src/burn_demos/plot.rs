@@ -79,11 +79,11 @@ fn present(area: &DrawingArea<BitMapBackend<'_>, Shift>) -> anyhow::Result<()> {
 }
 
 fn ensure_parent_dir(path: &Path) -> anyhow::Result<()> {
-    if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("create output directory {}", parent.display()))?;
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("create output directory {}", parent.display()))?;
+        }
     }
     Ok(())
 }

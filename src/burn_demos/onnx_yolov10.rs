@@ -2,14 +2,14 @@ use anyhow::Context;
 use burn::module::Module;
 use burn::nn;
 use burn::optim::{AdamConfig, GradientsParams, Optimizer};
-use burn::tensor::{Tensor, TensorData, backend::AutodiffBackend, backend::Backend};
+use burn::tensor::{backend::AutodiffBackend, backend::Backend, Tensor, TensorData};
 use ndarray::{Array4, Axis};
 use ort::session::Session;
 use std::path::Path;
 use std::time::Instant;
 
 use super::lcg::Lcg;
-use crate::ort_ext::{OrtResultExt, extract_first_f32_output};
+use crate::ort_ext::{extract_first_f32_output, OrtResultExt};
 
 pub fn onnx_yolov10_demo<TrainB: AutodiffBackend>(
     model_path: &Path,
@@ -20,7 +20,7 @@ pub fn onnx_yolov10_demo<TrainB: AutodiffBackend>(
     lr: f64,
     train_device: &TrainB::Device,
 ) -> anyhow::Result<()> {
-    let builder = Session::builder().with_ort_context("Failed to create ORT SessionBuilder")?;
+    let mut builder = Session::builder().with_ort_context("Failed to create ORT SessionBuilder")?;
 
     #[cfg(all(feature = "onnxruntime_directml", windows))]
     let mut builder = {
@@ -183,6 +183,7 @@ fn make_demo_image_1x3x640x640(seed: u64) -> Array4<f32> {
     }
 
     Array4::from_shape_vec((B, C, H, W), data).unwrap_or_else(|e| {
-        panic!("Failed to create demo image tensor (B={B}, C={C}, H={H}, W={W}): {e}")
+        log::warn!("Failed to create demo image tensor (B={B}, C={C}, H={H}, W={W}): {e}");
+        Array4::zeros((B, C, H, W))
     })
 }

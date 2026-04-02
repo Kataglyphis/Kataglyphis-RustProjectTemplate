@@ -31,8 +31,10 @@ fn main() {
     // environment variable so that cross-compiling to wasm32 correctly skips
     // the CXX bridge build.
     let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+    // Build the CXX bridge for native (non-wasm) targets. The bridge
+    // implementation lives in `src/native_only.rs`, so scan that file.
     if target_arch != "wasm32" {
-        cxx_build::bridge("src/lib.rs")
+        cxx_build::bridge("src/native_only.rs")
             .flag_if_supported("-std=c++17")
             .compile("kataglyphis_cxx");
     }

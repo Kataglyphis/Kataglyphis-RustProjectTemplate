@@ -1,6 +1,6 @@
 use log::error;
 
-use crate::detection::Detection;
+use crate::Detection;
 
 #[flutter_rust_bridge::frb(sync)]
 pub fn detect_persons_rgba(
@@ -9,32 +9,27 @@ pub fn detect_persons_rgba(
     width: u32,
     height: u32,
     score_threshold: f32,
-) -> Vec<Detection> {
+) -> Result<Vec<Detection>, String> {
     // Note: `person_detection` is feature-gated; keep this function compilable even when
     // ONNX features are disabled (e.g. for WASM builds).
-    let resolved_model_path = if model_path.trim().is_empty() {
+    let resolved_model_path = {
         #[cfg(onnx)]
         {
-            crate::person_detection::default_model_path()
-                .to_string_lossy()
-                .to_string()
+            crate::person_detection::resolve_model_path(Some(&model_path))
         }
 
         #[cfg(not(onnx))]
         {
-            String::new()
+            model_path
         }
-    } else {
-        model_path
     };
 
-    match detect_persons_rgba_impl(&resolved_model_path, &rgba, width, height, score_threshold) {
-        Ok(v) => v,
-        Err(e) => {
+    detect_persons_rgba_impl(&resolved_model_path, &rgba, width, height, score_threshold).map_err(
+        |e| {
             error!("detect_persons_rgba failed: {e:#}");
-            Vec::new()
-        }
-    }
+            format!("detect_persons_rgba failed: {e:#}")
+        },
+    )
 }
 
 #[cfg(onnx)]

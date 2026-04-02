@@ -45,7 +45,7 @@ jobs:
       - name: Compute version
         id: compute_version
         shell: bash
-        run: .github/scripts/compute_version.sh
+        run: Scripts/compute_version.sh
 
       - name: Cleanup disk space
         uses: ./.github/actions/cleanup-disk-space
@@ -77,7 +77,7 @@ jobs:
             --env MSIX_DISPLAY_NAME="${{ env.MSIX_DISPLAY_NAME }}" `
             --env MSIX_DESCRIPTION="${{ env.MSIX_DESCRIPTION }}" `
             --env MSIX_VERSION="$ver" `
-            --env EXTRA_CARGO_ARGS="--features with_cxxbridge" `
+            # no EXTRA_CARGO_ARGS; do not pass extra cargo args
             --mount "type=bind,source=${{ github.workspace }},target=C:\workspace" `
             -w "C:\workspace" `
             ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64 `

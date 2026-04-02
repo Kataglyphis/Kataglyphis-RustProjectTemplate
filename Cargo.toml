@@ -1,100 +1,88 @@
-[package]
-name = "kataglyphis_rustprojecttemplate"
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/telemetry",
+    "crates/inference",
+    "crates/gui",
+    "crates/cli",
+]
+
+[workspace.package]
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 license = "MIT"
 repository = "https://github.com/Kataglyphis/Kataglyphis-RustProjectTemplate"
+rust-version = "1.92.0"
+
+[workspace.dependencies]
+log = "0.4"
+env_logger = "0.11.10"
+anyhow = "1"
+chrono = "0.4"
+tokio = "1"
+clap = { version = "4", features = ["derive"] }
+burn = { version = "0.20.1", default-features = false }
+burn-autodiff = { version = "0.20.1" }
+burn-ndarray = { version = "0.20.1" }
+ndarray = { version = "0.17" }
+plotters = { version = "0.3" }
+tempfile = { version = "3" }
+ort = { version = "=2.0.0-rc.12", default-features = false }
+sysinfo = "0.38"
+flutter_rust_bridge = "=2.11.1"
+wmi = "0.18"
+
+[package]
+name = "kataglyphis_rustprojecttemplate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "Rust project template with optional GUI, ONNX backends, profiling, packaging, and CI workflows."
 readme = "README.md"
-rust-version = "1.92.0"
+rust-version.workspace = true
 
 [lib]
 name = "kataglyphis_rustprojecttemplate"
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [features]
-# CLI-only by default to avoid GTK/GStreamer on Windows.
 default = []
-# Enable the Rust <-> C++ cxx bridge. Not enabled by default; enable for native builds.
-with_cxxbridge = []
-gui = ["dep:gstreamer"]
-gui_unix = ["gui", "dep:gtk"]
-gui_linux = [
-	"gui",
-	"_gui_wgpu_deps",
-	"onnx_tract",
-]
-gui_wgpu = ["gui_windows"]
-gui_windows = [
-	"gui",
-	"_gui_wgpu_deps",
-	"onnx_tract",
-]
-
-# Private: shared WGPU-based GUI dependencies pulled in by gui_linux and gui_windows.
-_gui_wgpu_deps = [
-	"dep:gstreamer-app",
-	"dep:winit",
-	"dep:wgpu",
-	"dep:pollster",
-	"dep:bytemuck",
-	"dep:egui",
-	"dep:egui-winit",
-	"dep:egui-wgpu",
-]
-
-# Pure-Rust ONNX backend (CPU) via tract.
-onnx_tract = ["dep:tract-onnx"]
-
-# Optional ONNX Runtime backend (Windows): enables GPU inference via DirectML when available.
-onnxruntime = ["dep:ort", "ort/std", "ort/ndarray", "ort/download-binaries", "ort/tls-native"]
-onnxruntime_directml = ["onnxruntime", "ort/directml"]
-onnxruntime_cuda = ["onnxruntime", "ort/cuda"]
-
-# Prototyping playground: Burn demos + optional ONNX Runtime demo.
-# Kept behind a feature so the template stays lightweight by default.
-burn_demos = [
-	"dep:burn",
-	"dep:burn-autodiff",
-	"dep:burn-ndarray",
-	"dep:ndarray",
-	"dep:plotters",
-	"dep:tempfile",
-	"onnxruntime",
-]
+gui = ["kataglyphis_gui/gui"]
+gui_unix = ["kataglyphis_gui/gui_unix"]
+gui_linux = ["kataglyphis_gui/gui_linux"]
+gui_wgpu = ["kataglyphis_gui/gui_wgpu"]
+gui_windows = ["kataglyphis_gui/gui_windows"]
+onnx_tract = ["kataglyphis_inference/onnx_tract"]
+onnxruntime = ["kataglyphis_inference/onnxruntime", "dep:ort", "ort/std"]
+onnxruntime_directml = ["kataglyphis_inference/onnxruntime_directml"]
+onnxruntime_cuda = ["kataglyphis_inference/onnxruntime_cuda"]
+burn_demos = ["dep:burn", "dep:burn-autodiff", "dep:burn-ndarray", "dep:ndarray", "dep:plotters", "dep:tempfile", "onnxruntime"]
 
 [dependencies]
-flutter_rust_bridge = "=2.11.1"
-anyhow = "1"
-log = "0.4"
-env_logger = "0.11.9"
-chrono = "0.4"
-clap = { version = "4", features = ["derive"] }
-sysinfo = "0.38"
-gtk = { version = "0.11", package = "gtk4", features = ["v4_10"], optional = true }
-gstreamer = { version = "0.25.1", optional = true }
-gstreamer-app = { version = "0.25.0", optional = true }
-winit = { version = "0.30", optional = true }
-wgpu = { version = "27.0.0", optional = true }
-pollster = { version = "0.4", optional = true }
-bytemuck = { version = "1.25", features = ["derive"], optional = true }
-egui = { version = "0.33.3", optional = true }
-egui-winit = { version = "0.33.3", optional = true }
-egui-wgpu = { version = "0.33.3", optional = true }
+kataglyphis_core = { path = "crates/core" }
+kataglyphis_telemetry = { path = "crates/telemetry" }
+kataglyphis_inference = { path = "crates/inference", optional = true }
+kataglyphis_gui = { path = "crates/gui", optional = true }
+clap = { workspace = true }
 
-# ONNX inference (optional)
-tract-onnx = { version = "0.22", optional = true }
-ort = { version = "=2.0.0-rc.12", optional = true, default-features = false }
+log = { workspace = true }
+env_logger = { workspace = true }
 
-# Burn demos (optional)
-burn = { version = "0.20.1", default-features = false, features = ["std", "ndarray", "autodiff"], optional = true }
-burn-autodiff = { version = "0.20.1", optional = true }
-burn-ndarray = { version = "0.20.1", optional = true }
-ndarray = { version = "0.17", optional = true }
-plotters = { version = "0.3", optional = true }
-tempfile = { version = "3", optional = true }
+flutter_rust_bridge = { workspace = true }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+sysinfo = { workspace = true }
 
-# Tokio on wasm only supports a small subset of features.
+burn = { workspace = true, features = ["std", "ndarray", "autodiff"], optional = true }
+burn-autodiff = { workspace = true, optional = true }
+burn-ndarray = { workspace = true, optional = true }
+ndarray = { workspace = true, optional = true }
+plotters = { workspace = true, optional = true }
+tempfile = { workspace = true, optional = true }
+ort = { workspace = true, optional = true }
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 cxx = "1.0"
 tokio = { version = "1", features = ["fs", "macros", "rt-multi-thread", "time"] }
@@ -106,14 +94,13 @@ wasm-bindgen = "=0.2.100"
 
 [target.'cfg(windows)'.dependencies]
 serde = { version = "1", features = ["derive"] }
-wmi = "0.18"
+wmi = { workspace = true }
 
-[lints.rust]
-# Declare custom cfgs so the `unexpected_cfgs` lint stays quiet:
-# - `frb_expand`: used internally by `flutter_rust_bridge::frb`.
-# - `onnx`: emitted by build.rs when any ONNX backend feature is active.
-# - `gui_wgpu_backend`: emitted by build.rs when the WGPU GUI path is active.
+[workspace.lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)', 'cfg(onnx)', 'cfg(gui_wgpu_backend)'] }
+
+[lints]
+workspace = true
 
 [dev-dependencies]
 assert_cmd = "2"
@@ -126,9 +113,8 @@ tempfile = "3"
 cxx-build = "1.0"
 
 [package.metadata.wasm-pack.profile.release]
-wasm-opt = false
+wasm-opt = ["-O4"]
 
-# ── Release profile ─────────────────────────────────────────────────
 [profile.release]
 opt-level = 3
 lto = "fat"
@@ -136,7 +122,6 @@ codegen-units = 1
 strip = "symbols"
 panic = "abort"
 
-# Dev profile: faster incremental builds with basic optimisation for deps.
 [profile.dev.package."*"]
 opt-level = 2
 

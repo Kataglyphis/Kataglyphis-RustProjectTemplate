@@ -1,0 +1,25 @@
+[package]
+name = "kataglyphis_cli"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+kataglyphis_rustprojecttemplate = { path = "../../" }
+kataglyphis_gui = { path = "../gui", optional = true }
+clap = { version = "4", features = ["derive"] }
+log = { workspace = true }
+anyhow = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1", features = ["fs", "macros", "rt-multi-thread", "time"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { version = "1", default-features = false, features = ["macros", "rt", "time", "sync"] }
+
+[features]
+gui_windows = ["kataglyphis_gui/gui_windows", "kataglyphis_rustprojecttemplate/gui_windows"]
+gui_unix = ["kataglyphis_gui/gui_unix", "kataglyphis_rustprojecttemplate/gui_unix"]
+
+[[bin]]
+name = "kataglyphis_rustprojecttemplate"
+path = "src/main.rs"

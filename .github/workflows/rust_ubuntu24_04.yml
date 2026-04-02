@@ -61,7 +61,7 @@ jobs:
       - name: Compute version
         id: compute_version
         run: |
-          bash .github/scripts/compute_version.sh
+          bash Scripts/compute_version.sh
         shell: bash
 
       - name: Login to GitHub Container Registry
@@ -91,11 +91,24 @@ jobs:
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_debug.sh --features with_cxxbridge
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_debug.sh
             '
 
+      - name: Verify MSRV (1.92.0)
+        run: |
+          docker run --rm \
+            --platform ${{ env.PLATFORM }} \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            rust:1.92.0 \
+            bash -lc \'
+            set -e
+            git config --global --add safe.directory /workspace || true
+            cargo check --workspace --all-features
+            \'
+
       - name: Security checks (cargo audit + cargo deny)
-        continue-on-error: true
+        continue-on-error: false
         run: |
           docker run --rm \
             --platform ${{ env.PLATFORM }} \
@@ -112,15 +125,16 @@ jobs:
         continue-on-error: true
         run: |
           docker run --rm \
-            --platform ${{ env.PLATFORM }} \
-            -v ${{ github.workspace }}:/workspace \
+            --platform ${{ env.PLATFORM }} \   
+            -v ${{ github.workspace }}:/workspace \  
             -w /workspace \
             ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest \
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_fmt_clippy.sh --features with_cxxbridge
-            '
+            apt-get update && apt-get install -y libunwind-dev libdw-dev libgtk-4-dev
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_fmt_clippy.sh
+          '
 
       - name: Run unit, integration, and doc tests
         run: |
@@ -132,7 +146,7 @@ jobs:
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_test.sh --features with_cxxbridge
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_test.sh
             '
 
       - name: Run coverage
@@ -145,16 +159,10 @@ jobs:
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_coverage.sh --features with_cxxbridge
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_coverage.sh
             '
 
-      - name: Upload coverage artifacts
-        uses: actions/upload-artifact@v7.0.0
-        with:
-          name: ${{ matrix.coverage_name }}
-          path: |
-            tarpaulin-report.html
-            tarpaulin-report.xml
+      # coverage reports are uploaded together with other artifacts later
 
       - name: Run benchmarks
         run: |
@@ -166,7 +174,7 @@ jobs:
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_bench.sh --features with_cxxbridge
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_bench.sh
             '
 
       - name: 🛠️ Build release binary
@@ -179,92 +187,48 @@ jobs:
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_release.sh --features with_cxxbridge
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_release.sh
             '
-
-      - name: Ensure FUSE available on runner
-        run: |
-          echo "Installing FUSE packages on runner and attempting to load kernel module..."
-          sudo apt-get update
-          # Install userland and runtime libraries commonly required by AppImage
-          sudo apt-get install -y --no-install-recommends fuse libfuse2 || true
-          # Try to load the fuse kernel module; non-fatal if it fails on hosted runners
-          sudo modprobe fuse || true
 
       - name: 📦 Create archive (tar, deb, AppImage, Flatpak)
         run: |
-          # Try to load the FUSE kernel module on the runner so the container can
-          # use /dev/fuse. This requires sudo; failure is non-fatal here so we can
-          # surface a helpful error from the packaging step instead of hard-failing
-          # early.
-          echo "Attempting to load FUSE kernel module on runner..."
-          sudo modprobe fuse || true
-
-          # Ensure packages that reduce AppImage warnings are present on the
-          # runner so the container can perform AppImage creation without noisy
-          # messages (appstreamcli / apt-utils are optional but helpful).
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends appstream apt-utils || true
-
           # Run the packaging container and expose /dev/fuse into it so AppImage
           # creation can use FUSE. Passing --device is preferred to --privileged.
           # Ask AppImage binaries to extract-and-run instead of using FUSE. This
           # avoids needing --privileged or kernel FUSE on the runner.
           docker run --rm \
             --privileged \
-            --device /dev/fuse \
             --platform ${{ env.PLATFORM }} \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
-            -e APPIMAGE_EXTRACT_AND_RUN=1 \
-            -e BINARY=${{ env.BINARY }} \
-            -e BINARY_FILE=${{ env.BINARY_FILE }} \
-            -e VERSION=${{ env.VERSION }} \
-            -e PLATFORM=${{ env.PLATFORM }} \
-            -e ARCH=${{ env.ARCH }} \
-            -e PACKAGE_TYPES=${{ env.PACKAGE_TYPES }} \
             ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest \
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
-            # Ensure basic packaging tools are available in the container (best-effort)
-              if command -v apt-get >/dev/null 2>&1; then
-              apt-get update
-              # Install both libfuse2 (required by many AppImages) and libfuse3
-              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-                ca-certificates curl wget xz-utils libfuse2 libfuse3-3 flatpak flatpak-builder build-essential appstream apt-utils
-            fi
-            # Install appimagetool if missing. Prefer an architecture-matching
-            # binary: use the aarch64 AppImage on arm64 runners to avoid Exec
-            # format errors when executing the downloaded file.
-            if ! command -v appimagetool >/dev/null 2>&1; then
-              echo "Installing appimagetool..."
-              # Choose the AppImage asset that matches the runtime architecture
-              # inside the container to avoid Exec format errors on ARM runners.
-              APPIMAGETOOL_URL="https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-$( [ "$(uname -m)" = "aarch64" ] && echo aarch64 || echo x86_64 ).AppImage"
-              curl -fsSL -o /usr/local/bin/appimagetool "$APPIMAGETOOL_URL" || \
-                wget -q -O /usr/local/bin/appimagetool "$APPIMAGETOOL_URL" || true
-              chmod +x /usr/local/bin/appimagetool || true
-            fi
-          bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/package_archive.sh
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/06-packaging/package_archive.sh \
+              --binary "${BINARY}" \
+              --binary-file "${BINARY_FILE}" \
+              --binary-path "target/release/${BINARY_FILE}" \
+              --version "${VERSION}" \
+              --package-types "${PACKAGE_TYPES}" \
+              --platform "${PLATFORM}" \
+              --arch "${ARCH}" \
+              --flatpak-manifest "packaging/flatpak/kataglyphis.flatpak.json" \
+              --desktop-file "packaging/flatpak/kataglyphis.desktop" \
+              --icon-file "packaging/flatpak/icon.png" \
+              --archive-out-file "dist/archive_path.txt" \
+              --no-github-output
             '
 
-      - name: Upload release artifacts for downstream jobs
+      - name: Read package archive path
         if: always()
-        uses: actions/upload-artifact@v7.0.0
-        with:
-          # Upload the built release directory for the current matrix arch so
-          # downstream jobs receive the binary and any related artifacts.
-          # Use a glob so we preserve the target/release layout expected by
-          # the Flatpak packaging step when Download sets path: '.'.
-          name: release-target-${{ matrix.arch }}
-          # Only upload the release binary itself to avoid scanning into
-          # transient build directories (e.g. packaging/flatpak/build-dir)
-          # which can contain system-owned paths and cause permission denied
-          # errors when the runner attempts to enumerate them.
-          path: |
-            target/release/${{ env.BINARY_FILE }}
-
+        id: package
+        run: |
+          if [ -f dist/archive_path.txt ]; then
+            echo "archive_path=$(cat dist/archive_path.txt)" >> "$GITHUB_OUTPUT"
+          else
+            echo "archive_path=" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: 📦 Prepare archive variables
         shell: bash
@@ -273,66 +237,19 @@ jobs:
           # Use VERSION from env (set by compute_version.sh)
           VERSION_SAFE=${VERSION//\//-}
           echo "archive_name=${BINARY}-${VERSION_SAFE}-${{ matrix.runner }}-${ARCH}.tar.gz" >> "$GITHUB_OUTPUT"
-
-      - name: 📤 Upload build artifact
-        uses: actions/upload-artifact@v7.0.0
-        with:
-          name: ${{ env.BINARY }}-${{ github.ref_name }}-${{ matrix.artifact_suffix }}
-          # Upload any generated artifacts in dist/ so the step picks up
-          # tarballs, .deb, AppImage, zip, etc. produced by the packaging
-          # script running earlier in this job.
-          path: dist/*
-      - name: Install flatpak tools (host)
-        # Attempt to install flatpak and flatpak-builder on the runner so
-        # we can build a Flatpak bundle in the same job (minimal change from
-        # the previous dedicated job). Failure to install is non-fatal; we
-        # will skip Flatpak creation if tools are not available.
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder || true
-
-      - name: Build Flatpak bundle (if possible)
-        run: |
-          set -e
-          # Skip if manifest is missing
-          if [ ! -f packaging/flatpak/kataglyphis.flatpak.json ]; then
-            echo "No Flatpak manifest found; skipping Flatpak creation"
-            exit 0
-          fi
-          mkdir -p packaging/flatpak/build-dir/files/bin packaging/flatpak/build-dir/files/share/applications packaging/flatpak/build-dir/files/share/icons/hicolor/256x256/apps dist
-          # Copy the release binary into the expected build-dir
-          if [ -f target/release/${{ env.BINARY_FILE }} ]; then
-            cp target/release/${{ env.BINARY_FILE }} packaging/flatpak/build-dir/files/bin/${{ env.BINARY_FILE }} || true
-            chmod +x packaging/flatpak/build-dir/files/bin/${{ env.BINARY_FILE }} || true
-          else
-            echo "Release binary not found; cannot build Flatpak"
-            exit 0
-          fi
-          # Ensure flathub remote exists (best-effort)
-          if command -v flatpak >/dev/null 2>&1; then
-            sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo || true
-          else
-            echo "flatpak not available; skipping Flatpak build"
-            exit 0
-          fi
-          # Run flatpak-builder to populate a local repo
-          if ! command -v flatpak-builder >/dev/null 2>&1; then
-            echo "flatpak-builder not available; skipping Flatpak build"
-            exit 0
-          fi
-          flatpak-builder --force-clean --repo=packaging/flatpak/repo packaging/flatpak/build-dir packaging/flatpak/kataglyphis.flatpak.json || true
-          if [ -d packaging/flatpak/repo ]; then
-            flatpak build-bundle packaging/flatpak/repo dist/kataglyphis.flatpak io.kataglyphis.Kataglyphis 1.0 || true
-          else
-            echo "Flatpak repo not found after flatpak-builder; skipping bundle creation"
-          fi
-
-      - name: Upload Flatpak artifact
+          
+      - name: Upload all artifacts
         if: always()
         uses: actions/upload-artifact@v7.0.0
         with:
-          name: kataglyphis-flatpak-${{ github.ref_name }}
-          path: dist/*.flatpak
+          name: ${{ env.BINARY }}-${{ github.ref_name }}-${{ matrix.artifact_suffix }}-all
+          path: |
+            tarpaulin-report.html
+            tarpaulin-report.xml
+            target/release/${{ env.BINARY_FILE }}
+            dist/**
+            dist/*.flatpak
+          
       - name: Create docs
         if: matrix.docs
         run: |
