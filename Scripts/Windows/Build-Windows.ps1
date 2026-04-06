@@ -12,6 +12,7 @@
 param(
   [string[]]$Configurations = @('all'),
   [switch]$SkipMsix,
+  [switch]$SkipMsi,
   [switch]$SkipBuild,
   [switch]$SkipTests
 )
@@ -318,6 +319,47 @@ try {
       Invoke-BuildExternal -Context $context -File $makeappxPath -Parameters @('pack', '/d', $msixStaging, '/p', $packageFile, '/o') | Out-Null
 
       Write-BuildLogSuccess -Context $context -Message "MSIX package created: $packageFile"
+    }
+  }
+
+  # MSI Packaging with cargo-wix
+  $msiEnabled = Get-ConfigValue -Config $config -Path 'Msi.Enabled'
+  if (-not $SkipMsi -and $msiEnabled) {
+    Invoke-BuildOptional -Context $context -Name 'MSI Packaging' -Script {
+      Write-BuildLog -Context $context -Message "Installing cargo-wix..."
+      Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('install', 'cargo-wix') | Out-Null
+
+      $resolvedVersion = $msixVersion
+      $versionFile = Join-Path $workspacePath 'version.txt'
+      if (Test-Path $versionFile) {
+        $resolvedVersion = (Get-Content -Path $versionFile).Trim()
+      }
+      if ($resolvedVersion -match '^v') {
+        $resolvedVersion = $resolvedVersion.Substring(1)
+      }
+      # MSI version must be X.Y.Z format (3 components max for cargo-wix)
+      $versionParts = $resolvedVersion.Split('.')
+      if ($versionParts.Count -gt 3) {
+        $resolvedVersion = "$($versionParts[0]).$($versionParts[1]).$($versionParts[2])"
+      }
+
+      $msiOutputName = Get-OrDefault $env:MSI_OUTPUT_NAME (Get-ConfigValue -Config $config -Path 'Msi.OutputName')
+      if ([string]::IsNullOrWhiteSpace($msiOutputName)) {
+        $msiOutputName = $binary
+      }
+
+      $msiDistDir = Join-Path $workspacePath 'dist\msi'
+      New-Item -ItemType Directory -Path $msiDistDir -Force | Out-Null
+
+      $msiFile = Join-Path $msiDistDir "$msiOutputName-$resolvedVersion-x64.msi"
+
+      Write-BuildLog -Context $context -Message "Creating MSI package: $msiFile"
+
+      # Run cargo-wix to create the MSI
+      $wixParams = @('wix', '--no-build', '--nocapture', '--output', $msiFile)
+      Invoke-BuildExternal -Context $context -File 'cargo' -Parameters $wixParams | Out-Null
+
+      Write-BuildLogSuccess -Context $context -Message "MSI package created: $msiFile"
     }
   }
 

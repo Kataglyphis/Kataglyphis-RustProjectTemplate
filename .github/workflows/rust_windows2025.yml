@@ -121,3 +121,9 @@ jobs:
         with:
           name: ${{ env.MSIX_PACKAGE_NAME }}-${{ steps.vars.outputs.version }}-x64-msix
           path: dist/msix/*.msix
+
+      - name: Upload MSI artifact
+        uses: actions/upload-artifact@v6.0.0
+        with:
+          name: ${{ env.BINARY }}-${{ steps.vars.outputs.version }}-x64-msi
+          path: dist/msi/*.msi

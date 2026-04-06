@@ -18,4 +18,19 @@
     ManifestTemplate = 'Scripts/Windows/AppxManifest.xml.template'
     Binary = 'kataglyphis_rustprojecttemplate'
   }
+
+  Msi = @{
+    # Enable/disable MSI packaging
+    Enabled = $true
+    # Product name shown in installer
+    ProductName = 'Kataglyphis Rust Project Template'
+    # Manufacturer name
+    Manufacturer = 'Kataglyphis'
+    # Path to WiX source file (relative to workspace root)
+    WxsFile = 'wix/main.wxs'
+    # Path to license file (relative to workspace root)  
+    LicenseFile = 'wix/License.rtf'
+    # Output filename pattern (version will be appended)
+    OutputName = 'kataglyphis_rustprojecttemplate'
+  }
 }
