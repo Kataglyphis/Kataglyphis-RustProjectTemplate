@@ -101,11 +101,11 @@ jobs:
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
             rust:1.92.0 \
-            bash -lc \'
+            bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
             cargo check --workspace --all-features
-            \'
+            '
 
       - name: Security checks (cargo audit + cargo deny)
         continue-on-error: false

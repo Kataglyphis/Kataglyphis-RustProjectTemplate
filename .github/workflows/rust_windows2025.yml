@@ -77,7 +77,6 @@ jobs:
             --env MSIX_DISPLAY_NAME="${{ env.MSIX_DISPLAY_NAME }}" `
             --env MSIX_DESCRIPTION="${{ env.MSIX_DESCRIPTION }}" `
             --env MSIX_VERSION="$ver" `
-            # no EXTRA_CARGO_ARGS; do not pass extra cargo args
             --mount "type=bind,source=${{ github.workspace }},target=C:\workspace" `
             -w "C:\workspace" `
             ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64 `
