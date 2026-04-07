@@ -2,14 +2,14 @@ use anyhow::Context;
 use burn::module::Module;
 use burn::nn;
 use burn::optim::{AdamConfig, GradientsParams, Optimizer};
-use burn::tensor::{Tensor, TensorData, backend::AutodiffBackend, backend::Backend};
+use burn::tensor::{backend::AutodiffBackend, backend::Backend, Tensor, TensorData};
 use ndarray::{Array4, Axis};
 use ort::session::Session;
 use std::path::Path;
 use std::time::Instant;
 
 use super::lcg::Lcg;
-use crate::ort_ext::{OrtResultExt, extract_first_f32_output};
+use crate::ort_ext::{extract_first_f32_output, OrtResultExt};
 
 pub fn onnx_yolov10_demo<TrainB: AutodiffBackend>(
     model_path: &Path,
