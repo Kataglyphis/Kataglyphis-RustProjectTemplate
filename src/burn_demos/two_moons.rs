@@ -3,9 +3,9 @@ use burn::module::{AutodiffModule, Module};
 use burn::nn;
 use burn::optim::{AdamConfig, GradientsParams, Optimizer};
 use burn::tensor::activation::{relu, sigmoid};
-use burn::tensor::{backend::Backend, Tensor, TensorData};
+use burn::tensor::{Tensor, TensorData, backend::Backend};
 
-use crate::burn_demos::{lcg::Lcg, losses, plot, InferenceBackend, TrainingBackend};
+use crate::burn_demos::{InferenceBackend, TrainingBackend, lcg::Lcg, losses, plot};
 
 #[derive(Module, Debug)]
 struct DeepClassifier<B: Backend> {

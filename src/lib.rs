@@ -15,6 +15,7 @@ pub mod platform;
 pub mod utils;
 
 #[cfg(target_os = "windows")]
+#[allow(unused_imports)]
 pub(crate) use kataglyphis_telemetry::gpu_wmi;
 
 #[cfg(feature = "onnxruntime")]
