@@ -1,4 +1,4 @@
-use burn::tensor::{Tensor, backend::Backend};
+use burn::tensor::{backend::Backend, Tensor};
 
 /// Manual binary cross-entropy loss (keeps external deps minimal).
 ///

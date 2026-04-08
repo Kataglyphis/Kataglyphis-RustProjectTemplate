@@ -4,9 +4,9 @@ use burn::nn;
 use burn::optim::{AdamConfig, GradientsParams, Optimizer};
 use burn::record::{BinFileRecorder, FullPrecisionSettings, Recorder};
 use burn::tensor::activation::{relu, sigmoid};
-use burn::tensor::{Tensor, TensorData, backend::Backend};
+use burn::tensor::{backend::Backend, Tensor, TensorData};
 
-use crate::burn_demos::{InferenceBackend, TrainingBackend, lcg::Lcg, losses, plot};
+use crate::burn_demos::{lcg::Lcg, losses, plot, InferenceBackend, TrainingBackend};
 
 pub fn tensor_demo<B: Backend>() -> anyhow::Result<()> {
     let device = B::Device::default();

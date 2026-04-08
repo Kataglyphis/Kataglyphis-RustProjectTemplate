@@ -185,7 +185,7 @@ try {
     }
 
     Invoke-BuildStep -Context $context -StepName 'Release Build' -Critical -Script {
-      $buildParams = @('build', '--release', '--bin', $binary)
+      $buildParams = @('build', '--release', '--package', 'kataglyphis_cli', '--bin', $binary)
       if (-not [string]::IsNullOrWhiteSpace($cargoFeatures)) {
         $buildParams += @('--features', $cargoFeatures)
       }
