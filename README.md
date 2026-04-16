@@ -3,7 +3,7 @@
     <img src="images/logo.png" alt="logo" width="200" />
   </a>
 
-  <h1>🦀 Kataglyphis-RustProjectTemplate 🦀</h1>
+  <h1>Kataglyphis-RustProjectTemplate</h1>
  
   <h4>Collecting Rust best practices. Part of the <a href="https://github.com/Kataglyphis/kataglyphis-containerhub">Kataglyphis Ecosystem</a> for robust code sharing and rapid development.</h4>
 </div>
