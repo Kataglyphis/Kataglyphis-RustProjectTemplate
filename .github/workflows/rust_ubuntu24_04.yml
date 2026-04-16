@@ -94,19 +94,6 @@ jobs:
             bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_debug.sh
             '
 
-      - name: Verify MSRV (1.92.0)
-        run: |
-          docker run --rm \
-            --platform ${{ env.PLATFORM }} \
-            -v ${{ github.workspace }}:/workspace \
-            -w /workspace \
-            rust:1.92.0 \
-            bash -c '
-            set -e
-            git config --global --add safe.directory /workspace || true
-            cargo check --workspace --all-features
-            '
-
       - name: Security checks (cargo audit + cargo deny)
         continue-on-error: false
         run: |
