@@ -37,6 +37,4 @@ allow = [
 
 [sources]
 unknown-registry = "deny"
-allow-git = [
-  "https://github.com/Traverse-Research/gpu-allocator",
-]
+allow-git = []
