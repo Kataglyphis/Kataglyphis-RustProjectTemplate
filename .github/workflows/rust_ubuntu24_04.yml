@@ -186,6 +186,12 @@ jobs:
           docker run --rm \
             --privileged \
             --platform ${{ env.PLATFORM }} \
+            -e BINARY="${BINARY}" \
+            -e BINARY_FILE="${BINARY_FILE}" \
+            -e VERSION="${VERSION}" \
+            -e PACKAGE_TYPES="${PACKAGE_TYPES}" \
+            -e PLATFORM="${PLATFORM}" \
+            -e ARCH="${ARCH}" \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
             ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest \
