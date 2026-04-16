@@ -113,7 +113,7 @@ tempfile = "3"
 cxx-build = "1.0"
 
 [package.metadata.wasm-pack.profile.release]
-wasm-opt = ["-O4"]
+wasm-opt = ["-O4", "--enable-threads"]
 
 [profile.release]
 opt-level = 3
