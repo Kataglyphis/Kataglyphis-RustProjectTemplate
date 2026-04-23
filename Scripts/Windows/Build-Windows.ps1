@@ -131,6 +131,17 @@ try {
   Write-BuildLog -Context $context -Message "Binary: $binary"
   Write-BuildLog -Context $context -Message "MSIX: $msixName"
 
+  $fastBuildDir = Initialize-BuildCacheEnvironment -Context $context
+  $isolatedWorkspace = Join-Path $fastBuildDir "workspace"
+
+  Invoke-BuildStep -Context $context -StepName 'Sync Source' -Critical -Script {
+    Sync-BuildArtifacts -Context $context -Source $workspacePath -Destination $isolatedWorkspace -ExcludeCommonRustAndCppCache
+  } | Out-Null
+
+  $originalWorkspacePath = $workspacePath
+  $workspacePath = $isolatedWorkspace
+  Set-Location -Path $workspacePath
+
   $scoopShims = "C:\Users\ContainerAdministrator\scoop\shims"
   if (-not ($env:PATH -split ";" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ieq $scoopShims })) {
     Write-BuildLog -Context $context -Message "Prepending scoop shims to PATH: $scoopShims"
@@ -356,12 +367,27 @@ try {
       Write-BuildLog -Context $context -Message "Creating MSI package: $msiFile"
 
       # Run cargo-wix to create the MSI
-      $wixParams = @('wix', '--no-build', '--nocapture', '--output', $msiFile)
+      $wixParams = @('wix', '--no-build', '--nocapture', '-p', 'kataglyphis_cli', '--output', $msiFile)
       Invoke-BuildExternal -Context $context -File 'cargo' -Parameters $wixParams | Out-Null
 
       Write-BuildLogSuccess -Context $context -Message "MSI package created: $msiFile"
     }
   }
+
+  Invoke-BuildStep -Context $context -StepName 'Sync Artifacts' -Critical -Script {
+    $distSource = Join-Path $workspacePath 'dist'
+    $distDest = Join-Path $originalWorkspacePath 'dist'
+    if (Test-Path $distSource) {
+      Write-BuildLog -Context $context -Message "Syncing distribution artifacts to $distDest"
+      Sync-BuildArtifacts -Context $context -Source $distSource -Destination $distDest
+    }
+    $targetSource = Join-Path $workspacePath $cargoTargetDir
+    $targetDest = Join-Path $originalWorkspacePath $cargoTargetDir
+    if (Test-Path $targetSource) {
+      Write-BuildLog -Context $context -Message "Syncing cargo target directory to $targetDest"
+      Sync-BuildArtifacts -Context $context -Source $targetSource -Destination $targetDest -ExcludeCommonRustAndCppCache
+    }
+  } | Out-Null
 
   Write-BuildLogSuccess -Context $context -Message 'Windows build completed.'
 } finally {

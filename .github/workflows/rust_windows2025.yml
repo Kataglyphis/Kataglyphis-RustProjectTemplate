@@ -33,8 +33,8 @@ jobs:
       MSIX_DESCRIPTION: Rust project template with optional GUI, ONNX backends, profiling, packaging, and CI workflows.
 
     steps:
-      - name: Enable Git long paths
-        run: git config --global core.longpaths true
+      #- name: Enable Git long paths
+      #  run: git config --global core.longpaths true
 
       - name: Checkout repository
         uses: actions/checkout@v6.0.2
@@ -51,7 +51,7 @@ jobs:
         uses: ./.github/actions/cleanup-disk-space
 
       - name: Login to GitHub
-        uses: docker/login-action@v4.0.0
+        uses: docker/login-action@v4.1.0
         with:
           registry: ghcr.io
           username: Kataglyphis
@@ -68,7 +68,7 @@ jobs:
           # Use MSIX_VERSION computed by the shared script
           $ver = "${{ env.MSIX_VERSION }}"
 
-            docker run --rm `
+            docker run --rm --cpus 4`
             --env BINARY="${{ env.BINARY }}" `
             --env VERSION="$ver" `
             --env MSIX_PACKAGE_NAME="${{ env.MSIX_PACKAGE_NAME }}" `
@@ -111,19 +111,19 @@ jobs:
             "C:\workspace\ExternalLib\Kataglyphis-ContainerHub\windows\scripts\rust\New-Archive.ps1"
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v6.0.0
+        uses: actions/upload-artifact@7.0.1
         with:
           name: ${{ env.BINARY }}-${{ steps.vars.outputs.version }}-windows-2025-x64
           path: dist/${{ steps.vars.outputs.archive_name }}
 
       - name: Upload MSIX artifact
-        uses: actions/upload-artifact@v6.0.0
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: ${{ env.MSIX_PACKAGE_NAME }}-${{ steps.vars.outputs.version }}-x64-msix
           path: dist/msix/*.msix
 
       - name: Upload MSI artifact
-        uses: actions/upload-artifact@v6.0.0
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: ${{ env.BINARY }}-${{ steps.vars.outputs.version }}-x64-msi
           path: dist/msi/*.msi
