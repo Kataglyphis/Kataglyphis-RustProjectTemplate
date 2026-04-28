@@ -111,7 +111,7 @@ jobs:
             "C:\workspace\ExternalLib\Kataglyphis-ContainerHub\windows\scripts\rust\New-Archive.ps1"
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@7.0.1
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: ${{ env.BINARY }}-${{ steps.vars.outputs.version }}-windows-2025-x64
           path: dist/${{ steps.vars.outputs.archive_name }}
