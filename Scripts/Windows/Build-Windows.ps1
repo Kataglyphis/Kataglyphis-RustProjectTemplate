@@ -14,7 +14,8 @@ param(
   [switch]$SkipMsix,
   [switch]$SkipMsi,
   [switch]$SkipBuild,
-  [switch]$SkipTests
+  [switch]$SkipTests,
+  [switch]$Clean
 )
 
 $ErrorActionPreference = 'Stop'
@@ -153,6 +154,21 @@ try {
     Invoke-BuildExternal -Context $context -File 'rustup' -Parameters @('--version') | Out-Null
     Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('--version') | Out-Null
   } | Out-Null
+
+  if ($Clean) {
+    Invoke-BuildStep -Context $context -StepName 'Clean Build Artifacts' -Script {
+      Write-BuildLog -Context $context -Message "Cleaning cargo build artifacts..."
+      Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('clean') | Out-Null
+
+      $flutterExe = Get-Command flutter -ErrorAction SilentlyContinue
+      if ($flutterExe) {
+        Write-BuildLog -Context $context -Message "Cleaning Flutter build artifacts..."
+        Invoke-BuildExternal -Context $context -File 'flutter' -Parameters @('clean') | Out-Null
+      } else {
+        Write-BuildLogWarning -Context $context -Message "Flutter not found, skipping Flutter clean"
+      }
+    } | Out-Null
+  }
 
   if (-not $SkipBuild) {
     Invoke-BuildStep -Context $context -StepName 'Security Checks (audit & deny)' -Script {

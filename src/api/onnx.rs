@@ -1,6 +1,6 @@
 use log::error;
 
-use crate::Detection;
+pub use crate::Detection;
 
 #[flutter_rust_bridge::frb(sync)]
 pub fn detect_persons_rgba(
