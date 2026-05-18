@@ -23,6 +23,10 @@ jobs:
         shell: pwsh
     env:
       BINARY: kataglyphis_rustprojecttemplate
+      WINDOWS_CONTAINER_IMAGE: ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64
+      WINDOWS_DOCKER_CPUS: '4'
+      WINDOWS_DOCKER_MEMORY: 16g
+      WINDOWS_PACKAGE_FEATURES: gui_windows,onnxruntime_directml
       # Provide inputs for version computation script
       REF_NAME: ${{ github.ref_name }}
       RUN_NUMBER: ${{ github.run_number }}
@@ -58,9 +62,41 @@ jobs:
           password: ${{ secrets.GHCR_PAT }}
 
       - name: Pull image
-        run: docker pull ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64
+        run: docker pull ${{ env.WINDOWS_CONTAINER_IMAGE }}
 
-      - name: Build, test, and package MSIX
+      - name: Run debug unit, integration, and fuzz tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          docker run --rm `
+            --memory "${{ env.WINDOWS_DOCKER_MEMORY }}" `
+            --cpus ${{ env.WINDOWS_DOCKER_CPUS }} `
+            --env CARGO_TERM_COLOR="${{ env.CARGO_TERM_COLOR }}" `
+            --env CARGO_BUILD_JOBS="${{ env.WINDOWS_DOCKER_CPUS }}" `
+            --mount "type=bind,source=${{ github.workspace }},target=C:\workspace" `
+            -w "C:\workspace" `
+            ${{ env.WINDOWS_CONTAINER_IMAGE }} `
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+            "C:\workspace\Scripts\Windows\Invoke-DebugTests.ps1"
+
+      - name: Build and run all Windows app configs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          docker run --rm `
+            --memory "${{ env.WINDOWS_DOCKER_MEMORY }}" `
+            --cpus ${{ env.WINDOWS_DOCKER_CPUS }} `
+            --env CARGO_TERM_COLOR="${{ env.CARGO_TERM_COLOR }}" `
+            --env CARGO_BUILD_JOBS="${{ env.WINDOWS_DOCKER_CPUS }}" `
+            --mount "type=bind,source=${{ github.workspace }},target=C:\workspace" `
+            -w "C:\workspace" `
+            ${{ env.WINDOWS_CONTAINER_IMAGE }} `
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+            "C:\workspace\Scripts\Windows\Invoke-WindowsConfigMatrix.ps1"
+
+      - name: Build, lint, and package MSIX/MSI
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -68,9 +104,14 @@ jobs:
           # Use MSIX_VERSION computed by the shared script
           $ver = "${{ env.MSIX_VERSION }}"
 
-            docker run --rm --cpus 4`
+            docker run --rm `
+            --memory "${{ env.WINDOWS_DOCKER_MEMORY }}" `
+            --cpus ${{ env.WINDOWS_DOCKER_CPUS }} `
             --env BINARY="${{ env.BINARY }}" `
             --env VERSION="$ver" `
+            --env CARGO_TERM_COLOR="${{ env.CARGO_TERM_COLOR }}" `
+            --env CARGO_BUILD_JOBS="${{ env.WINDOWS_DOCKER_CPUS }}" `
+            --env CARGO_FEATURES="${{ env.WINDOWS_PACKAGE_FEATURES }}" `
             --env MSIX_PACKAGE_NAME="${{ env.MSIX_PACKAGE_NAME }}" `
             --env MSIX_PUBLISHER="${{ env.MSIX_PUBLISHER }}" `
             --env MSIX_PUBLISHER_DISPLAY_NAME="${{ env.MSIX_PUBLISHER_DISPLAY_NAME }}" `
@@ -79,9 +120,10 @@ jobs:
             --env MSIX_VERSION="$ver" `
             --mount "type=bind,source=${{ github.workspace }},target=C:\workspace" `
             -w "C:\workspace" `
-            ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64 `
+            ${{ env.WINDOWS_CONTAINER_IMAGE }} `
             powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
-            "C:\workspace\Scripts\Windows\Build-Windows.ps1"
+            "C:\workspace\Scripts\Windows\Build-Windows.ps1" `
+            -SkipTests
 
       - name: Prepare archive variables
         id: vars
@@ -100,13 +142,16 @@ jobs:
           $archive = "${{ steps.vars.outputs.archive_name }}"
 
           docker run --rm `
+            --memory "${{ env.WINDOWS_DOCKER_MEMORY }}" `
+            --cpus ${{ env.WINDOWS_DOCKER_CPUS }} `
             --mount "type=bind,source=${{ github.workspace }},target=C:\workspace" `
             -w "C:\workspace" `
             -e "BINARY=${{ env.BINARY }}" `
             -e "VERSION=$ver" `
             -e "PLATFORM=windows-2025" `
             -e "ARCH=x64" `
-            ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64 `
+            -e "CARGO_BUILD_JOBS=${{ env.WINDOWS_DOCKER_CPUS }}" `
+            ${{ env.WINDOWS_CONTAINER_IMAGE }} `
             powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
             "C:\workspace\ExternalLib\Kataglyphis-ContainerHub\windows\scripts\rust\New-Archive.ps1"
 
