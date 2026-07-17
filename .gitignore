@@ -54,6 +54,10 @@ no_llvm_build
 /unicode-downloads
 /target
 /target-msix
+# Container-built binaries copied to the repo root (Scripts/Windows/Container)
+/debug/
+/profile/
+/release/
 /library/target
 /src/bootstrap/target
 /src/ci/citool/target

@@ -112,6 +112,20 @@ cargo upgrade --incompatible
  
 ## Tests
 
+Run the complete suite (unit + integration + proptest fuzz + doc tests) at the debug profile:
+
+```bash
+cargo test --workspace --locked
+```
+
+The suites live in:
+
+- Unit tests inside the workspace crates (currently `kataglyphis_telemetry`).
+- Integration tests: `tests/integration.rs`.
+- Fuzz (property-based) tests: `tests/fuzz_test.rs` via [proptest](https://proptest-rs.github.io/proptest/) (256 random inputs per case by default). There is no separate `cargo-fuzz`/libFuzzer setup.
+
+Latest verified run (2026-07-17, debug profile, inside the Stevedore Windows container): **8 passed / 0 failed** — 3 integration, 1 proptest fuzz case, 4 telemetry unit tests; 1 doc-test ignored.
+
 <!-- ROADMAP -->
 ## Run
 ```bash
@@ -212,6 +226,31 @@ cargo run --features gui_windows -- gui --backend vulkan
 # Auto-select (wgpu PRIMARY)
 cargo run --features gui_windows -- gui --backend primary
 ```
+
+### Windows: build & test in the Stevedore container
+
+The workspace builds and tests inside the [Kataglyphis ContainerHub](https://github.com/Kataglyphis/kataglyphis-containerhub) Windows developer image (`ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64`) using [Stevedore](https://github.com/slonopotamus/stevedore)'s `docker.exe`. One driver does everything — build all three profiles (`dev`/debug, `profile` = release + debuginfo, `release` = fat LTO) and optionally the full debug test suite:
+
+```powershell
+# build debug + profile + release in the container
+powershell -ExecutionPolicy Bypass -File .\Scripts\Windows\Container\Invoke-StevedoreBuild.ps1
+
+# build AND run cargo test --workspace (unit + integration + proptest fuzz + doc)
+powershell -ExecutionPolicy Bypass -File .\Scripts\Windows\Container\Invoke-StevedoreBuild.ps1 -Test
+```
+
+Artifacts land in `target\container\{debug,profile,release}` and are mirrored to the (gitignored) repo-root `debug\`, `profile\`, `release\` folders; each contains the CLI exe, cdylib (`.dll` + import lib), staticlib (`.lib`) and pdb. Latest verified run (2026-07-17): all three profiles built (debug 1m11s, profile 1m31s, release 1m08s) and the binaries run on the host, e.g.:
+
+```powershell
+.\release\kataglyphis_rustprojecttemplate.exe stats --path .\README.md
+```
+
+Host caveats the driver handles automatically (details in `AGENTS.md` and `ExternalLib\Kataglyphis-ContainerHub\docs\windows-builds.md`):
+
+- **Dev Drive sources cannot be bind-mounted** unless `bindFlt`/`wcifs` are allowed on the volume — sources are staged to a non-Dev-Drive path first. Durable fix (elevated, then remount): `fsutil devdrv setfiltersallowed bindFlt, wcifs`
+- `--isolation process` is used for the full host CPU count (Hyper-V isolation caps at 2).
+- All cargo writes stay container-local (`CARGO_TARGET_DIR`/`CARGO_HOME`); artifacts return via plain copies through the mount.
+- A dropped docker CLI pipe does **not** mean the build died — the driver waits on the actual container state.
 
 ### Windows MSIX packaging
 
