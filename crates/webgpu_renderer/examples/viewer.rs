@@ -46,6 +46,39 @@ impl Viewer {
         }
     }
 
+    /// S key: renders one frame offscreen and writes screenshots/NNN.png.
+    fn save_screenshot(&mut self) {
+        let (Some(gpu), Some(renderer)) = (self.gpu.as_mut(), self.renderer.as_mut()) else {
+            return;
+        };
+        let (width, height) = (1920u32, 1080u32);
+        match renderer.render_to_pixels(gpu, width, height, &self.camera) {
+            Ok(pixels) => {
+                let dir = std::path::Path::new("screenshots");
+                let _ = std::fs::create_dir_all(dir);
+                let mut index = 0;
+                let path = loop {
+                    let candidate = dir.join(format!("screenshot-{index:03}.png"));
+                    if !candidate.exists() {
+                        break candidate;
+                    }
+                    index += 1;
+                };
+                match image::save_buffer(
+                    &path,
+                    &pixels,
+                    width,
+                    height,
+                    image::ColorType::Rgba8,
+                ) {
+                    Ok(()) => log::info!("Saved {}", path.display()),
+                    Err(err) => log::error!("Failed to save screenshot: {err}"),
+                }
+            }
+            Err(err) => log::error!("Screenshot render failed: {err:#}"),
+        }
+    }
+
     fn redraw(&mut self) {
         let (Some(window), Some(gpu), Some(renderer), Some(tonemap), Some(overlay), Some(controls)) = (
             self.window.as_ref(),
@@ -177,6 +210,12 @@ impl ApplicationHandler for Viewer {
                 if event.logical_key == Key::Named(NamedKey::Escape) =>
             {
                 event_loop.exit()
+            }
+            WindowEvent::KeyboardInput { event, .. }
+                if event.state.is_pressed()
+                    && event.logical_key == Key::Character("s".into()) =>
+            {
+                self.save_screenshot();
             }
             WindowEvent::Resized(size) => {
                 if let Some(gpu) = self.gpu.as_mut() {

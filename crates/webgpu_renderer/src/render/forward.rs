@@ -62,6 +62,8 @@ struct GpuPrimitive {
     alpha_blend: bool,
     casts_shadow: bool,
     world_center: Vec3,
+    aabb_min: Vec3,
+    aabb_max: Vec3,
 }
 
 fn pack_punctual_lights(lights: &[CpuLight]) -> ([[f32; 4]; MAX_PUNCTUAL_LIGHTS * 4], u32) {
@@ -489,6 +491,7 @@ impl ForwardRenderer {
                 mapped_at_creation: false,
             });
 
+            let prim_bounds = primitive_world_aabb(prim);
             let material = &prim.material;
             let slots = [
                 (&material.base_color_texture, &self.white_texture_view),
@@ -595,6 +598,8 @@ impl ForwardRenderer {
                     AlphaMode::Opaque => true,
                 },
                 world_center: primitive_world_center(prim),
+                aabb_min: prim_bounds.0,
+                aabb_max: prim_bounds.1,
             });
         }
     }
@@ -624,6 +629,7 @@ impl ForwardRenderer {
 
         let aspect = width as f32 / height as f32;
         let view_proj = camera.view_projection(aspect);
+        let frustum = Frustum::from_view_proj(&view_proj);
         let light_space = self.light_space_matrix();
         let eye = camera.eye();
 
@@ -717,7 +723,11 @@ impl ForwardRenderer {
                 occlusion_query_set: None,
             });
 
-            for prim in self.primitives.iter().filter(|p| !p.alpha_blend) {
+            for prim in self
+                .primitives
+                .iter()
+                .filter(|p| !p.alpha_blend && frustum.intersects_aabb(p.aabb_min, p.aabb_max))
+            {
                 let pipeline = if prim.double_sided {
                     &self.pipeline_double_sided
                 } else {
@@ -736,8 +746,11 @@ impl ForwardRenderer {
             pass.draw(0..3, 0..1);
 
             // Transparents last, farthest first, no depth writes.
-            let mut blended: Vec<&GpuPrimitive> =
-                self.primitives.iter().filter(|p| p.alpha_blend).collect();
+            let mut blended: Vec<&GpuPrimitive> = self
+                .primitives
+                .iter()
+                .filter(|p| p.alpha_blend && frustum.intersects_aabb(p.aabb_min, p.aabb_max))
+                .collect();
             blended.sort_by(|a, b| {
                 let da = a.world_center.distance_squared(eye);
                 let db = b.world_center.distance_squared(eye);
@@ -879,6 +892,64 @@ impl ForwardRenderer {
         let projection =
             Mat4::orthographic_rh(-radius, radius, -radius, radius, 0.1, radius * 4.0);
         projection * view
+    }
+}
+
+/// View-frustum from a wgpu-convention (0..1 depth) view-projection matrix
+/// (Gribb-Hartmann plane extraction; plane normals point inward).
+pub(crate) struct Frustum {
+    planes: [glam::Vec4; 6],
+}
+
+impl Frustum {
+    pub(crate) fn from_view_proj(m: &Mat4) -> Self {
+        let r0 = m.row(0);
+        let r1 = m.row(1);
+        let r2 = m.row(2);
+        let r3 = m.row(3);
+        Self {
+            planes: [
+                r3 + r0, // left
+                r3 - r0, // right
+                r3 + r1, // bottom
+                r3 - r1, // top
+                r2,      // near (z >= 0 in 0..1 depth)
+                r3 - r2, // far
+            ],
+        }
+    }
+
+    /// Positive-vertex test: the AABB is outside when its most favorable
+    /// corner is behind any plane.
+    pub(crate) fn intersects_aabb(&self, min: Vec3, max: Vec3) -> bool {
+        for plane in &self.planes {
+            let p = Vec3::new(
+                if plane.x >= 0.0 { max.x } else { min.x },
+                if plane.y >= 0.0 { max.y } else { min.y },
+                if plane.z >= 0.0 { max.z } else { min.z },
+            );
+            if plane.truncate().dot(p) + plane.w < 0.0 {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+fn primitive_world_aabb(prim: &crate::scene::CpuPrimitive) -> (Vec3, Vec3) {
+    let mut min = Vec3::splat(f32::INFINITY);
+    let mut max = Vec3::splat(f32::NEG_INFINITY);
+    for vertex in &prim.vertices {
+        let world = prim
+            .transform
+            .transform_point3(Vec3::from_array(vertex.position));
+        min = min.min(world);
+        max = max.max(world);
+    }
+    if min.x > max.x {
+        (Vec3::ZERO, Vec3::ZERO)
+    } else {
+        (min, max)
     }
 }
 
@@ -1080,4 +1151,28 @@ fn create_hdr_texture(device: &wgpu::Device, width: u32, height: u32) -> wgpu::T
             view_formats: &[],
         })
         .create_view(&wgpu::TextureViewDescriptor::default())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scene::camera::OrbitCamera;
+
+    #[test]
+    fn frustum_culls_out_of_view_aabbs() {
+        let camera = OrbitCamera::default();
+        let frustum = Frustum::from_view_proj(&camera.view_projection(1.0));
+
+        // Cube at the orbit target is visible.
+        assert!(frustum.intersects_aabb(Vec3::splat(-0.5), Vec3::splat(0.5)));
+        // A cube far off to the side is culled.
+        assert!(!frustum.intersects_aabb(
+            Vec3::new(1000.0, -0.5, -0.5),
+            Vec3::new(1001.0, 0.5, 0.5)
+        ));
+        // Behind the camera is culled.
+        let eye = camera.eye();
+        let behind = eye + (eye - Vec3::ZERO).normalize() * 10.0;
+        assert!(!frustum.intersects_aabb(behind - Vec3::splat(0.4), behind + Vec3::splat(0.4)));
+    }
 }

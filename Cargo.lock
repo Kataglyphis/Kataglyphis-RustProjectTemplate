@@ -4369,6 +4369,7 @@ dependencies = [
  "env_logger",
  "glam",
  "gltf",
+ "image 0.25.10",
  "log",
  "pollster",
  "wasm-bindgen",
