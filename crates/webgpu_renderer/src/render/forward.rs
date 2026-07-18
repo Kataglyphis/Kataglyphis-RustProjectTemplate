@@ -114,6 +114,9 @@ pub struct ForwardRenderer {
     pipeline_blend_double_sided: wgpu::RenderPipeline,
     shadow_pipeline: wgpu::RenderPipeline,
     sky_pipeline: wgpu::RenderPipeline,
+    pipeline_layout: wgpu::PipelineLayout,
+    shadow_pipeline_layout: wgpu::PipelineLayout,
+    sky_pipeline_layout: wgpu::PipelineLayout,
     sky_uniform_buffer: wgpu::Buffer,
     sky_bind_group: wgpu::BindGroup,
     bind_group_layout: wgpu::BindGroupLayout,
@@ -230,54 +233,8 @@ impl ForwardRenderer {
                 push_constant_ranges: &[],
             });
 
-        let make_forward_pipeline = |cull_mode: Option<wgpu::Face>, blend: bool, label: &str| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(label),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[Vertex::LAYOUT],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: HDR_FORMAT,
-                        blend: Some(if blend {
-                            wgpu::BlendState::ALPHA_BLENDING
-                        } else {
-                            wgpu::BlendState::REPLACE
-                        }),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    cull_mode,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: DEPTH_FORMAT,
-                    depth_write_enabled: !blend,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-                cache: None,
-            })
-        };
-
-        let pipeline = make_forward_pipeline(Some(wgpu::Face::Back), false, "forward_pipeline");
-        let pipeline_double_sided =
-            make_forward_pipeline(None, false, "forward_pipeline_double_sided");
-        let pipeline_blend =
-            make_forward_pipeline(Some(wgpu::Face::Back), true, "forward_pipeline_blend");
-        let pipeline_blend_double_sided =
-            make_forward_pipeline(None, true, "forward_pipeline_blend_double_sided");
+        let (pipeline, pipeline_double_sided, pipeline_blend, pipeline_blend_double_sided) =
+            create_forward_pipeline_set(device, &shader, &pipeline_layout);
 
         // Procedural sky: fullscreen triangle at far depth, only where no
         // geometry was drawn (LessEqual vs the cleared 1.0, no depth writes).
@@ -305,37 +262,7 @@ impl ForwardRenderer {
                 bind_group_layouts: &[&sky_bind_group_layout],
                 push_constant_ranges: &[],
             });
-        let sky_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("sky_pipeline"),
-            layout: Some(&sky_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &sky_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &sky_shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: HDR_FORMAT,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::LessEqual,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
+        let sky_pipeline = create_sky_pipeline(device, &sky_shader, &sky_pipeline_layout);
         let sky_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("sky_uniforms"),
             size: std::mem::size_of::<SkyUniforms>() as wgpu::BufferAddress,
@@ -351,36 +278,7 @@ impl ForwardRenderer {
             }],
         });
 
-        // Depth-only pipeline rendering the scene from the light's POV.
-        let shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("shadow_pipeline"),
-            layout: Some(&shadow_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_shadow"),
-                buffers: &[Vertex::LAYOUT],
-                compilation_options: Default::default(),
-            },
-            fragment: None,
-            primitive: wgpu::PrimitiveState {
-                cull_mode: Some(wgpu::Face::Back),
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState {
-                    constant: 2,
-                    slope_scale: 2.0,
-                    clamp: 0.0,
-                },
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
+        let shadow_pipeline = create_shadow_pipeline(device, &shader, &shadow_pipeline_layout);
 
         let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("shadow_sampler"),
@@ -442,6 +340,9 @@ impl ForwardRenderer {
             pipeline_blend_double_sided,
             shadow_pipeline,
             sky_pipeline,
+            pipeline_layout,
+            shadow_pipeline_layout,
+            sky_pipeline_layout,
             sky_uniform_buffer,
             sky_bind_group,
             bind_group_layout,
@@ -897,6 +798,43 @@ impl ForwardRenderer {
         Ok(pixels)
     }
 
+    /// Rebuilds the scene/shadow/sky pipelines from new WGSL sources.
+    /// Invalid shaders are rejected (wgpu validation error scope) and the
+    /// previous pipelines stay active.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn reload_shaders(
+        &mut self,
+        gpu: &GpuContext,
+        forward_wgsl: &str,
+        sky_wgsl: &str,
+    ) -> anyhow::Result<()> {
+        let device = &gpu.device;
+        device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("forward_shader_reloaded"),
+            source: wgpu::ShaderSource::Wgsl(forward_wgsl.into()),
+        });
+        let sky_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("sky_shader_reloaded"),
+            source: wgpu::ShaderSource::Wgsl(sky_wgsl.into()),
+        });
+        let set = create_forward_pipeline_set(device, &shader, &self.pipeline_layout);
+        let shadow = create_shadow_pipeline(device, &shader, &self.shadow_pipeline_layout);
+        let sky = create_sky_pipeline(device, &sky_shader, &self.sky_pipeline_layout);
+        if let Some(err) = pollster::block_on(device.pop_error_scope()) {
+            anyhow::bail!("shader reload rejected: {err}");
+        }
+        (
+            self.pipeline,
+            self.pipeline_double_sided,
+            self.pipeline_blend,
+            self.pipeline_blend_double_sided,
+        ) = set;
+        self.shadow_pipeline = shadow;
+        self.sky_pipeline = sky;
+        Ok(())
+    }
+
     /// Orthographic world->light-clip matrix fitted to the scene bounds.
     fn light_space_matrix(&self) -> Mat4 {
         let (min, max) = self
@@ -924,6 +862,140 @@ impl ForwardRenderer {
             Mat4::orthographic_rh(-radius, radius, -radius, radius, 0.1, radius * 4.0);
         projection * view
     }
+}
+
+type ForwardPipelineSet = (
+    wgpu::RenderPipeline,
+    wgpu::RenderPipeline,
+    wgpu::RenderPipeline,
+    wgpu::RenderPipeline,
+);
+
+fn create_forward_pipeline_set(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    pipeline_layout: &wgpu::PipelineLayout,
+) -> ForwardPipelineSet {
+    let make = |cull_mode: Option<wgpu::Face>, blend: bool, label: &str| {
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::LAYOUT],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: HDR_FORMAT,
+                        blend: Some(if blend {
+                            wgpu::BlendState::ALPHA_BLENDING
+                        } else {
+                            wgpu::BlendState::REPLACE
+                        }),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    cull_mode,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: !blend,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            })
+    };
+    (
+        make(Some(wgpu::Face::Back), false, "forward_pipeline"),
+        make(None, false, "forward_pipeline_double_sided"),
+        make(Some(wgpu::Face::Back), true, "forward_pipeline_blend"),
+        make(None, true, "forward_pipeline_blend_double_sided"),
+    )
+}
+
+fn create_shadow_pipeline(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("shadow_pipeline"),
+            layout: Some(layout),
+            vertex: wgpu::VertexState {
+                module: shader,
+                entry_point: Some("vs_shadow"),
+                buffers: &[Vertex::LAYOUT],
+                compilation_options: Default::default(),
+            },
+            fragment: None,
+            primitive: wgpu::PrimitiveState {
+                cull_mode: Some(wgpu::Face::Back),
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState {
+                    constant: 2,
+                    slope_scale: 2.0,
+                    clamp: 0.0,
+                },
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        })
+}
+
+fn create_sky_pipeline(
+    device: &wgpu::Device,
+    sky_shader: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("sky_pipeline"),
+            layout: Some(layout),
+            vertex: wgpu::VertexState {
+                module: sky_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: sky_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: HDR_FORMAT,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        })
 }
 
 /// View-frustum from a wgpu-convention (0..1 depth) view-projection matrix

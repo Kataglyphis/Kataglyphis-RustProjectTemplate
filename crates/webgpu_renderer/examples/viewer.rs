@@ -28,6 +28,23 @@ struct Viewer {
     controller: OrbitController,
     camera: OrbitCamera,
     started: Instant,
+    frame: u64,
+    shader_mtimes: Vec<(PathBuf, std::time::SystemTime)>,
+}
+
+fn shader_paths() -> Vec<PathBuf> {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/shaders");
+    vec![dir.join("forward.wgsl"), dir.join("sky.wgsl")]
+}
+
+fn shader_mtimes() -> Vec<(PathBuf, std::time::SystemTime)> {
+    shader_paths()
+        .into_iter()
+        .filter_map(|p| {
+            let mtime = std::fs::metadata(&p).and_then(|m| m.modified()).ok()?;
+            Some((p, mtime))
+        })
+        .collect()
 }
 
 impl Viewer {
@@ -43,6 +60,42 @@ impl Viewer {
             controller: OrbitController::default(),
             camera: OrbitCamera::default(),
             started: Instant::now(),
+            frame: 0,
+            shader_mtimes: shader_mtimes(),
+        }
+    }
+
+    /// Hot shader reload: re-reads src/shaders/*.wgsl and rebuilds the
+    /// pipelines; invalid WGSL keeps the previous pipelines running.
+    fn reload_shaders(&mut self) {
+        let (Some(gpu), Some(renderer)) = (self.gpu.as_ref(), self.renderer.as_mut()) else {
+            return;
+        };
+        let paths = shader_paths();
+        let (Ok(forward_src), Ok(sky_src)) = (
+            std::fs::read_to_string(&paths[0]),
+            std::fs::read_to_string(&paths[1]),
+        ) else {
+            log::error!("Failed to read shader sources for reload");
+            return;
+        };
+        match renderer.reload_shaders(gpu, &forward_src, &sky_src) {
+            Ok(()) => log::info!("Shaders reloaded"),
+            Err(err) => log::error!("{err:#}"),
+        }
+        self.shader_mtimes = shader_mtimes();
+    }
+
+    /// Polls shader file mtimes (~every 30 frames) and reloads on change.
+    fn poll_shader_changes(&mut self) {
+        self.frame += 1;
+        if !self.frame.is_multiple_of(30) {
+            return;
+        }
+        let current = shader_mtimes();
+        if current != self.shader_mtimes {
+            log::info!("Shader change detected - reloading");
+            self.reload_shaders();
         }
     }
 
@@ -80,6 +133,7 @@ impl Viewer {
     }
 
     fn redraw(&mut self) {
+        self.poll_shader_changes();
         let (Some(window), Some(gpu), Some(renderer), Some(tonemap), Some(overlay), Some(controls)) = (
             self.window.as_ref(),
             self.gpu.as_mut(),
@@ -217,6 +271,12 @@ impl ApplicationHandler for Viewer {
                     && event.logical_key == Key::Character("s".into()) =>
             {
                 self.save_screenshot();
+            }
+            WindowEvent::KeyboardInput { event, .. }
+                if event.state.is_pressed()
+                    && event.logical_key == Key::Character("r".into()) =>
+            {
+                self.reload_shaders();
             }
             WindowEvent::Resized(size) => {
                 if let Some(gpu) = self.gpu.as_mut() {
