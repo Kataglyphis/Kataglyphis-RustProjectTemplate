@@ -11,7 +11,7 @@ pub struct TonemapPass {
 }
 
 impl TonemapPass {
-    /// `output_format` is the format of the view passed to [`render`], e.g.
+    /// `output_format` is the format of the view passed to [`Self::render`], e.g.
     /// the surface format or `Rgba8UnormSrgb` for readback targets.
     pub fn new(gpu: &GpuContext, output_format: wgpu::TextureFormat) -> Self {
         let device = &gpu.device;

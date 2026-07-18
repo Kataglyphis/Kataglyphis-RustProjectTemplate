@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "WebGPU (wgpu) renderer with glTF loading; runs native and on wasm32 via WebGPU."
+readme = "README.md"
 
 [lib]
 # cdylib is what wasm-bindgen consumes for the wasm32 browser demo; rlib
