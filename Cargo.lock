@@ -4370,6 +4370,7 @@ dependencies = [
  "glam",
  "gltf",
  "image 0.25.10",
+ "ktx2",
  "log",
  "naga 26.0.0",
  "pollster",
@@ -4405,6 +4406,15 @@ checksum = "b609e7ca5ea38f093c20a4a102335b247221c9643b7a6bc3510f196f99499a9e"
 dependencies = [
  "serde",
  "static_assertions",
+]
+
+[[package]]
+name = "ktx2"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d50be8a24c37debdf3170be6ca396d5b5b165f37f94837891adac735ca416b8"
+dependencies = [
+ "bitflags 2.13.1",
 ]
 
 [[package]]

@@ -23,6 +23,7 @@ gltf = { version = "1", features = ["import", "KHR_lights_punctual", "KHR_textur
 egui = "0.33.3"
 egui-wgpu = "0.33.3"
 egui-winit = { version = "0.33.3", default-features = false }
+ktx2 = "0.5"
 
 [dev-dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }

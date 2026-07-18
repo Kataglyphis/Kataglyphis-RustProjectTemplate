@@ -185,6 +185,7 @@ fn to_rgba8(img: gltf::image::Data) -> anyhow::Result<CpuTexture> {
         width: img.width,
         height: img.height,
         rgba8,
+        compressed: None,
     })
 }
 

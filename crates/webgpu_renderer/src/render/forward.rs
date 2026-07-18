@@ -346,6 +346,7 @@ impl ForwardRenderer {
                 width: 1,
                 height: 1,
                 rgba8: vec![255, 255, 255, 255],
+                compressed: None,
             },
             false,
             Some("white_fallback"),
@@ -357,6 +358,7 @@ impl ForwardRenderer {
                 width: 1,
                 height: 1,
                 rgba8: vec![128, 128, 255, 255],
+                compressed: None,
             },
             false,
             Some("flat_normal_fallback"),
@@ -1513,12 +1515,97 @@ pub(crate) fn generate_mips(base: &CpuTexture, srgb: bool) -> Vec<(u32, u32, Vec
     levels
 }
 
+fn compressed_wgpu_format(
+    format: crate::scene::CompressedFormat,
+    srgb: bool,
+) -> wgpu::TextureFormat {
+    use crate::scene::CompressedFormat as F;
+    match (format, srgb) {
+        (F::Bc1RgbaUnorm, false) => wgpu::TextureFormat::Bc1RgbaUnorm,
+        (F::Bc1RgbaUnorm, true) => wgpu::TextureFormat::Bc1RgbaUnormSrgb,
+        (F::Bc3RgbaUnorm, false) => wgpu::TextureFormat::Bc3RgbaUnorm,
+        (F::Bc3RgbaUnorm, true) => wgpu::TextureFormat::Bc3RgbaUnormSrgb,
+        (F::Bc5RgUnorm, _) => wgpu::TextureFormat::Bc5RgUnorm,
+        (F::Bc7RgbaUnorm, false) => wgpu::TextureFormat::Bc7RgbaUnorm,
+        (F::Bc7RgbaUnorm, true) => wgpu::TextureFormat::Bc7RgbaUnormSrgb,
+    }
+}
+
+/// Uploads a pre-compressed (BCn) mip chain without touching the pixels.
+fn create_compressed_texture(
+    gpu: &GpuContext,
+    texture: &CpuTexture,
+    compressed: &crate::scene::CompressedTexture,
+    srgb: bool,
+    label: Option<&str>,
+) -> wgpu::TextureView {
+    let format = compressed_wgpu_format(compressed.format, srgb);
+    let block_bytes = compressed.format.block_bytes();
+    let gpu_texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+        label,
+        size: wgpu::Extent3d {
+            width: texture.width.max(1),
+            height: texture.height.max(1),
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: compressed.mips.len() as u32,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    for (level, data) in compressed.mips.iter().enumerate() {
+        let w = (texture.width >> level).max(1);
+        let h = (texture.height >> level).max(1);
+        let blocks_wide = w.div_ceil(4);
+        let blocks_high = h.div_ceil(4);
+        gpu.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &gpu_texture,
+                mip_level: level as u32,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(blocks_wide * block_bytes),
+                rows_per_image: Some(blocks_high),
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+    gpu_texture.create_view(&wgpu::TextureViewDescriptor::default())
+}
+
 fn create_material_texture(
     gpu: &GpuContext,
     texture: &CpuTexture,
     srgb: bool,
     label: Option<&str>,
 ) -> wgpu::TextureView {
+    if let Some(compressed) = texture.compressed.as_ref() {
+        if gpu.supports_bc {
+            return create_compressed_texture(gpu, texture, compressed, srgb, label);
+        }
+        log::warn!("block-compressed texture but no BC support; falling back to white");
+        return create_material_texture(
+            gpu,
+            &CpuTexture {
+                width: 1,
+                height: 1,
+                rgba8: vec![255, 255, 255, 255],
+                compressed: None,
+            },
+            srgb,
+            label,
+        );
+    }
     let mips = generate_mips(texture, srgb);
     let size = wgpu::Extent3d {
         width: texture.width.max(1),

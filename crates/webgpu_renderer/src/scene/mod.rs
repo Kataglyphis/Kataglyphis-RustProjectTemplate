@@ -51,14 +51,44 @@ pub enum CpuWrap {
     ClampToEdge,
 }
 
-/// Decoded RGBA8 texture. `srgb` decides the GPU format: color data (base
-/// color, emissive) is sRGB; data maps (normal, metallic-roughness,
-/// occlusion) are linear.
+/// GPU block-compressed formats we can upload straight through (no
+/// transcode). Basis ETC1S/UASTC supercompression is not handled yet.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum CompressedFormat {
+    Bc1RgbaUnorm,
+    Bc3RgbaUnorm,
+    Bc5RgUnorm,
+    Bc7RgbaUnorm,
+}
+
+impl CompressedFormat {
+    /// Bytes per 4x4 block.
+    pub fn block_bytes(self) -> u32 {
+        match self {
+            CompressedFormat::Bc1RgbaUnorm => 8,
+            _ => 16,
+        }
+    }
+}
+
+/// Pre-compressed mip chain straight from a KTX2 container.
+#[derive(Clone, Debug)]
+pub struct CompressedTexture {
+    pub format: CompressedFormat,
+    /// Block data per mip level, level 0 first.
+    pub mips: Vec<Vec<u8>>,
+}
+
+/// Decoded RGBA8 texture (or a compressed payload). `srgb` decides the GPU
+/// format: color data (base color, emissive) is sRGB; data maps (normal,
+/// metallic-roughness, occlusion) are linear.
 #[derive(Clone, Debug)]
 pub struct CpuTexture {
     pub width: u32,
     pub height: u32,
+    /// Empty when `compressed` is set.
     pub rgba8: Vec<u8>,
+    pub compressed: Option<CompressedTexture>,
 }
 
 /// A texture reference as a material uses it: image + sampler + color space.

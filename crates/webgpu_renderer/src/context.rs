@@ -14,6 +14,8 @@ use winit::window::Window;
 pub struct GpuContext {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
+    /// TEXTURE_COMPRESSION_BC was available and enabled on this device.
+    pub supports_bc: bool,
     /// Present target; `None` for headless (render-to-texture) contexts.
     pub surface: Option<wgpu::Surface<'static>>,
     pub surface_config: Option<wgpu::SurfaceConfiguration>,
@@ -42,7 +44,7 @@ impl GpuContext {
             .await
             .context("No suitable GPU adapter found")?;
 
-        let (device, queue) = request_device(&adapter).await?;
+        let (device, queue, supports_bc) = request_device(&adapter).await?;
 
         let caps = surface.get_capabilities(&adapter);
         let format = caps
@@ -73,6 +75,7 @@ impl GpuContext {
         Ok(Self {
             device,
             queue,
+            supports_bc,
             surface: Some(surface),
             surface_config: Some(surface_config),
         })
@@ -93,10 +96,11 @@ impl GpuContext {
             })
             .await
             .context("No GPU adapter found (headless)")?;
-        let (device, queue) = request_device(&adapter).await?;
+        let (device, queue, supports_bc) = request_device(&adapter).await?;
         Ok(Self {
             device,
             queue,
+            supports_bc,
             surface: None,
             surface_config: None,
         })
@@ -129,16 +133,29 @@ impl GpuContext {
     }
 }
 
-async fn request_device(adapter: &wgpu::Adapter) -> anyhow::Result<(wgpu::Device, wgpu::Queue)> {
+async fn request_device(
+    adapter: &wgpu::Adapter,
+) -> anyhow::Result<(wgpu::Device, wgpu::Queue, bool)> {
+    // Block-compressed textures where the adapter offers them (desktop);
+    // browsers/mobile usually do not, and the loader falls back.
+    let supports_bc = adapter
+        .features()
+        .contains(wgpu::Features::TEXTURE_COMPRESSION_BC);
+    let required_features = if supports_bc {
+        wgpu::Features::TEXTURE_COMPRESSION_BC
+    } else {
+        wgpu::Features::empty()
+    };
     adapter
         .request_device(&wgpu::DeviceDescriptor {
             label: Some("webgpu_renderer_device"),
-            required_features: wgpu::Features::empty(),
+            required_features,
             required_limits: wgpu::Limits::default(),
             memory_hints: wgpu::MemoryHints::default(),
             trace: wgpu::Trace::default(),
             experimental_features: wgpu::ExperimentalFeatures::default(),
         })
         .await
+        .map(|(device, queue)| (device, queue, supports_bc))
         .context("Failed to create device")
 }
