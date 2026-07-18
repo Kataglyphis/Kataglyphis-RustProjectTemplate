@@ -7,6 +7,7 @@ members = [
     "crates/media",
     "crates/gui",
     "crates/cli",
+    "crates/webgpu_renderer",
 ]
 
 [workspace.package]
