@@ -65,6 +65,30 @@ impl Viewer {
         }
     }
 
+    /// Loads a different model at runtime (drag & drop).
+    fn load_model(&mut self, path: PathBuf) {
+        let (Some(gpu), Some(renderer)) = (self.gpu.as_ref(), self.renderer.as_mut()) else {
+            return;
+        };
+        match load_gltf(&path) {
+            Ok(scene) => {
+                log::info!(
+                    "Loaded {}: {} primitives, {} triangles",
+                    path.display(),
+                    scene.primitives.len(),
+                    scene.triangle_count()
+                );
+                renderer.upload_scene(gpu, &scene);
+                self.model_path = path;
+                // Frame the new model: fit the orbit radius to its bounds.
+                self.camera = OrbitCamera::default();
+                self.controller = OrbitController::default();
+                self.started = Instant::now();
+            }
+            Err(err) => log::error!("Failed to load {}: {err:#}", path.display()),
+        }
+    }
+
     /// Hot shader reload: re-reads src/shaders/*.wgsl and rebuilds the
     /// pipelines; invalid WGSL keeps the previous pipelines running.
     fn reload_shaders(&mut self) {
@@ -222,7 +246,7 @@ impl ApplicationHandler for Viewer {
             event_loop
                 .create_window(
                     Window::default_attributes()
-                        .with_title("Kataglyphis WebGPU glTF viewer")
+                        .with_title("Kataglyphis WebGPU glTF viewer (drop a .gltf/.glb to load)")
                         .with_inner_size(winit::dpi::LogicalSize::new(1024, 768)),
                 )
                 .expect("failed to create window"),
@@ -288,6 +312,7 @@ impl ApplicationHandler for Viewer {
                     gpu.resize(size.width, size.height);
                 }
             }
+            WindowEvent::DroppedFile(path) => self.load_model(path),
             WindowEvent::RedrawRequested => self.redraw(),
             _ => {}
         }

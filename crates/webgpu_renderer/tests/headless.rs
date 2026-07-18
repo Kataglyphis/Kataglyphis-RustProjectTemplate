@@ -505,6 +505,38 @@ fn skinning_bends_the_bar() {
 }
 
 #[test]
+fn loads_binary_glb() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube.glb");
+    let bytes = std::fs::read(&path).expect("cube.glb must exist");
+    // GLB magic + version.
+    assert_eq!(&bytes[0..4], b"glTF");
+
+    let scene = kataglyphis_webgpu_renderer::asset::gltf_loader::load_gltf_slice(&bytes)
+        .expect("cube.glb must load from memory");
+    assert_eq!(scene.primitives.len(), 1);
+    assert_eq!(scene.vertex_count(), 24);
+    assert_eq!(scene.triangle_count(), 12);
+}
+
+#[test]
+fn reads_gltf_cameras() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_animated.gltf");
+    let scene = load_gltf(&path).expect("cube_animated.gltf must load");
+    assert_eq!(scene.cameras.len(), 1);
+    let camera = &scene.cameras[0];
+    assert_eq!(camera.name.as_deref(), Some("demo_cam"));
+    // The asset authors yfov as 0.7854 rad (45 deg).
+    assert!((camera.yfov_rad - std::f32::consts::FRAC_PI_4).abs() < 1e-3);
+    assert!((camera.znear - 0.1).abs() < 1e-6);
+    assert_eq!(camera.zfar, Some(100.0));
+    // Its node must exist and sit where the asset places it.
+    let world = kataglyphis_webgpu_renderer::CpuScene::compute_world_transforms(&scene.nodes);
+    let position = world[camera.node].transform_point3(glam::Vec3::ZERO);
+    assert!((position - glam::Vec3::new(0.0, 1.0, 5.0)).length() < 1e-4);
+}
+
+#[test]
 fn resize_handles_zero_dimensions() {
     let Ok(mut gpu) = GpuContext::new_headless() else {
         eprintln!("SKIP: no GPU adapter available in this environment");

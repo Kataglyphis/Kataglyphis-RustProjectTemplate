@@ -203,6 +203,18 @@ pub struct CpuAnimation {
     pub channels: Vec<CpuAnimationChannel>,
 }
 
+/// A camera authored in the glTF file.
+#[derive(Clone, Debug)]
+pub struct CpuCamera {
+    pub name: Option<String>,
+    /// Index into `CpuScene::nodes` (its world transform is the camera pose).
+    pub node: usize,
+    pub yfov_rad: f32,
+    pub znear: f32,
+    /// `None` for an infinite projection.
+    pub zfar: Option<f32>,
+}
+
 /// A glTF skin: joint nodes plus their inverse bind matrices.
 #[derive(Clone, Debug)]
 pub struct CpuSkin {
@@ -231,6 +243,7 @@ pub struct CpuScene {
     pub nodes: Vec<CpuNode>,
     pub animations: Vec<CpuAnimation>,
     pub skins: Vec<CpuSkin>,
+    pub cameras: Vec<CpuCamera>,
 }
 
 impl CpuScene {

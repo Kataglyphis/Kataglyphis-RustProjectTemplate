@@ -11,8 +11,8 @@ use glam::{Mat4, Vec2, Vec3};
 
 use crate::scene::{
     AlphaMode, ChannelValues, CpuAnimation, CpuAnimationChannel, CpuLight, CpuLightKind,
-    CpuMaterial, CpuNode, CpuPrimitive, CpuSampler, CpuScene, CpuSkin, CpuTexture, CpuTextureRef,
-    CpuWrap, Vertex,
+    CpuCamera, CpuMaterial, CpuNode, CpuPrimitive, CpuSampler, CpuScene, CpuSkin, CpuTexture,
+    CpuTextureRef, CpuWrap, Vertex,
 };
 
 pub fn load_gltf(path: impl AsRef<Path>) -> anyhow::Result<CpuScene> {
@@ -124,6 +124,22 @@ fn build_scene(
             joints: skin.joints().map(|j| j.index()).collect(),
             inverse_bind_matrices,
         });
+    }
+
+    // Cameras authored in the file (pose = their node's world transform).
+    for node in document.nodes() {
+        let Some(camera) = node.camera() else {
+            continue;
+        };
+        if let gltf::camera::Projection::Perspective(perspective) = camera.projection() {
+            scene.cameras.push(CpuCamera {
+                name: camera.name().map(str::to_string),
+                node: node.index(),
+                yfov_rad: perspective.yfov(),
+                znear: perspective.znear(),
+                zfar: perspective.zfar(),
+            });
+        }
     }
 
     let gltf_scene = document
