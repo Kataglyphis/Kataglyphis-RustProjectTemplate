@@ -103,6 +103,7 @@ pub struct OverlayControls {
     pub intensity: f32,
     pub ambient: f32,
     pub bloom: f32,
+    pub ssao: f32,
 }
 
 impl OverlayControls {
@@ -117,6 +118,7 @@ impl OverlayControls {
             intensity: light_color_intensity.w,
             ambient: light_dir_ambient.w,
             bloom: 0.6,
+            ssao: 0.7,
         }
     }
 
@@ -157,6 +159,9 @@ impl OverlayControls {
                     .changed();
                 changed |= ui
                     .add(egui::Slider::new(&mut self.bloom, 0.0..=2.0).text("bloom"))
+                    .changed();
+                changed |= ui
+                    .add(egui::Slider::new(&mut self.ssao, 0.0..=1.0).text("SSAO"))
                     .changed();
                 ui.separator();
                 ui.label("drag: orbit - wheel: zoom");

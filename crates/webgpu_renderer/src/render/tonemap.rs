@@ -59,6 +59,16 @@ impl TonemapPass {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -117,12 +127,12 @@ impl TonemapPass {
         }
     }
 
-    /// Per-frame parameters (x = bloom strength).
-    pub fn set_params(&self, queue: &wgpu::Queue, bloom_strength: f32) {
+    /// Per-frame parameters.
+    pub fn set_params(&self, queue: &wgpu::Queue, bloom_strength: f32, ssao_strength: f32) {
         queue.write_buffer(
             &self.uniform_buffer,
             0,
-            bytemuck::bytes_of(&[bloom_strength, 0.0, 0.0, 0.0]),
+            bytemuck::bytes_of(&[bloom_strength, ssao_strength, 0.0, 0.0]),
         );
     }
 
@@ -132,6 +142,7 @@ impl TonemapPass {
         gpu: &GpuContext,
         hdr_view: &wgpu::TextureView,
         bloom_view: &wgpu::TextureView,
+        ao_view: &wgpu::TextureView,
     ) {
         self.bind_group = Some(gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("tonemap_bind_group"),
@@ -152,6 +163,10 @@ impl TonemapPass {
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: self.uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(ao_view),
                 },
             ],
         }));

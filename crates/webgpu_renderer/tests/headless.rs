@@ -237,9 +237,10 @@ fn alpha_modes_blend_and_mask() {
         if g > 140 && g > r + 25 && g > b + 25 && r > 70 && b > 60 {
             blended_over_cube += 1;
         }
-        // The MASK quad (yellow, alpha 0.3 < cutoff 0.5) must be fully
-        // discarded: no yellow-dominant pixels anywhere.
-        if r > 140 && g > 140 && b < 90 {
+        // The MASK quad (saturated yellow 0.9/0.9/0.1, alpha 0.3 < cutoff
+        // 0.5) must be fully discarded. Require STRONG yellow so darkened
+        // olive blend-mix tones never trip the detector.
+        if r > 140 && g > 140 && b * 3 < r {
             yellowish += 1;
         }
     }
@@ -345,6 +346,44 @@ fn bloom_adds_energy_around_bright_sources() {
     assert!(
         sum_with > sum_without + 50_000,
         "bloom should add visible energy: {sum_without} -> {sum_with}"
+    );
+}
+
+#[test]
+fn ssao_darkens_geometry() {
+    let Ok(gpu) = GpuContext::new_headless() else {
+        eprintln!("SKIP: no GPU adapter available in this environment");
+        return;
+    };
+
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_alpha.gltf");
+    let scene = load_gltf(&path).expect("cube_alpha.gltf must load");
+    let (width, height) = (256, 256);
+    let mut renderer = ForwardRenderer::new(&gpu, width, height);
+    renderer.upload_scene(&gpu, &scene);
+    renderer.bloom_strength = 0.0;
+
+    let camera = OrbitCamera {
+        radius: 5.0,
+        pitch_deg: 60.0,
+        ..OrbitCamera::default()
+    };
+    let total = |pixels: &[u8]| -> u64 { pixels.iter().map(|&b| b as u64).sum() };
+
+    renderer.ssao_strength = 0.0;
+    let without = renderer
+        .render_to_pixels(&gpu, width, height, &camera)
+        .expect("render without ssao");
+    renderer.ssao_strength = 1.0;
+    let with = renderer
+        .render_to_pixels(&gpu, width, height, &camera)
+        .expect("render with ssao");
+
+    let (sum_without, sum_with) = (total(&without), total(&with));
+    assert!(
+        sum_with + 50_000 < sum_without,
+        "SSAO should remove energy near geometry: {sum_without} -> {sum_with}"
     );
 }
 

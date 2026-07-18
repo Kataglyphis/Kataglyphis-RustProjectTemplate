@@ -8,6 +8,7 @@ use wgpu::util::DeviceExt as _;
 
 use crate::context::GpuContext;
 use crate::render::bloom::BloomPass;
+use crate::render::ssao::SsaoPass;
 use crate::render::tonemap::TonemapPass;
 use crate::scene::camera::OrbitCamera;
 use crate::scene::{
@@ -132,8 +133,11 @@ pub struct ForwardRenderer {
     target_size: (u32, u32),
     hdr_rebound_needed: bool,
     bloom: BloomPass,
+    ssao: SsaoPass,
     /// Bloom contribution mixed in by the tonemap pass.
     pub bloom_strength: f32,
+    /// SSAO strength applied by the tonemap pass (0 = off).
+    pub ssao_strength: f32,
     punctual_lights: [[f32; 4]; MAX_PUNCTUAL_LIGHTS * 4],
     punctual_light_count: u32,
     /// Direction towards the light (world space) + ambient strength.
@@ -358,7 +362,9 @@ impl ForwardRenderer {
             target_size: (width.max(1), height.max(1)),
             hdr_rebound_needed: true,
             bloom: BloomPass::new(gpu),
+            ssao: SsaoPass::new(gpu),
             bloom_strength: 0.6,
+            ssao_strength: 0.7,
             punctual_lights: [[0.0; 4]; MAX_PUNCTUAL_LIGHTS * 4],
             punctual_light_count: 0,
             light_dir_ambient: Vec4::new(0.5, 0.8, 0.3, 0.35),
@@ -536,19 +542,27 @@ impl ForwardRenderer {
         }
         if self.hdr_rebound_needed {
             self.bloom.rebuild(gpu, width, height, &self.hdr_view);
+            self.ssao.rebuild(gpu, width, height, &self.depth);
             let bloom_out = self
                 .bloom
                 .output()
                 .expect("bloom output exists after rebuild")
                 .clone();
-            tonemap.set_input(gpu, &self.hdr_view, &bloom_out);
+            let ao_out = self
+                .ssao
+                .output()
+                .expect("ssao output exists after rebuild")
+                .clone();
+            tonemap.set_input(gpu, &self.hdr_view, &bloom_out, &ao_out);
             self.hdr_rebound_needed = false;
         }
-        tonemap.set_params(&gpu.queue, self.bloom_strength);
+        tonemap.set_params(&gpu.queue, self.bloom_strength, self.ssao_strength);
 
         let aspect = width as f32 / height as f32;
         let view_proj = camera.view_projection(aspect);
         let frustum = Frustum::from_view_proj(&view_proj);
+        self.ssao
+            .write_uniforms(&gpu.queue, camera.projection(aspect), 0.6, 0.02, 1.0);
         let light_space = self.light_space_matrix();
         let eye = camera.eye();
 
@@ -646,7 +660,8 @@ impl ForwardRenderer {
                     view: &self.depth,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Discard,
+                        // Stored: SSAO reconstructs positions from it.
+                        store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: None,
                 }),
@@ -702,6 +717,7 @@ impl ForwardRenderer {
         }
 
         self.bloom.encode(&mut encoder);
+        self.ssao.encode(&mut encoder);
         tonemap.render(&mut encoder, output_view);
         gpu.queue.submit(Some(encoder.finish()));
     }
@@ -1231,7 +1247,7 @@ fn create_depth_texture(device: &wgpu::Device, width: u32, height: u32) -> wgpu:
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: DEPTH_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         })
         .create_view(&wgpu::TextureViewDescriptor::default())
