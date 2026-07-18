@@ -5,6 +5,11 @@ edition.workspace = true
 license.workspace = true
 description = "WebGPU (wgpu) renderer with glTF loading; runs native and on wasm32 via WebGPU."
 
+[lib]
+# cdylib is what wasm-bindgen consumes for the wasm32 browser demo; rlib
+# keeps the crate usable as a normal dependency and for tests/examples.
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
 anyhow = { workspace = true }
 log = { workspace = true }
@@ -15,6 +20,13 @@ pollster = "0.4"
 bytemuck = { version = "1.25", features = ["derive"] }
 glam = { version = "0.30", features = ["bytemuck"] }
 gltf = { version = "1", features = ["import"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+console_error_panic_hook = "0.1"
+console_log = "1"
+web-sys = { version = "0.3", features = ["Document", "Window", "Element", "HtmlCanvasElement"] }
 
 [lints]
 workspace = true

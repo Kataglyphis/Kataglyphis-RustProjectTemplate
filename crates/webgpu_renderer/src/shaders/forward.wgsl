@@ -68,7 +68,7 @@ fn shadow_factor(light_space_pos: vec4<f32>, n_dot_l: f32) -> f32 {
     for (var y = -1; y <= 1; y = y + 1) {
         for (var x = -1; x <= 1; x = x + 1) {
             let offset = vec2<f32>(f32(x), f32(y)) * texel;
-            sum += textureSampleCompare(shadow_map, shadow_sampler, uv + offset, proj.z - bias);
+            sum += textureSampleCompareLevel(shadow_map, shadow_sampler, uv + offset, proj.z - bias);
         }
     }
     return sum / 9.0;

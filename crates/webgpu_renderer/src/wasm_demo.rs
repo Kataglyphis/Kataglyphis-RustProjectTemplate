@@ -1,0 +1,161 @@
+//! Browser (wasm32/WebGPU) demo entry point: renders the embedded
+//! cube-on-plane shadow scene into a canvas appended to the document body.
+//! Built with wasm-bindgen; see crates/webgpu_renderer/web/index.html.
+
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::sync::Arc;
+
+use wasm_bindgen::prelude::*;
+use winit::application::ApplicationHandler;
+use winit::event::WindowEvent;
+use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::platform::web::{EventLoopExtWebSys, WindowExtWebSys};
+use winit::window::{Window, WindowId};
+
+use crate::asset::gltf_loader::load_gltf_slice;
+use crate::context::GpuContext;
+use crate::render::forward::ForwardRenderer;
+use crate::render::tonemap::TonemapPass;
+use crate::scene::camera::OrbitCamera;
+
+const DEMO_SCENE: &[u8] = include_bytes!("../tests/assets/cube_on_plane.gltf");
+const CANVAS_WIDTH: u32 = 1024;
+const CANVAS_HEIGHT: u32 = 640;
+
+struct GpuState {
+    gpu: GpuContext,
+    renderer: ForwardRenderer,
+    tonemap: TonemapPass,
+}
+
+#[derive(Default)]
+struct DemoApp {
+    window: Option<Arc<Window>>,
+    /// Filled asynchronously once the WebGPU adapter/device resolve.
+    state: Rc<RefCell<Option<GpuState>>>,
+    camera: OrbitCamera,
+    frame: u64,
+}
+
+impl ApplicationHandler for DemoApp {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.window.is_some() {
+            return;
+        }
+        let window = Arc::new(
+            event_loop
+                .create_window(
+                    Window::default_attributes()
+                        .with_inner_size(winit::dpi::LogicalSize::new(1024, 640)),
+                )
+                .expect("failed to create window"),
+        );
+
+        // Attach the winit canvas to the page. winit does not reliably size
+        // the canvas backing store on web — set it explicitly, otherwise the
+        // surface gets configured at ~1x1 and renders invisibly.
+        let canvas = window.canvas().expect("winit window must expose a canvas");
+        canvas.set_width(CANVAS_WIDTH);
+        canvas.set_height(CANVAS_HEIGHT);
+        let document = web_sys::window()
+            .and_then(|w| w.document())
+            .expect("no document");
+        let mount = document
+            .get_element_by_id("demo")
+            .unwrap_or_else(|| document.body().expect("no body").into());
+        mount.append_child(&canvas).expect("failed to append canvas");
+
+        // WebGPU init is async-only in browsers: fill the shared state slot
+        // when ready and kick the first redraw.
+        let state_slot = Rc::clone(&self.state);
+        let init_window = Arc::clone(&window);
+        wasm_bindgen_futures::spawn_local(async move {
+            let mut gpu = GpuContext::new_windowed_async(Arc::clone(&init_window))
+                .await
+                .expect("WebGPU init failed (does this browser support WebGPU?)");
+            let format = gpu.surface_format().expect("windowed context has a format");
+            // The context read inner_size before the canvas resize propagated
+            // through winit — force the surface to the real canvas size.
+            gpu.resize(CANVAS_WIDTH, CANVAS_HEIGHT);
+            let mut renderer = ForwardRenderer::new(&gpu, CANVAS_WIDTH, CANVAS_HEIGHT);
+            let tonemap = TonemapPass::new(&gpu, format);
+
+            let scene = load_gltf_slice(DEMO_SCENE).expect("embedded demo scene must load");
+            renderer.upload_scene(&gpu, &scene);
+
+            state_slot.borrow_mut().replace(GpuState {
+                gpu,
+                renderer,
+                tonemap,
+            });
+            init_window.request_redraw();
+        });
+
+        self.window = Some(window);
+    }
+
+    fn window_event(&mut self, _event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        match event {
+            WindowEvent::Resized(size) => {
+                if let Some(state) = self.state.borrow_mut().as_mut() {
+                    state.gpu.resize(size.width, size.height);
+                }
+            }
+            WindowEvent::RedrawRequested => {
+                let Some(window) = self.window.as_ref() else {
+                    return;
+                };
+                let mut state_ref = self.state.borrow_mut();
+                let Some(state) = state_ref.as_mut() else {
+                    return;
+                };
+                let Some(surface) = state.gpu.surface.as_ref() else {
+                    return;
+                };
+
+                // std::time::Instant is unavailable on wasm32: animate by frame.
+                self.frame += 1;
+                self.camera.yaw_deg = 45.0 + self.frame as f32 * 0.5;
+                self.camera.radius = 6.0;
+                self.camera.pitch_deg = 35.0;
+
+                let frame = match surface.get_current_texture() {
+                    Ok(frame) => frame,
+                    Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
+                        state.gpu.reconfigure();
+                        window.request_redraw();
+                        return;
+                    }
+                    Err(err) => {
+                        log::error!("Surface error: {err:?}");
+                        return;
+                    }
+                };
+                let view = frame
+                    .texture
+                    .create_view(&wgpu::TextureViewDescriptor::default());
+                let (width, height) = (frame.texture.width(), frame.texture.height());
+                let GpuState {
+                    gpu,
+                    renderer,
+                    tonemap,
+                } = state;
+                renderer.render_tonemapped(gpu, tonemap, &view, width, height, &self.camera);
+                window.pre_present_notify();
+                frame.present();
+                window.request_redraw();
+            }
+            _ => {}
+        }
+    }
+}
+
+#[wasm_bindgen(start)]
+pub fn start() {
+    console_error_panic_hook::set_once();
+    let _ = console_log::init_with_level(log::Level::Info);
+
+    let event_loop = EventLoop::new().expect("failed to create event loop");
+    event_loop.spawn_app(DemoApp::default());
+}

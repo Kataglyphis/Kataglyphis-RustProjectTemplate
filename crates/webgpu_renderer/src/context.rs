@@ -20,12 +20,13 @@ pub struct GpuContext {
 }
 
 impl GpuContext {
-    /// Creates a context that presents to `window`.
+    /// Creates a context that presents to `window` (native: blocks).
     pub fn new_windowed(window: Arc<Window>) -> anyhow::Result<Self> {
         pollster::block_on(Self::new_windowed_async(window))
     }
 
-    async fn new_windowed_async(window: Arc<Window>) -> anyhow::Result<Self> {
+    /// Async variant for platforms without block_on (wasm32/browsers).
+    pub async fn new_windowed_async(window: Arc<Window>) -> anyhow::Result<Self> {
         let size = window.inner_size();
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
         let surface = instance

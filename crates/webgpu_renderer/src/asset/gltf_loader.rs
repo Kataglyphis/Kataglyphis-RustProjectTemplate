@@ -14,7 +14,23 @@ pub fn load_gltf(path: impl AsRef<Path>) -> anyhow::Result<CpuScene> {
     let path = path.as_ref();
     let (document, buffers, images) = gltf::import(path)
         .with_context(|| format!("Failed to import glTF file: {}", path.display()))?;
+    build_scene(document, buffers, images)
+        .with_context(|| format!("Failed to build scene from {}", path.display()))
+}
 
+/// In-memory variant (embedded assets, wasm32 where there is no filesystem).
+/// Buffers must be embedded (data URIs or GLB binary chunk).
+pub fn load_gltf_slice(bytes: &[u8]) -> anyhow::Result<CpuScene> {
+    let (document, buffers, images) =
+        gltf::import_slice(bytes).context("Failed to import glTF from memory")?;
+    build_scene(document, buffers, images)
+}
+
+fn build_scene(
+    document: gltf::Document,
+    buffers: Vec<gltf::buffer::Data>,
+    images: Vec<gltf::image::Data>,
+) -> anyhow::Result<CpuScene> {
     let textures: Vec<Arc<CpuTexture>> = images
         .into_iter()
         .map(|img| to_rgba8(img).map(Arc::new))
@@ -33,8 +49,7 @@ pub fn load_gltf(path: impl AsRef<Path>) -> anyhow::Result<CpuScene> {
 
     anyhow::ensure!(
         !scene.primitives.is_empty(),
-        "glTF file contains no triangle primitives: {}",
-        path.display()
+        "glTF file contains no triangle primitives"
     );
 
     Ok(scene)

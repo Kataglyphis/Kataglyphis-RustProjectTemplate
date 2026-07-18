@@ -13,6 +13,8 @@ pub mod asset;
 pub mod context;
 pub mod render;
 pub mod scene;
+#[cfg(target_arch = "wasm32")]
+pub mod wasm_demo;
 
 pub use asset::gltf_loader::load_gltf;
 pub use context::GpuContext;
