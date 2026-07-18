@@ -8,6 +8,12 @@ license.workspace = true
 default = []
 onnx_tract = ["dep:tract-onnx", "onnx"]
 onnxruntime = ["dep:ort", "ort/std", "ort/ndarray", "ort/download-binaries", "ort/tls-native", "onnx"]
+# Runtime-loaded onnxruntime.dll (ORT_DYLIB_PATH). Additive on top of
+# `onnxruntime`: load-dynamic implies ort-sys/disable-linking, which wins over
+# download-binaries in ort-sys' build script (no download, no link). api-24 is
+# REQUIRED with load-dynamic — without an api-N level ort rc.12 fails to
+# compile (OrtApi fields are cfg-gated in ort-sys).
+onnxruntime_dynamic = ["onnxruntime", "ort/load-dynamic", "ort/api-24"]
 onnxruntime_directml = ["onnxruntime", "ort/directml"]
 onnxruntime_cuda = ["onnxruntime", "ort/cuda"]
 onnx = [] # Internal marker feature

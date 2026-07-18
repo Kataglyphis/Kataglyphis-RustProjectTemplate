@@ -28,6 +28,9 @@ mod frb_generated;
 #[cfg(onnx)]
 pub use kataglyphis_inference::person_detection;
 
+#[cfg(all(feature = "gstreamer", onnx))]
+mod webcam_engine;
+
 /// C FFI demo stub — returns a fixed integer to verify `extern "C"` linkage works.
 ///
 /// # Safety

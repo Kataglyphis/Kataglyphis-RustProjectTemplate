@@ -4,6 +4,7 @@ members = [
     "crates/core",
     "crates/telemetry",
     "crates/inference",
+    "crates/media",
     "crates/gui",
     "crates/cli",
 ]
@@ -29,6 +30,10 @@ ndarray = { version = "0.17" }
 plotters = { version = "0.3" }
 tempfile = { version = "3" }
 ort = { version = "=2.0.0-rc.12", default-features = false }
+gstreamer = "0.24"
+gstreamer-app = "0.24"
+gstreamer-video = "0.24"
+libloading = "0.9"
 sysinfo = "0.38"
 flutter_rust_bridge = "=2.12.0"
 wmi = "0.18"
@@ -56,14 +61,22 @@ gui_wgpu = ["kataglyphis_gui/gui_wgpu"]
 gui_windows = ["kataglyphis_gui/gui_windows"]
 onnx_tract = ["kataglyphis_inference/onnx_tract"]
 onnxruntime = ["kataglyphis_inference/onnxruntime", "dep:ort", "ort/std"]
+# Load onnxruntime.dll at runtime (ORT_DYLIB_PATH / next-to-exe) instead of the
+# binaries `onnxruntime` downloads at build time. Purely additive: ort-sys'
+# disable-linking (implied by load-dynamic) short-circuits its build script
+# before the download-binaries path runs.
+onnxruntime_dynamic = ["onnxruntime", "kataglyphis_inference/onnxruntime_dynamic"]
 onnxruntime_directml = ["kataglyphis_inference/onnxruntime_directml"]
 onnxruntime_cuda = ["kataglyphis_inference/onnxruntime_cuda"]
+# GStreamer-backed webcam capture (crates/media) + the webcam→inference engine.
+gstreamer = ["dep:kataglyphis_media", "kataglyphis_media/gstreamer", "dep:libloading"]
 burn_demos = ["dep:burn", "dep:burn-autodiff", "dep:burn-ndarray", "dep:ndarray", "dep:plotters", "dep:tempfile", "onnxruntime"]
 
 [dependencies]
 kataglyphis_core = { path = "crates/core" }
 kataglyphis_telemetry = { path = "crates/telemetry" }
 kataglyphis_inference = { path = "crates/inference", optional = true }
+kataglyphis_media = { path = "crates/media", optional = true }
 kataglyphis_gui = { path = "crates/gui", optional = true }
 clap = { workspace = true }
 
@@ -82,6 +95,7 @@ ndarray = { workspace = true, optional = true }
 plotters = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true }
 ort = { workspace = true, optional = true }
+libloading = { workspace = true, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 cxx = "1.0"

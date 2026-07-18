@@ -1,0 +1,26 @@
+[package]
+name = "kataglyphis_media"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+# GStreamer-backed webcam/video capture. Off by default so non-media builds
+# (and platforms without GStreamer dev files) never touch pkg-config.
+gstreamer = [
+    "dep:gstreamer",
+    "dep:gstreamer-app",
+    "dep:gstreamer-video",
+]
+
+[dependencies]
+anyhow = { workspace = true }
+log = { workspace = true }
+
+gstreamer = { workspace = true, optional = true }
+gstreamer-app = { workspace = true, optional = true }
+gstreamer-video = { workspace = true, optional = true }
+
+[lints]
+workspace = true
