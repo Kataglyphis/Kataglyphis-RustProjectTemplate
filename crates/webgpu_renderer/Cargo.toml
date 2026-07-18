@@ -26,6 +26,8 @@ egui-winit = { version = "0.33.3", default-features = false }
 
 [dev-dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }
+# Shader interop with the C++ Vulkan engine: WGSL -> SPIR-V / GLSL.
+naga = { version = "26", features = ["wgsl-in", "spv-out", "glsl-out"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"

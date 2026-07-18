@@ -4371,6 +4371,7 @@ dependencies = [
  "gltf",
  "image 0.25.10",
  "log",
+ "naga 26.0.0",
  "pollster",
  "wasm-bindgen",
  "wasm-bindgen-futures",
