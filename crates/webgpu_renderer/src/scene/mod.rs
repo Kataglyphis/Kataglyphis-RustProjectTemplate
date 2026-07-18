@@ -2,6 +2,7 @@
 //! by the render passes.
 
 pub mod camera;
+pub mod controller;
 
 use std::sync::Arc;
 

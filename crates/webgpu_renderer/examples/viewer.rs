@@ -1,5 +1,6 @@
 //! Minimal glTF viewer: `cargo run -p kataglyphis_webgpu_renderer --example viewer [model.gltf]`
-//! Auto-orbits the camera; Esc closes.
+//! Drag to orbit, wheel to zoom (auto-orbit until first drag), egui overlay
+//! with light/tonemap controls; Esc closes.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -11,7 +12,10 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
 
-use kataglyphis_webgpu_renderer::{load_gltf, ForwardRenderer, GpuContext, OrbitCamera, TonemapPass};
+use kataglyphis_webgpu_renderer::{
+    load_gltf, ForwardRenderer, GpuContext, OrbitCamera, OrbitController, Overlay,
+    OverlayControls, TonemapPass,
+};
 
 struct Viewer {
     model_path: PathBuf,
@@ -19,6 +23,9 @@ struct Viewer {
     gpu: Option<GpuContext>,
     renderer: Option<ForwardRenderer>,
     tonemap: Option<TonemapPass>,
+    overlay: Option<Overlay>,
+    controls: Option<OverlayControls>,
+    controller: OrbitController,
     camera: OrbitCamera,
     started: Instant,
 }
@@ -31,17 +38,22 @@ impl Viewer {
             gpu: None,
             renderer: None,
             tonemap: None,
+            overlay: None,
+            controls: None,
+            controller: OrbitController::default(),
             camera: OrbitCamera::default(),
             started: Instant::now(),
         }
     }
 
     fn redraw(&mut self) {
-        let (Some(window), Some(gpu), Some(renderer), Some(tonemap)) = (
+        let (Some(window), Some(gpu), Some(renderer), Some(tonemap), Some(overlay), Some(controls)) = (
             self.window.as_ref(),
             self.gpu.as_mut(),
             self.renderer.as_mut(),
             self.tonemap.as_mut(),
+            self.overlay.as_mut(),
+            self.controls.as_mut(),
         ) else {
             return;
         };
@@ -49,7 +61,9 @@ impl Viewer {
             return;
         };
 
-        self.camera.yaw_deg = 45.0 + self.started.elapsed().as_secs_f32() * 30.0;
+        if self.controller.auto_orbit {
+            self.camera.yaw_deg = 45.0 + self.started.elapsed().as_secs_f32() * 30.0;
+        }
 
         let frame = match surface.get_current_texture() {
             Ok(frame) => frame,
@@ -73,6 +87,33 @@ impl Viewer {
         // surface, and depth/color attachments must match exactly.
         let (width, height) = (frame.texture.width(), frame.texture.height());
         renderer.render_tonemapped(gpu, tonemap, &view, width, height, &self.camera);
+
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("overlay_encoder"),
+            });
+        let mut changed = false;
+        overlay.render(
+            &gpu.device,
+            &gpu.queue,
+            &mut encoder,
+            window,
+            &view,
+            width,
+            height,
+            |ctx| {
+                changed |= controls.ui(ctx);
+            },
+        );
+        gpu.queue.submit(Some(encoder.finish()));
+        if changed {
+            let dir = controls.light_direction();
+            renderer.light_dir_ambient =
+                glam::Vec4::new(dir.x, dir.y, dir.z, controls.ambient);
+            renderer.light_color_intensity.w = controls.intensity;
+        }
+
         window.pre_present_notify();
         frame.present();
         window.request_redraw();
@@ -99,6 +140,9 @@ impl ApplicationHandler for Viewer {
         let size = window.inner_size();
         let mut renderer = ForwardRenderer::new(&gpu, size.width.max(1), size.height.max(1));
         let tonemap = TonemapPass::new(&gpu, format);
+        let overlay = Overlay::new(&window, &gpu.device, format);
+        let controls =
+            OverlayControls::from_light(renderer.light_dir_ambient, renderer.light_color_intensity);
 
         let scene = load_gltf(&self.model_path)
             .unwrap_or_else(|err| panic!("failed to load {}: {err:#}", self.model_path.display()));
@@ -113,10 +157,20 @@ impl ApplicationHandler for Viewer {
         self.gpu = Some(gpu);
         self.renderer = Some(renderer);
         self.tonemap = Some(tonemap);
+        self.overlay = Some(overlay);
+        self.controls = Some(controls);
         self.window = Some(window);
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        let consumed = match (self.overlay.as_mut(), self.window.as_ref()) {
+            (Some(overlay), Some(window)) => overlay.on_event(window, &event),
+            _ => false,
+        };
+        if !consumed {
+            self.controller.handle_event(&event, &mut self.camera);
+        }
+
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::KeyboardInput { event, .. }
@@ -139,7 +193,7 @@ fn main() -> anyhow::Result<()> {
     env_logger::init();
 
     let model_path = std::env::args().nth(1).map(PathBuf::from).unwrap_or_else(|| {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube.gltf")
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf")
     });
 
     let event_loop = EventLoop::new()?;

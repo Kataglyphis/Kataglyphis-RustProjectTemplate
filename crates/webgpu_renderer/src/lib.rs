@@ -19,6 +19,8 @@ pub mod wasm_demo;
 pub use asset::gltf_loader::load_gltf;
 pub use context::GpuContext;
 pub use render::forward::ForwardRenderer;
+pub use render::overlay::{Overlay, OverlayControls};
 pub use render::tonemap::TonemapPass;
 pub use scene::camera::OrbitCamera;
+pub use scene::controller::OrbitController;
 pub use scene::{CpuMaterial, CpuPrimitive, CpuScene, CpuTexture};

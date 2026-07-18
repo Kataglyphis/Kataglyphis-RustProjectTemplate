@@ -16,8 +16,10 @@ use winit::window::{Window, WindowId};
 use crate::asset::gltf_loader::load_gltf_slice;
 use crate::context::GpuContext;
 use crate::render::forward::ForwardRenderer;
+use crate::render::overlay::{Overlay, OverlayControls};
 use crate::render::tonemap::TonemapPass;
 use crate::scene::camera::OrbitCamera;
+use crate::scene::controller::OrbitController;
 
 const DEMO_SCENE: &[u8] = include_bytes!("../tests/assets/cube_on_plane.gltf");
 
@@ -41,6 +43,8 @@ struct GpuState {
     gpu: GpuContext,
     renderer: ForwardRenderer,
     tonemap: TonemapPass,
+    overlay: Overlay,
+    controls: OverlayControls,
 }
 
 #[derive(Default)]
@@ -48,6 +52,7 @@ struct DemoApp {
     window: Option<Arc<Window>>,
     /// Filled asynchronously once the WebGPU adapter/device resolve.
     state: Rc<RefCell<Option<GpuState>>>,
+    controller: OrbitController,
     camera: OrbitCamera,
     frame: u64,
 }
@@ -99,10 +104,18 @@ impl ApplicationHandler for DemoApp {
             let scene = load_gltf_slice(DEMO_SCENE).expect("embedded demo scene must load");
             renderer.upload_scene(&gpu, &scene);
 
+            let overlay = Overlay::new(&init_window, &gpu.device, format);
+            let controls = OverlayControls::from_light(
+                renderer.light_dir_ambient,
+                renderer.light_color_intensity,
+            );
+
             state_slot.borrow_mut().replace(GpuState {
                 gpu,
                 renderer,
                 tonemap,
+                overlay,
+                controls,
             });
             init_window.request_redraw();
         });
@@ -111,6 +124,14 @@ impl ApplicationHandler for DemoApp {
     }
 
     fn window_event(&mut self, _event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        let consumed = match (self.state.borrow_mut().as_mut(), self.window.as_ref()) {
+            (Some(state), Some(window)) => state.overlay.on_event(window, &event),
+            _ => false,
+        };
+        if !consumed {
+            self.controller.handle_event(&event, &mut self.camera);
+        }
+
         match event {
             WindowEvent::Resized(size) => {
                 if let Some(state) = self.state.borrow_mut().as_mut() {
@@ -146,9 +167,11 @@ impl ApplicationHandler for DemoApp {
 
                 // std::time::Instant is unavailable on wasm32: animate by frame.
                 self.frame += 1;
-                self.camera.yaw_deg = 45.0 + self.frame as f32 * 0.5;
-                self.camera.radius = 6.0;
-                self.camera.pitch_deg = 35.0;
+                if self.controller.auto_orbit {
+                    self.camera.yaw_deg = 45.0 + self.frame as f32 * 0.5;
+                    self.camera.radius = 6.0;
+                    self.camera.pitch_deg = 35.0;
+                }
 
                 let frame = match surface.get_current_texture() {
                     Ok(frame) => frame,
@@ -170,8 +193,37 @@ impl ApplicationHandler for DemoApp {
                     gpu,
                     renderer,
                     tonemap,
+                    overlay,
+                    controls,
                 } = state;
                 renderer.render_tonemapped(gpu, tonemap, &view, width, height, &self.camera);
+
+                let mut encoder =
+                    gpu.device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("overlay_encoder"),
+                        });
+                let mut changed = false;
+                overlay.render(
+                    &gpu.device,
+                    &gpu.queue,
+                    &mut encoder,
+                    window,
+                    &view,
+                    width,
+                    height,
+                    |ctx| {
+                        changed |= controls.ui(ctx);
+                    },
+                );
+                gpu.queue.submit(Some(encoder.finish()));
+                if changed {
+                    let dir = controls.light_direction();
+                    renderer.light_dir_ambient =
+                        glam::Vec4::new(dir.x, dir.y, dir.z, controls.ambient);
+                    renderer.light_color_intensity.w = controls.intensity;
+                }
+
                 window.pre_present_notify();
                 frame.present();
                 window.request_redraw();
