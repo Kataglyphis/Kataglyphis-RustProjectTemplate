@@ -30,15 +30,19 @@ fn gltf_loader_reads_base_color_texture() {
     let scene = load_gltf(textured_cube_path()).expect("cube_textured.gltf must load");
     let material = &scene.primitives[0].material;
 
-    let texture = material
+    let texture_ref = material
         .base_color_texture
         .as_ref()
         .expect("textured cube must expose its base color texture");
+    let texture = &texture_ref.texture;
     assert_eq!((texture.width, texture.height), (2, 2));
     assert_eq!(texture.rgba8.len(), 16);
     // 2x2 checker: green at (0,0), magenta at (1,0).
     assert_eq!(&texture.rgba8[0..4], &[40, 220, 60, 255]);
     assert_eq!(&texture.rgba8[4..8], &[220, 40, 200, 255]);
+    // The asset requests NEAREST filtering (A1: sampler modes honored).
+    assert!(texture_ref.sampler.mag_nearest && texture_ref.sampler.min_nearest);
+    assert!(texture_ref.srgb);
 }
 
 #[test]

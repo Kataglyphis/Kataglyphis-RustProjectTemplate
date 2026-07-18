@@ -13,18 +13,41 @@ pub struct Vertex {
     pub position: [f32; 3],
     pub normal: [f32; 3],
     pub uv: [f32; 2],
+    /// xyz: tangent, w: bitangent handedness (+1/-1), glTF convention.
+    pub tangent: [f32; 4],
 }
 
 impl Vertex {
     pub const LAYOUT: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
         array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
         step_mode: wgpu::VertexStepMode::Vertex,
-        attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2],
+        attributes: &wgpu::vertex_attr_array![
+            0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4
+        ],
     };
 }
 
-/// Decoded RGBA8 texture (sRGB for base color). Shared between primitives
-/// that reference the same glTF image.
+/// Texture filtering/wrapping requested by the glTF sampler.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
+pub struct CpuSampler {
+    pub mag_nearest: bool,
+    pub min_nearest: bool,
+    pub mip_nearest: bool,
+    pub wrap_u: CpuWrap,
+    pub wrap_v: CpuWrap,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
+pub enum CpuWrap {
+    #[default]
+    Repeat,
+    MirroredRepeat,
+    ClampToEdge,
+}
+
+/// Decoded RGBA8 texture. `srgb` decides the GPU format: color data (base
+/// color, emissive) is sRGB; data maps (normal, metallic-roughness,
+/// occlusion) are linear.
 #[derive(Clone, Debug)]
 pub struct CpuTexture {
     pub width: u32,
@@ -32,17 +55,45 @@ pub struct CpuTexture {
     pub rgba8: Vec<u8>,
 }
 
+/// A texture reference as a material uses it: image + sampler + color space.
+#[derive(Clone, Debug)]
+pub struct CpuTextureRef {
+    pub texture: Arc<CpuTexture>,
+    pub sampler: CpuSampler,
+    pub srgb: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct CpuMaterial {
     pub base_color: [f32; 4],
-    pub base_color_texture: Option<Arc<CpuTexture>>,
+    pub metallic_factor: f32,
+    pub roughness_factor: f32,
+    pub emissive_factor: [f32; 3],
+    pub occlusion_strength: f32,
+    pub normal_scale: f32,
+    pub double_sided: bool,
+    pub base_color_texture: Option<CpuTextureRef>,
+    pub metallic_roughness_texture: Option<CpuTextureRef>,
+    pub normal_texture: Option<CpuTextureRef>,
+    pub emissive_texture: Option<CpuTextureRef>,
+    pub occlusion_texture: Option<CpuTextureRef>,
 }
 
 impl Default for CpuMaterial {
     fn default() -> Self {
         Self {
             base_color: [1.0, 1.0, 1.0, 1.0],
+            metallic_factor: 1.0,
+            roughness_factor: 1.0,
+            emissive_factor: [0.0, 0.0, 0.0],
+            occlusion_strength: 1.0,
+            normal_scale: 1.0,
+            double_sided: false,
             base_color_texture: None,
+            metallic_roughness_texture: None,
+            normal_texture: None,
+            emissive_texture: None,
+            occlusion_texture: None,
         }
     }
 }

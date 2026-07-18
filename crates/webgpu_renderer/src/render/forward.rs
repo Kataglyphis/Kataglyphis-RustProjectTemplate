@@ -1,4 +1,4 @@
-//! Forward render pass over a `CpuScene` into an internal HDR target,
+//! Forward PBR pass over a `CpuScene` into an internal HDR target,
 //! composited to the output through the ACES tonemap pass. Also provides
 //! headless render-to-pixels for golden tests and CI.
 
@@ -9,7 +9,7 @@ use wgpu::util::DeviceExt as _;
 use crate::context::GpuContext;
 use crate::render::tonemap::TonemapPass;
 use crate::scene::camera::OrbitCamera;
-use crate::scene::{CpuScene, CpuTexture, Vertex};
+use crate::scene::{CpuSampler, CpuScene, CpuTexture, CpuWrap, Vertex};
 
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -20,10 +20,14 @@ pub const SHADOW_MAP_SIZE: u32 = 2048;
 struct Uniforms {
     view_proj: [[f32; 4]; 4],
     model: [[f32; 4]; 4],
+    normal_matrix: [[f32; 4]; 4],
     light_space: [[f32; 4]; 4],
     base_color: [f32; 4],
     light_dir_ambient: [f32; 4],
     light_color_intensity: [f32; 4],
+    material_factors: [f32; 4],
+    emissive_factor: [f32; 4],
+    camera_position: [f32; 4],
 }
 
 struct GpuPrimitive {
@@ -37,16 +41,20 @@ struct GpuPrimitive {
     shadow_bind_group: wgpu::BindGroup,
     model: Mat4,
     base_color: [f32; 4],
+    material_factors: [f32; 4],
+    emissive_factor: [f32; 4],
+    double_sided: bool,
 }
 
 pub struct ForwardRenderer {
     pipeline: wgpu::RenderPipeline,
+    pipeline_double_sided: wgpu::RenderPipeline,
     shadow_pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
     shadow_bind_group_layout: wgpu::BindGroupLayout,
-    default_sampler: wgpu::Sampler,
     shadow_sampler: wgpu::Sampler,
     white_texture_view: wgpu::TextureView,
+    flat_normal_view: wgpu::TextureView,
     shadow_view: wgpu::TextureView,
     primitives: Vec<GpuPrimitive>,
     scene_bounds: Option<(Vec3, Vec3)>,
@@ -57,7 +65,7 @@ pub struct ForwardRenderer {
     /// Direction towards the light (world space) + ambient strength.
     pub light_dir_ambient: Vec4,
     /// Light color (rgb) + intensity multiplier (w). Values > 1 are the
-    /// point of the HDR pipeline.
+    /// point of the HDR pipeline; the BRDF divides diffuse by PI.
     pub light_color_intensity: Vec4,
 }
 
@@ -69,52 +77,58 @@ impl ForwardRenderer {
             source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/forward.wgsl").into()),
         });
 
+        let mut entries: Vec<wgpu::BindGroupLayoutEntry> = vec![
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Depth,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                count: None,
+            },
+        ];
+        // Five material texture/sampler pairs: base color, metallic-roughness,
+        // normal, emissive, occlusion (bindings 3..=12).
+        for slot in 0..5u32 {
+            entries.push(wgpu::BindGroupLayoutEntry {
+                binding: 3 + slot * 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            });
+            entries.push(wgpu::BindGroupLayoutEntry {
+                binding: 4 + slot * 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            });
+        }
+
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("forward_bind_group_layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
-                    count: None,
-                },
-            ],
+            entries: &entries,
         });
 
         let shadow_bind_group_layout =
@@ -145,40 +159,45 @@ impl ForwardRenderer {
                 push_constant_ranges: &[],
             });
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("forward_pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Vertex::LAYOUT],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: HDR_FORMAT,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                cull_mode: Some(wgpu::Face::Back),
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
+        let make_forward_pipeline = |cull_mode: Option<wgpu::Face>, label: &str| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::LAYOUT],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: HDR_FORMAT,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    cull_mode,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            })
+        };
+
+        let pipeline = make_forward_pipeline(Some(wgpu::Face::Back), "forward_pipeline");
+        let pipeline_double_sided = make_forward_pipeline(None, "forward_pipeline_double_sided");
 
         // Depth-only pipeline rendering the scene from the light's POV.
         let shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -211,16 +230,6 @@ impl ForwardRenderer {
             cache: None,
         });
 
-        let default_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("base_color_sampler"),
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
-
         let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("shadow_sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -231,14 +240,26 @@ impl ForwardRenderer {
             ..Default::default()
         });
 
-        let white_texture_view = create_base_color_texture(
+        let white_texture_view = create_material_texture(
             gpu,
             &CpuTexture {
                 width: 1,
                 height: 1,
                 rgba8: vec![255, 255, 255, 255],
             },
+            false,
             Some("white_fallback"),
+        );
+        // Flat tangent-space normal (0, 0, 1) encoded as RGBA8.
+        let flat_normal_view = create_material_texture(
+            gpu,
+            &CpuTexture {
+                width: 1,
+                height: 1,
+                rgba8: vec![128, 128, 255, 255],
+            },
+            false,
+            Some("flat_normal_fallback"),
         );
 
         let shadow_view = device
@@ -264,12 +285,13 @@ impl ForwardRenderer {
 
         Self {
             pipeline,
+            pipeline_double_sided,
             shadow_pipeline,
             bind_group_layout,
             shadow_bind_group_layout,
-            default_sampler,
             shadow_sampler,
             white_texture_view,
+            flat_normal_view,
             shadow_view,
             primitives: Vec::new(),
             scene_bounds: None,
@@ -278,7 +300,9 @@ impl ForwardRenderer {
             target_size: (width.max(1), height.max(1)),
             hdr_rebound_needed: true,
             light_dir_ambient: Vec4::new(0.5, 0.8, 0.3, 0.15),
-            light_color_intensity: Vec4::new(1.0, 0.97, 0.92, 1.6),
+            // The BRDF divides diffuse by PI: intensity ~5 restores the
+            // pre-PBR brightness ballpark.
+            light_color_intensity: Vec4::new(1.0, 0.97, 0.92, 5.0),
         }
     }
 
@@ -306,38 +330,64 @@ impl ForwardRenderer {
                 mapped_at_creation: false,
             });
 
-            let texture_view = match prim.material.base_color_texture.as_deref() {
-                Some(texture) => {
-                    create_base_color_texture(gpu, texture, Some(&format!("base_color_{i}")))
+            let material = &prim.material;
+            let slots = [
+                (&material.base_color_texture, &self.white_texture_view),
+                (&material.metallic_roughness_texture, &self.white_texture_view),
+                (&material.normal_texture, &self.flat_normal_view),
+                (&material.emissive_texture, &self.white_texture_view),
+                (&material.occlusion_texture, &self.white_texture_view),
+            ];
+
+            let mut views: Vec<wgpu::TextureView> = Vec::with_capacity(5);
+            let mut samplers: Vec<wgpu::Sampler> = Vec::with_capacity(5);
+            for (slot_index, (texture_ref, fallback)) in slots.iter().enumerate() {
+                match texture_ref {
+                    Some(tex_ref) => {
+                        views.push(create_material_texture(
+                            gpu,
+                            &tex_ref.texture,
+                            tex_ref.srgb,
+                            Some(&format!("material_{i}_slot_{slot_index}")),
+                        ));
+                        samplers.push(create_sampler(device, &tex_ref.sampler));
+                    }
+                    None => {
+                        views.push((*fallback).clone());
+                        samplers.push(create_sampler(device, &CpuSampler::default()));
+                    }
                 }
-                None => self.white_texture_view.clone(),
-            };
+            }
+
+            let mut bind_entries: Vec<wgpu::BindGroupEntry> = vec![
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&self.shadow_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.shadow_sampler),
+                },
+            ];
+            for slot in 0..5usize {
+                bind_entries.push(wgpu::BindGroupEntry {
+                    binding: 3 + slot as u32 * 2,
+                    resource: wgpu::BindingResource::TextureView(&views[slot]),
+                });
+                bind_entries.push(wgpu::BindGroupEntry {
+                    binding: 4 + slot as u32 * 2,
+                    resource: wgpu::BindingResource::Sampler(&samplers[slot]),
+                });
+            }
 
             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(&format!("bind_group_{i}")),
                 layout: &self.bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: uniform_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(&texture_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::Sampler(&self.default_sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: wgpu::BindingResource::TextureView(&self.shadow_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 4,
-                        resource: wgpu::BindingResource::Sampler(&self.shadow_sampler),
-                    },
-                ],
+                entries: &bind_entries,
             });
 
             let shadow_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -357,7 +407,20 @@ impl ForwardRenderer {
                 bind_group,
                 shadow_bind_group,
                 model: prim.transform,
-                base_color: prim.material.base_color,
+                base_color: material.base_color,
+                material_factors: [
+                    material.metallic_factor,
+                    material.roughness_factor,
+                    material.occlusion_strength,
+                    material.normal_scale,
+                ],
+                emissive_factor: [
+                    material.emissive_factor[0],
+                    material.emissive_factor[1],
+                    material.emissive_factor[2],
+                    0.0,
+                ],
+                double_sided: material.double_sided,
             });
         }
     }
@@ -388,15 +451,20 @@ impl ForwardRenderer {
         let aspect = width as f32 / height as f32;
         let view_proj = camera.view_projection(aspect);
         let light_space = self.light_space_matrix();
+        let eye = camera.eye();
 
         for prim in &self.primitives {
             let uniforms = Uniforms {
                 view_proj: view_proj.to_cols_array_2d(),
                 model: prim.model.to_cols_array_2d(),
+                normal_matrix: prim.model.inverse().transpose().to_cols_array_2d(),
                 light_space: light_space.to_cols_array_2d(),
                 base_color: prim.base_color,
                 light_dir_ambient: self.light_dir_ambient.to_array(),
                 light_color_intensity: self.light_color_intensity.to_array(),
+                material_factors: prim.material_factors,
+                emissive_factor: prim.emissive_factor,
+                camera_position: [eye.x, eye.y, eye.z, 0.0],
             };
             gpu.queue
                 .write_buffer(&prim.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
@@ -459,8 +527,13 @@ impl ForwardRenderer {
                 occlusion_query_set: None,
             });
 
-            pass.set_pipeline(&self.pipeline);
             for prim in &self.primitives {
+                let pipeline = if prim.double_sided {
+                    &self.pipeline_double_sided
+                } else {
+                    &self.pipeline
+                };
+                pass.set_pipeline(pipeline);
                 pass.set_bind_group(0, &prim.bind_group, &[]);
                 pass.set_vertex_buffer(0, prim.vertex_buffer.slice(..));
                 pass.set_index_buffer(prim.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
@@ -563,9 +636,7 @@ impl ForwardRenderer {
         readback.unmap();
         Ok(pixels)
     }
-}
 
-impl ForwardRenderer {
     /// Orthographic world->light-clip matrix fitted to the scene bounds.
     fn light_space_matrix(&self) -> Mat4 {
         let (min, max) = self
@@ -611,42 +682,137 @@ fn compute_world_bounds(scene: &CpuScene) -> Option<(Vec3, Vec3)> {
     bounds
 }
 
-fn create_base_color_texture(
+fn create_sampler(device: &wgpu::Device, desc: &CpuSampler) -> wgpu::Sampler {
+    let wrap = |mode: CpuWrap| match mode {
+        CpuWrap::Repeat => wgpu::AddressMode::Repeat,
+        CpuWrap::MirroredRepeat => wgpu::AddressMode::MirrorRepeat,
+        CpuWrap::ClampToEdge => wgpu::AddressMode::ClampToEdge,
+    };
+    let filter = |nearest: bool| {
+        if nearest {
+            wgpu::FilterMode::Nearest
+        } else {
+            wgpu::FilterMode::Linear
+        }
+    };
+    device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("material_sampler"),
+        address_mode_u: wrap(desc.wrap_u),
+        address_mode_v: wrap(desc.wrap_v),
+        mag_filter: filter(desc.mag_nearest),
+        min_filter: filter(desc.min_nearest),
+        mipmap_filter: filter(desc.mip_nearest),
+        ..Default::default()
+    })
+}
+
+fn srgb_to_linear(byte: u8) -> f32 {
+    let c = byte as f32 / 255.0;
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn linear_to_srgb(value: f32) -> u8 {
+    let c = if value <= 0.0031308 {
+        value * 12.92
+    } else {
+        1.055 * value.powf(1.0 / 2.4) - 0.055
+    };
+    (c.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
+}
+
+/// Full mip chain via 2x2 box filtering. sRGB data is averaged in linear
+/// space; data maps (normals, metallic-roughness) are averaged raw.
+pub(crate) fn generate_mips(base: &CpuTexture, srgb: bool) -> Vec<(u32, u32, Vec<u8>)> {
+    let mut levels = vec![(base.width, base.height, base.rgba8.clone())];
+    let (mut w, mut h) = (base.width, base.height);
+
+    while w > 1 || h > 1 {
+        let (pw, ph, prev) = levels.last().unwrap();
+        let (pw, ph) = (*pw, *ph);
+        let nw = (w / 2).max(1);
+        let nh = (h / 2).max(1);
+        let mut next = Vec::with_capacity((nw * nh * 4) as usize);
+
+        for y in 0..nh {
+            for x in 0..nw {
+                let x0 = (x * 2).min(pw - 1);
+                let x1 = (x * 2 + 1).min(pw - 1);
+                let y0 = (y * 2).min(ph - 1);
+                let y1 = (y * 2 + 1).min(ph - 1);
+                for channel in 0..4usize {
+                    let fetch = |px: u32, py: u32| prev[((py * pw + px) * 4) as usize + channel];
+                    let samples = [fetch(x0, y0), fetch(x1, y0), fetch(x0, y1), fetch(x1, y1)];
+                    // Alpha is linear even for sRGB textures.
+                    let value = if srgb && channel < 3 {
+                        let sum: f32 = samples.iter().map(|&b| srgb_to_linear(b)).sum();
+                        linear_to_srgb(sum / 4.0)
+                    } else {
+                        (samples.iter().map(|&b| b as u32).sum::<u32>() / 4) as u8
+                    };
+                    next.push(value);
+                }
+            }
+        }
+        levels.push((nw, nh, next));
+        w = nw;
+        h = nh;
+    }
+
+    levels
+}
+
+fn create_material_texture(
     gpu: &GpuContext,
     texture: &CpuTexture,
+    srgb: bool,
     label: Option<&str>,
 ) -> wgpu::TextureView {
+    let mips = generate_mips(texture, srgb);
     let size = wgpu::Extent3d {
         width: texture.width.max(1),
         height: texture.height.max(1),
         depth_or_array_layers: 1,
     };
+    let format = if srgb {
+        wgpu::TextureFormat::Rgba8UnormSrgb
+    } else {
+        wgpu::TextureFormat::Rgba8Unorm
+    };
     let gpu_texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
         label,
         size,
-        mip_level_count: 1,
+        mip_level_count: mips.len() as u32,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        // Base color is authored in sRGB; sampling converts to linear.
-        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        format,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
-    gpu.queue.write_texture(
-        wgpu::TexelCopyTextureInfo {
-            texture: &gpu_texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        &texture.rgba8,
-        wgpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(4 * size.width),
-            rows_per_image: Some(size.height),
-        },
-        size,
-    );
+    for (level, (w, h, data)) in mips.iter().enumerate() {
+        gpu.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &gpu_texture,
+                mip_level: level as u32,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * w),
+                rows_per_image: Some(*h),
+            },
+            wgpu::Extent3d {
+                width: *w,
+                height: *h,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
     gpu_texture.create_view(&wgpu::TextureViewDescriptor::default())
 }
 

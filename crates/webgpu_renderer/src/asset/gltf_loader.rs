@@ -1,14 +1,17 @@
-//! glTF 2.0 -> `CpuScene`. Covers milestone 2 of the plan: positions,
-//! normals, UVs, indices, flattened node transforms, and per-primitive
-//! base-color materials. Textures/PBR maps arrive with milestone 3.
+//! glTF 2.0 -> `CpuScene`. Positions, normals, UVs, tangents (generated when
+//! absent), indices, flattened node transforms, and the metallic-roughness
+//! material model: factors + base color / metallic-roughness / normal /
+//! emissive / occlusion textures with their glTF sampler settings.
 
 use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Vec2, Vec3};
 
-use crate::scene::{CpuMaterial, CpuPrimitive, CpuScene, CpuTexture, Vertex};
+use crate::scene::{
+    CpuMaterial, CpuPrimitive, CpuSampler, CpuScene, CpuTexture, CpuTextureRef, CpuWrap, Vertex,
+};
 
 pub fn load_gltf(path: impl AsRef<Path>) -> anyhow::Result<CpuScene> {
     let path = path.as_ref();
@@ -100,6 +103,46 @@ fn to_rgba8(img: gltf::image::Data) -> anyhow::Result<CpuTexture> {
     })
 }
 
+fn to_cpu_sampler(sampler: &gltf::texture::Sampler) -> CpuSampler {
+    use gltf::texture::{MagFilter, MinFilter, WrappingMode};
+
+    let wrap = |mode: WrappingMode| match mode {
+        WrappingMode::ClampToEdge => CpuWrap::ClampToEdge,
+        WrappingMode::MirroredRepeat => CpuWrap::MirroredRepeat,
+        WrappingMode::Repeat => CpuWrap::Repeat,
+    };
+
+    let (min_nearest, mip_nearest) = match sampler.min_filter() {
+        Some(MinFilter::Nearest | MinFilter::NearestMipmapNearest) => (true, true),
+        Some(MinFilter::NearestMipmapLinear) => (true, false),
+        Some(MinFilter::LinearMipmapNearest) => (false, true),
+        Some(MinFilter::Linear | MinFilter::LinearMipmapLinear) | None => (false, false),
+    };
+
+    CpuSampler {
+        mag_nearest: matches!(sampler.mag_filter(), Some(MagFilter::Nearest)),
+        min_nearest,
+        mip_nearest,
+        wrap_u: wrap(sampler.wrap_s()),
+        wrap_v: wrap(sampler.wrap_t()),
+    }
+}
+
+fn texture_ref(
+    info: &gltf::Texture,
+    textures: &[Arc<CpuTexture>],
+    srgb: bool,
+) -> Option<CpuTextureRef> {
+    textures
+        .get(info.source().index())
+        .cloned()
+        .map(|texture| CpuTextureRef {
+            texture,
+            sampler: to_cpu_sampler(&info.sampler()),
+            srgb,
+        })
+}
+
 fn visit_node(
     node: &gltf::Node,
     parent_transform: Mat4,
@@ -153,23 +196,33 @@ fn load_primitive(
         Some(iter) => iter.into_f32().collect(),
         None => vec![[0.0, 0.0]; positions.len()],
     };
+    let tangents: Vec<[f32; 4]> = match reader.read_tangents() {
+        Some(iter) => iter.collect(),
+        None => vec![[0.0, 0.0, 0.0, 0.0]; positions.len()],
+    };
+    let had_tangents = reader.read_tangents().is_some();
 
     anyhow::ensure!(
-        normals.len() == positions.len() && uvs.len() == positions.len(),
-        "Attribute count mismatch: {} positions, {} normals, {} uvs",
+        normals.len() == positions.len()
+            && uvs.len() == positions.len()
+            && tangents.len() == positions.len(),
+        "Attribute count mismatch: {} positions, {} normals, {} uvs, {} tangents",
         positions.len(),
         normals.len(),
-        uvs.len()
+        uvs.len(),
+        tangents.len()
     );
 
     let mut vertices: Vec<Vertex> = positions
         .iter()
         .zip(normals.iter())
         .zip(uvs.iter())
-        .map(|((p, n), t)| Vertex {
+        .zip(tangents.iter())
+        .map(|(((p, n), t), tan)| Vertex {
             position: *p,
             normal: *n,
             uv: *t,
+            tangent: *tan,
         })
         .collect();
 
@@ -182,21 +235,45 @@ fn load_primitive(
     if reader.read_normals().is_none() {
         compute_flat_normals(&mut vertices, &indices);
     }
+    if !had_tangents {
+        compute_tangents(&mut vertices, &indices);
+    }
 
-    let pbr = primitive.material().pbr_metallic_roughness();
-    let base_color = pbr.base_color_factor();
-    let base_color_texture = pbr
-        .base_color_texture()
-        .and_then(|info| textures.get(info.texture().source().index()).cloned());
+    let material = primitive.material();
+    let pbr = material.pbr_metallic_roughness();
+
+    let cpu_material = CpuMaterial {
+        base_color: pbr.base_color_factor(),
+        metallic_factor: pbr.metallic_factor(),
+        roughness_factor: pbr.roughness_factor(),
+        emissive_factor: material.emissive_factor(),
+        occlusion_strength: material
+            .occlusion_texture()
+            .map_or(1.0, |occ| occ.strength()),
+        normal_scale: material.normal_texture().map_or(1.0, |nrm| nrm.scale()),
+        double_sided: material.double_sided(),
+        base_color_texture: pbr
+            .base_color_texture()
+            .and_then(|info| texture_ref(&info.texture(), textures, true)),
+        metallic_roughness_texture: pbr
+            .metallic_roughness_texture()
+            .and_then(|info| texture_ref(&info.texture(), textures, false)),
+        normal_texture: material
+            .normal_texture()
+            .and_then(|info| texture_ref(&info.texture(), textures, false)),
+        emissive_texture: material
+            .emissive_texture()
+            .and_then(|info| texture_ref(&info.texture(), textures, true)),
+        occlusion_texture: material
+            .occlusion_texture()
+            .and_then(|info| texture_ref(&info.texture(), textures, false)),
+    };
 
     Ok(Some(CpuPrimitive {
         vertices,
         indices,
         transform,
-        material: CpuMaterial {
-            base_color,
-            base_color_texture,
-        },
+        material: cpu_material,
     }))
 }
 
@@ -212,3 +289,86 @@ fn compute_flat_normals(vertices: &mut [Vertex], indices: &[u32]) {
         }
     }
 }
+
+/// Per-vertex tangent accumulation from triangle UV gradients (Lengyel-style,
+/// not full MikkTSpace — sufficient until baked assets demand exact parity).
+pub(crate) fn compute_tangents(vertices: &mut [Vertex], indices: &[u32]) {
+    let mut accum = vec![Vec3::ZERO; vertices.len()];
+
+    for tri in indices.chunks_exact(3) {
+        let [i0, i1, i2] = [tri[0] as usize, tri[1] as usize, tri[2] as usize];
+        let p0 = Vec3::from_array(vertices[i0].position);
+        let p1 = Vec3::from_array(vertices[i1].position);
+        let p2 = Vec3::from_array(vertices[i2].position);
+        let u0 = Vec2::from_array(vertices[i0].uv);
+        let u1 = Vec2::from_array(vertices[i1].uv);
+        let u2 = Vec2::from_array(vertices[i2].uv);
+
+        let e1 = p1 - p0;
+        let e2 = p2 - p0;
+        let d1 = u1 - u0;
+        let d2 = u2 - u0;
+
+        let det = d1.x * d2.y - d2.x * d1.y;
+        if det.abs() < 1e-8 {
+            continue;
+        }
+        let r = 1.0 / det;
+        let tangent = (e1 * d2.y - e2 * d1.y) * r;
+        for i in [i0, i1, i2] {
+            accum[i] += tangent;
+        }
+    }
+
+    for (vertex, tangent) in vertices.iter_mut().zip(accum) {
+        let n = Vec3::from_array(vertex.normal);
+        // Gram-Schmidt against the normal; fall back to any perpendicular
+        // axis for degenerate UVs.
+        let mut t = (tangent - n * n.dot(tangent)).normalize_or_zero();
+        if t == Vec3::ZERO {
+            t = n.cross(Vec3::Y).normalize_or_zero();
+            if t == Vec3::ZERO {
+                t = n.cross(Vec3::X).normalize_or_zero();
+            }
+        }
+        vertex.tangent = [t.x, t.y, t.z, 1.0];
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tangents_follow_uv_gradient() {
+        // Unit quad in the XY plane, UVs aligned with X/Y: tangent must be +X.
+        let mut vertices: Vec<Vertex> = [
+            ([0.0, 0.0, 0.0], [0.0, 0.0]),
+            ([1.0, 0.0, 0.0], [1.0, 0.0]),
+            ([1.0, 1.0, 0.0], [1.0, 1.0]),
+            ([0.0, 1.0, 0.0], [0.0, 1.0]),
+        ]
+        .iter()
+        .map(|(p, uv)| Vertex {
+            position: *p,
+            normal: [0.0, 0.0, 1.0],
+            uv: *uv,
+            tangent: [0.0; 4],
+        })
+        .collect();
+        let indices = [0u32, 1, 2, 0, 2, 3];
+
+        compute_tangents(&mut vertices, &indices);
+
+        for vertex in &vertices {
+            assert!(
+                (vertex.tangent[0] - 1.0).abs() < 1e-4
+                    && vertex.tangent[1].abs() < 1e-4
+                    && vertex.tangent[2].abs() < 1e-4,
+                "tangent should be +X, got {:?}",
+                vertex.tangent
+            );
+        }
+    }
+}
+
