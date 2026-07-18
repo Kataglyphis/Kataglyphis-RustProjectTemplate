@@ -3,6 +3,7 @@
 
 pub mod camera;
 pub mod controller;
+pub mod lod;
 
 use std::sync::Arc;
 
