@@ -719,6 +719,15 @@ impl ForwardRenderer {
                 .write_buffer(&prim.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
         }
 
+        // The frame's pass wiring is declared in render::graph and validated
+        // here in debug builds: a read of an unwritten resource (or a double
+        // write) fails loudly instead of rendering black.
+        debug_assert!(
+            crate::render::graph::validate(&crate::render::graph::forward_frame_graph(), &[])
+                .is_ok(),
+            "forward frame graph is invalid"
+        );
+
         let mut encoder = gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
