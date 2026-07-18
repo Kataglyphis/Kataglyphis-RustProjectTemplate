@@ -3,6 +3,8 @@
 
 pub mod camera;
 
+use std::sync::Arc;
+
 use glam::Mat4;
 
 #[repr(C)]
@@ -21,15 +23,26 @@ impl Vertex {
     };
 }
 
-#[derive(Copy, Clone, Debug)]
+/// Decoded RGBA8 texture (sRGB for base color). Shared between primitives
+/// that reference the same glTF image.
+#[derive(Clone, Debug)]
+pub struct CpuTexture {
+    pub width: u32,
+    pub height: u32,
+    pub rgba8: Vec<u8>,
+}
+
+#[derive(Clone, Debug)]
 pub struct CpuMaterial {
     pub base_color: [f32; 4],
+    pub base_color_texture: Option<Arc<CpuTexture>>,
 }
 
 impl Default for CpuMaterial {
     fn default() -> Self {
         Self {
             base_color: [1.0, 1.0, 1.0, 1.0],
+            base_color_texture: None,
         }
     }
 }

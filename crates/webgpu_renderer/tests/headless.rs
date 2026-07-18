@@ -8,6 +8,10 @@ fn cube_path() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube.gltf")
 }
 
+fn textured_cube_path() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_textured.gltf")
+}
+
 #[test]
 fn gltf_loader_reads_cube() {
     let scene = load_gltf(cube_path()).expect("cube.gltf must load");
@@ -15,9 +19,26 @@ fn gltf_loader_reads_cube() {
     assert_eq!(scene.vertex_count(), 24);
     assert_eq!(scene.triangle_count(), 12);
 
-    let material = scene.primitives[0].material;
+    let material = &scene.primitives[0].material;
     assert!((material.base_color[0] - 0.8).abs() < 1e-6);
     assert!((material.base_color[3] - 1.0).abs() < 1e-6);
+    assert!(material.base_color_texture.is_none());
+}
+
+#[test]
+fn gltf_loader_reads_base_color_texture() {
+    let scene = load_gltf(textured_cube_path()).expect("cube_textured.gltf must load");
+    let material = &scene.primitives[0].material;
+
+    let texture = material
+        .base_color_texture
+        .as_ref()
+        .expect("textured cube must expose its base color texture");
+    assert_eq!((texture.width, texture.height), (2, 2));
+    assert_eq!(texture.rgba8.len(), 16);
+    // 2x2 checker: green at (0,0), magenta at (1,0).
+    assert_eq!(&texture.rgba8[0..4], &[40, 220, 60, 255]);
+    assert_eq!(&texture.rgba8[4..8], &[220, 40, 200, 255]);
 }
 
 #[test]
@@ -29,8 +50,7 @@ fn renders_cube_headless() {
 
     let scene = load_gltf(cube_path()).expect("cube.gltf must load");
     let (width, height) = (256, 256);
-    let mut renderer =
-        ForwardRenderer::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb, width, height);
+    let mut renderer = ForwardRenderer::new(&gpu, width, height);
     renderer.upload_scene(&gpu, &scene);
 
     let camera = OrbitCamera::default();
@@ -70,6 +90,41 @@ fn renders_cube_headless() {
     assert!(
         lit > total / 20 && lit < total / 2,
         "cube coverage out of range: {lit}/{total} lit pixels"
+    );
+}
+
+#[test]
+fn renders_textured_cube_headless() {
+    let Ok(gpu) = GpuContext::new_headless() else {
+        eprintln!("SKIP: no GPU adapter available in this environment");
+        return;
+    };
+
+    let scene = load_gltf(textured_cube_path()).expect("cube_textured.gltf must load");
+    let (width, height) = (256, 256);
+    let mut renderer = ForwardRenderer::new(&gpu, width, height);
+    renderer.upload_scene(&gpu, &scene);
+
+    let camera = OrbitCamera::default();
+    let pixels = renderer
+        .render_to_pixels(&gpu, width, height, &camera)
+        .expect("headless render must succeed");
+
+    // The checker must produce BOTH green-dominant and magenta-dominant
+    // pixels — proving the base color texture is actually sampled.
+    let mut green = 0usize;
+    let mut magenta = 0usize;
+    for p in pixels.chunks_exact(4) {
+        let (r, g, b) = (p[0] as i32, p[1] as i32, p[2] as i32);
+        if g > 100 && g > r + 30 && g > b + 30 {
+            green += 1;
+        } else if r > 100 && b > 80 && r > g + 30 {
+            magenta += 1;
+        }
+    }
+    assert!(
+        green > 200 && magenta > 200,
+        "expected both checker colors, got {green} green / {magenta} magenta pixels"
     );
 }
 

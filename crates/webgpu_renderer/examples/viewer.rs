@@ -11,13 +11,14 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
 
-use kataglyphis_webgpu_renderer::{load_gltf, ForwardRenderer, GpuContext, OrbitCamera};
+use kataglyphis_webgpu_renderer::{load_gltf, ForwardRenderer, GpuContext, OrbitCamera, TonemapPass};
 
 struct Viewer {
     model_path: PathBuf,
     window: Option<Arc<Window>>,
     gpu: Option<GpuContext>,
     renderer: Option<ForwardRenderer>,
+    tonemap: Option<TonemapPass>,
     camera: OrbitCamera,
     started: Instant,
 }
@@ -29,16 +30,18 @@ impl Viewer {
             window: None,
             gpu: None,
             renderer: None,
+            tonemap: None,
             camera: OrbitCamera::default(),
             started: Instant::now(),
         }
     }
 
     fn redraw(&mut self) {
-        let (Some(window), Some(gpu), Some(renderer)) = (
+        let (Some(window), Some(gpu), Some(renderer), Some(tonemap)) = (
             self.window.as_ref(),
             self.gpu.as_mut(),
             self.renderer.as_mut(),
+            self.tonemap.as_mut(),
         ) else {
             return;
         };
@@ -69,7 +72,7 @@ impl Viewer {
         // window's client size can already differ from the still-configured
         // surface, and depth/color attachments must match exactly.
         let (width, height) = (frame.texture.width(), frame.texture.height());
-        renderer.render(gpu, &view, width, height, &self.camera);
+        renderer.render_tonemapped(gpu, tonemap, &view, width, height, &self.camera);
         window.pre_present_notify();
         frame.present();
         window.request_redraw();
@@ -94,7 +97,8 @@ impl ApplicationHandler for Viewer {
         let gpu = GpuContext::new_windowed(Arc::clone(&window)).expect("failed to init wgpu");
         let format = gpu.surface_format().expect("windowed context has a format");
         let size = window.inner_size();
-        let mut renderer = ForwardRenderer::new(&gpu, format, size.width.max(1), size.height.max(1));
+        let mut renderer = ForwardRenderer::new(&gpu, size.width.max(1), size.height.max(1));
+        let tonemap = TonemapPass::new(&gpu, format);
 
         let scene = load_gltf(&self.model_path)
             .unwrap_or_else(|err| panic!("failed to load {}: {err:#}", self.model_path.display()));
@@ -108,6 +112,7 @@ impl ApplicationHandler for Viewer {
 
         self.gpu = Some(gpu);
         self.renderer = Some(renderer);
+        self.tonemap = Some(tonemap);
         self.window = Some(window);
     }
 

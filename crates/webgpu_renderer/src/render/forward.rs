@@ -1,15 +1,18 @@
-//! Forward render pass over a `CpuScene`, plus headless render-to-texture
-//! used by the golden tests and (later) CI.
+//! Forward render pass over a `CpuScene` into an internal HDR target,
+//! composited to the output through the ACES tonemap pass. Also provides
+//! headless render-to-pixels for golden tests and CI.
 
 use anyhow::Context as _;
 use glam::{Mat4, Vec4};
 use wgpu::util::DeviceExt as _;
 
 use crate::context::GpuContext;
+use crate::render::tonemap::TonemapPass;
 use crate::scene::camera::OrbitCamera;
-use crate::scene::{CpuScene, Vertex};
+use crate::scene::{CpuScene, CpuTexture, Vertex};
 
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -18,6 +21,7 @@ struct Uniforms {
     model: [[f32; 4]; 4],
     base_color: [f32; 4],
     light_dir_ambient: [f32; 4],
+    light_color_intensity: [f32; 4],
 }
 
 struct GpuPrimitive {
@@ -33,20 +37,22 @@ struct GpuPrimitive {
 pub struct ForwardRenderer {
     pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
+    default_sampler: wgpu::Sampler,
+    white_texture_view: wgpu::TextureView,
     primitives: Vec<GpuPrimitive>,
     depth: wgpu::TextureView,
-    depth_size: (u32, u32),
+    hdr_view: wgpu::TextureView,
+    target_size: (u32, u32),
+    hdr_rebound_needed: bool,
     /// Direction towards the light (world space) + ambient strength.
     pub light_dir_ambient: Vec4,
+    /// Light color (rgb) + intensity multiplier (w). Values > 1 are the
+    /// point of the HDR pipeline.
+    pub light_color_intensity: Vec4,
 }
 
 impl ForwardRenderer {
-    pub fn new(
-        gpu: &GpuContext,
-        color_format: wgpu::TextureFormat,
-        width: u32,
-        height: u32,
-    ) -> Self {
+    pub fn new(gpu: &GpuContext, width: u32, height: u32) -> Self {
         let device = &gpu.device;
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("forward_shader"),
@@ -55,16 +61,34 @@ impl ForwardRenderer {
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("forward_bind_group_layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -86,7 +110,7 @@ impl ForwardRenderer {
                 module: &shader,
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: color_format,
+                    format: HDR_FORMAT,
                     blend: Some(wgpu::BlendState::REPLACE),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -108,15 +132,41 @@ impl ForwardRenderer {
             cache: None,
         });
 
+        let default_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("base_color_sampler"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
+        let white_texture_view = create_base_color_texture(
+            gpu,
+            &CpuTexture {
+                width: 1,
+                height: 1,
+                rgba8: vec![255, 255, 255, 255],
+            },
+            Some("white_fallback"),
+        );
+
         let depth = create_depth_texture(device, width, height);
+        let hdr_view = create_hdr_texture(device, width, height);
 
         Self {
             pipeline,
             bind_group_layout,
+            default_sampler,
+            white_texture_view,
             primitives: Vec::new(),
             depth,
-            depth_size: (width, height),
+            hdr_view,
+            target_size: (width.max(1), height.max(1)),
+            hdr_rebound_needed: true,
             light_dir_ambient: Vec4::new(0.5, 0.8, 0.3, 0.15),
+            light_color_intensity: Vec4::new(1.0, 0.97, 0.92, 1.6),
         }
     }
 
@@ -142,13 +192,31 @@ impl ForwardRenderer {
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
+
+            let texture_view = match prim.material.base_color_texture.as_deref() {
+                Some(texture) => {
+                    create_base_color_texture(gpu, texture, Some(&format!("base_color_{i}")))
+                }
+                None => self.white_texture_view.clone(),
+            };
+
             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(&format!("bind_group_{i}")),
                 layout: &self.bind_group_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: uniform_buffer.as_entire_binding(),
-                }],
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: uniform_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&texture_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&self.default_sampler),
+                    },
+                ],
             });
 
             self.primitives.push(GpuPrimitive {
@@ -163,22 +231,30 @@ impl ForwardRenderer {
         }
     }
 
-    /// Renders into `color_view` (and the internal depth buffer, resized on
-    /// demand). Works against a swapchain view or an offscreen texture alike.
-    pub fn render(
+    /// Renders the scene HDR->tonemap into `output_view` (surface frame or
+    /// offscreen texture). `width`/`height` must match `output_view`.
+    pub fn render_tonemapped(
         &mut self,
         gpu: &GpuContext,
-        color_view: &wgpu::TextureView,
+        tonemap: &mut TonemapPass,
+        output_view: &wgpu::TextureView,
         width: u32,
         height: u32,
         camera: &OrbitCamera,
     ) {
-        if self.depth_size != (width, height) {
+        let (width, height) = (width.max(1), height.max(1));
+        if self.target_size != (width, height) {
             self.depth = create_depth_texture(&gpu.device, width, height);
-            self.depth_size = (width, height);
+            self.hdr_view = create_hdr_texture(&gpu.device, width, height);
+            self.target_size = (width, height);
+            self.hdr_rebound_needed = true;
+        }
+        if self.hdr_rebound_needed {
+            tonemap.set_input(gpu, &self.hdr_view);
+            self.hdr_rebound_needed = false;
         }
 
-        let aspect = width as f32 / height.max(1) as f32;
+        let aspect = width as f32 / height as f32;
         let view_proj = camera.view_projection(aspect);
 
         for prim in &self.primitives {
@@ -187,6 +263,7 @@ impl ForwardRenderer {
                 model: prim.model.to_cols_array_2d(),
                 base_color: prim.base_color,
                 light_dir_ambient: self.light_dir_ambient.to_array(),
+                light_color_intensity: self.light_color_intensity.to_array(),
             };
             gpu.queue
                 .write_buffer(&prim.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
@@ -201,7 +278,7 @@ impl ForwardRenderer {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("forward_pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: color_view,
+                    view: &self.hdr_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
@@ -234,11 +311,13 @@ impl ForwardRenderer {
                 pass.draw_indexed(0..prim.index_count, 0, 0..1);
             }
         }
+
+        tonemap.render(&mut encoder, output_view);
         gpu.queue.submit(Some(encoder.finish()));
     }
 
-    /// Headless helper: renders one frame into a fresh RGBA8 texture and
-    /// returns the pixel bytes (RGBA, row-major, tightly packed).
+    /// Headless helper: renders one tonemapped frame into a fresh RGBA8
+    /// texture and returns the pixel bytes (RGBA, row-major, tightly packed).
     pub fn render_to_pixels(
         &mut self,
         gpu: &GpuContext,
@@ -247,6 +326,8 @@ impl ForwardRenderer {
         camera: &OrbitCamera,
     ) -> anyhow::Result<Vec<u8>> {
         let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+        let mut tonemap = TonemapPass::new(gpu, format);
+
         let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("offscreen_color"),
             size: wgpu::Extent3d {
@@ -263,7 +344,9 @@ impl ForwardRenderer {
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        self.render(gpu, &view, width, height, camera);
+        // Force a rebind: this pass instance has never seen the HDR view.
+        self.hdr_rebound_needed = true;
+        self.render_tonemapped(gpu, &mut tonemap, &view, width, height, camera);
 
         let bytes_per_row = (width * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
         let buffer_size = (bytes_per_row * height) as wgpu::BufferAddress;
@@ -326,6 +409,45 @@ impl ForwardRenderer {
     }
 }
 
+fn create_base_color_texture(
+    gpu: &GpuContext,
+    texture: &CpuTexture,
+    label: Option<&str>,
+) -> wgpu::TextureView {
+    let size = wgpu::Extent3d {
+        width: texture.width.max(1),
+        height: texture.height.max(1),
+        depth_or_array_layers: 1,
+    };
+    let gpu_texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+        label,
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        // Base color is authored in sRGB; sampling converts to linear.
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    gpu.queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &gpu_texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        &texture.rgba8,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(4 * size.width),
+            rows_per_image: Some(size.height),
+        },
+        size,
+    );
+    gpu_texture.create_view(&wgpu::TextureViewDescriptor::default())
+}
+
 fn create_depth_texture(device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureView {
     device
         .create_texture(&wgpu::TextureDescriptor {
@@ -340,6 +462,25 @@ fn create_depth_texture(device: &wgpu::Device, width: u32, height: u32) -> wgpu:
             dimension: wgpu::TextureDimension::D2,
             format: DEPTH_FORMAT,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        })
+        .create_view(&wgpu::TextureViewDescriptor::default())
+}
+
+fn create_hdr_texture(device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureView {
+    device
+        .create_texture(&wgpu::TextureDescriptor {
+            label: Some("hdr_color"),
+            size: wgpu::Extent3d {
+                width: width.max(1),
+                height: height.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: HDR_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         })
         .create_view(&wgpu::TextureViewDescriptor::default())
