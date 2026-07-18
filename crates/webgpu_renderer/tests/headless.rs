@@ -129,6 +129,63 @@ fn renders_textured_cube_headless() {
 }
 
 #[test]
+fn shadow_darkens_plane_under_cube() {
+    let Ok(gpu) = GpuContext::new_headless() else {
+        eprintln!("SKIP: no GPU adapter available in this environment");
+        return;
+    };
+
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf");
+    let scene = load_gltf(path).expect("cube_on_plane.gltf must load");
+    assert_eq!(scene.primitives.len(), 2);
+
+    let (width, height) = (256, 256);
+    let mut renderer = ForwardRenderer::new(&gpu, width, height);
+    renderer.upload_scene(&gpu, &scene);
+    // Low light from -x/-z so the floating cube casts a long shadow onto the
+    // +x/+z plane area the camera looks at (default light is too steep — the
+    // shadow hides directly beneath the cube).
+    renderer.light_dir_ambient = glam::Vec4::new(-1.0, 0.7, -0.3, 0.15);
+
+    // Look down from above so the plane fills most of the frame.
+    let camera = OrbitCamera {
+        radius: 6.0,
+        pitch_deg: 55.0,
+        ..OrbitCamera::default()
+    };
+    let pixels = renderer
+        .render_to_pixels(&gpu, width, height, &camera)
+        .expect("headless render must succeed");
+
+    // Plane pixels are near-neutral (white albedo). The shadowed patch under
+    // the cube only receives ambient light and is therefore much darker than
+    // sunlit plane areas — both populations must exist.
+    let mut lit_plane = 0usize;
+    let mut shadowed_plane = 0usize;
+    for p in pixels.chunks_exact(4) {
+        let (r, g, b) = (p[0] as i32, p[1] as i32, p[2] as i32);
+        let neutral = (r - g).abs() < 25 && (g - b).abs() < 25 && (r - b).abs() < 25;
+        if !neutral {
+            continue; // red cube or blue-ish clear color
+        }
+        if r > 180 {
+            lit_plane += 1;
+        } else if (80..150).contains(&r) {
+            shadowed_plane += 1;
+        }
+    }
+    assert!(
+        lit_plane > 1000,
+        "expected a large sunlit plane area, got {lit_plane} pixels"
+    );
+    assert!(
+        shadowed_plane > 150,
+        "expected a shadowed patch under the cube, got {shadowed_plane} pixels"
+    );
+}
+
+#[test]
 fn resize_handles_zero_dimensions() {
     let Ok(mut gpu) = GpuContext::new_headless() else {
         eprintln!("SKIP: no GPU adapter available in this environment");
