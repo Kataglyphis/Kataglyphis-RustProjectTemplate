@@ -151,7 +151,7 @@ impl OverlayControls {
                     .add(egui::Slider::new(&mut self.intensity, 0.0..=20.0).text("intensity"))
                     .changed();
                 changed |= ui
-                    .add(egui::Slider::new(&mut self.ambient, 0.0..=1.0).text("ambient"))
+                    .add(egui::Slider::new(&mut self.ambient, 0.0..=2.0).text("IBL strength"))
                     .changed();
                 ui.separator();
                 ui.label("drag: orbit - wheel: zoom");

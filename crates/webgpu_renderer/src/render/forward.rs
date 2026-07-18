@@ -384,7 +384,7 @@ impl ForwardRenderer {
             hdr_view,
             target_size: (width.max(1), height.max(1)),
             hdr_rebound_needed: true,
-            light_dir_ambient: Vec4::new(0.5, 0.8, 0.3, 0.15),
+            light_dir_ambient: Vec4::new(0.5, 0.8, 0.3, 0.35),
             // The BRDF divides diffuse by PI: intensity ~5 restores the
             // pre-PBR brightness ballpark.
             light_color_intensity: Vec4::new(1.0, 0.97, 0.92, 5.0),

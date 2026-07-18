@@ -170,12 +170,11 @@ fn shadow_darkens_plane_under_cube() {
     for p in pixels.chunks_exact(4) {
         let (r, g, b) = (p[0] as i32, p[1] as i32, p[2] as i32);
         let neutral = (r - g).abs() < 25 && (g - b).abs() < 25 && (r - b).abs() < 25;
-        if !neutral {
-            continue; // red cube or blue-ish clear color
-        }
-        if r > 180 {
+        if neutral && r > 180 {
             lit_plane += 1;
-        } else if (80..150).contains(&r) {
+        } else if r < 110 && b > r + 15 && b < 180 {
+            // Sky-lit shadow: with analytic IBL the shadowed plane only
+            // receives blue hemisphere irradiance.
             shadowed_plane += 1;
         }
     }

@@ -102,6 +102,46 @@ fn shadow_factor(light_space_pos: vec4<f32>, n_dot_l: f32) -> f32 {
 
 const PI: f32 = 3.14159265359;
 
+// ---- Analytic environment (kept in sync with sky.wgsl) ---------------------
+const SKY_ZENITH: vec3<f32> = vec3<f32>(0.09, 0.16, 0.35);
+const SKY_HORIZON: vec3<f32> = vec3<f32>(0.55, 0.62, 0.72);
+const SKY_GROUND: vec3<f32> = vec3<f32>(0.18, 0.16, 0.15);
+
+fn sky_radiance(dir: vec3<f32>, with_sun: bool) -> vec3<f32> {
+    var color: vec3<f32>;
+    if (dir.y >= 0.0) {
+        color = mix(SKY_HORIZON, SKY_ZENITH, pow(clamp(dir.y, 0.0, 1.0), 0.7));
+    } else {
+        color = mix(SKY_HORIZON, SKY_GROUND, clamp(-dir.y * 3.0, 0.0, 1.0));
+    }
+    if (with_sun) {
+        let l = normalize(uniforms.light_dir_ambient.xyz);
+        let cos_sun = max(dot(dir, l), 0.0);
+        let sun = pow(cos_sun, 1200.0) * 24.0 + pow(cos_sun, 48.0) * 0.5;
+        color += vec3<f32>(1.0, 0.95, 0.85) * sun
+            * (uniforms.light_color_intensity.w * 0.4);
+    }
+    return color;
+}
+
+/// Cosine-weighted hemisphere estimate of the analytic sky (cheap
+/// irradiance: sky above, bounced ground below, no convolution needed).
+fn hemisphere_irradiance(n: vec3<f32>) -> vec3<f32> {
+    let sky = mix(SKY_HORIZON, SKY_ZENITH, pow(clamp(n.y, 0.0, 1.0), 0.7));
+    return mix(SKY_GROUND * 0.7, sky, clamp(n.y * 0.5 + 0.5, 0.0, 1.0));
+}
+
+/// Karis/Lazarov split-sum environment BRDF approximation (no LUT).
+fn env_brdf_approx(f0: vec3<f32>, roughness: f32, n_dot_v: f32) -> vec3<f32> {
+    let c0 = vec4<f32>(-1.0, -0.0275, -0.572, 0.022);
+    let c1 = vec4<f32>(1.0, 0.0425, 1.04, -0.04);
+    let r = vec4<f32>(roughness) * c0 + c1;
+    let a004 = min(r.x * r.x, exp2(-9.28 * n_dot_v)) * r.x + r.y;
+    let ab = vec2<f32>(-1.04, 1.04) * a004 + r.zw;
+    return f0 * ab.x + vec3<f32>(ab.y);
+}
+// ----------------------------------------------------------------------------
+
 fn distribution_ggx(n_dot_h: f32, roughness: f32) -> f32 {
     let a = roughness * roughness;
     let a2 = a * a;
@@ -165,7 +205,21 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 
     let shadow = shadow_factor(in.light_space_pos, n_dot_l);
     let radiance = uniforms.light_color_intensity.rgb * uniforms.light_color_intensity.w;
-    let ambient = uniforms.light_dir_ambient.w * albedo.rgb * occlusion;
+
+    // Analytic IBL: hemisphere irradiance for diffuse, roughness-blended sky
+    // reflection (sun included -> metals catch sun glints) for specular.
+    let ibl_strength = uniforms.light_dir_ambient.w;
+    let k_s_ibl = fresnel_schlick(n_dot_v, f0);
+    let diffuse_ibl =
+        (vec3<f32>(1.0) - k_s_ibl) * (1.0 - metallic) * albedo.rgb * hemisphere_irradiance(n);
+    let reflected = reflect(-v, n);
+    let env = mix(
+        sky_radiance(reflected, true),
+        hemisphere_irradiance(n),
+        roughness * roughness,
+    );
+    let specular_ibl = env * env_brdf_approx(f0, roughness, n_dot_v);
+    let ambient = ibl_strength * occlusion * (diffuse_ibl + specular_ibl);
 
     let color = (diffuse + specular) * radiance * n_dot_l * shadow + ambient + emissive;
     return vec4<f32>(color, albedo.a);
