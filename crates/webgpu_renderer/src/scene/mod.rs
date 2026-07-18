@@ -110,6 +110,27 @@ impl Default for CpuMaterial {
     }
 }
 
+/// Punctual light (KHR_lights_punctual), world-space.
+#[derive(Copy, Clone, Debug)]
+pub enum CpuLightKind {
+    Point,
+    /// Cosines of the inner/outer cone angles.
+    Spot { cos_inner: f32, cos_outer: f32 },
+    Directional,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct CpuLight {
+    pub kind: CpuLightKind,
+    pub color: [f32; 3],
+    pub intensity: f32,
+    /// 0 = unbounded.
+    pub range: f32,
+    pub position: [f32; 3],
+    /// Direction the light POINTS (spot/directional).
+    pub direction: [f32; 3],
+}
+
 /// One drawable: an indexed triangle list with a world transform and material.
 #[derive(Clone, Debug)]
 pub struct CpuPrimitive {
@@ -122,6 +143,7 @@ pub struct CpuPrimitive {
 #[derive(Clone, Debug, Default)]
 pub struct CpuScene {
     pub primitives: Vec<CpuPrimitive>,
+    pub lights: Vec<CpuLight>,
 }
 
 impl CpuScene {

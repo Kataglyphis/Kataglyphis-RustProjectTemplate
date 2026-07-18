@@ -24,8 +24,11 @@ struct Uniforms {
     material_factors: vec4<f32>,
     // rgb: emissive factor, w: camera-space unused
     emissive_factor: vec4<f32>,
-    // xyz: world-space camera position, w: unused
+    // xyz: world-space camera position, w: active punctual light count
     camera_position: vec4<f32>,
+    // Per light: [pos.xyz, kind], [color*intensity.rgb, range],
+    // [dir.xyz, cos_inner], [cos_outer, 0, 0, 0]. kind: 1=point 2=spot 3=dir.
+    punctual_lights: array<vec4<f32>, 16>,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -161,6 +164,82 @@ fn fresnel_schlick(cos_theta: f32, f0: vec3<f32>) -> vec3<f32> {
     return f0 + (vec3<f32>(1.0) - f0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
 }
 
+fn brdf_direct(
+    n: vec3<f32>,
+    v: vec3<f32>,
+    l: vec3<f32>,
+    albedo: vec3<f32>,
+    metallic: f32,
+    roughness: f32,
+    f0: vec3<f32>,
+    radiance: vec3<f32>,
+) -> vec3<f32> {
+    let h = normalize(l + v);
+    let n_dot_l = max(dot(n, l), 0.0);
+    let n_dot_v = max(dot(n, v), 1e-4);
+    let n_dot_h = max(dot(n, h), 0.0);
+    let h_dot_v = max(dot(h, v), 0.0);
+
+    let d = distribution_ggx(n_dot_h, roughness);
+    let g = geometry_smith(n_dot_v, n_dot_l, roughness);
+    let f = fresnel_schlick(h_dot_v, f0);
+    let specular = (d * g * f) / max(4.0 * n_dot_v * n_dot_l, 1e-6);
+    let diffuse = (vec3<f32>(1.0) - f) * (1.0 - metallic) * albedo / PI;
+    return (diffuse + specular) * radiance * n_dot_l;
+}
+
+/// KHR_lights_punctual accumulation (no shadows for these lights yet).
+fn punctual_lighting(
+    world_pos: vec3<f32>,
+    n: vec3<f32>,
+    v: vec3<f32>,
+    albedo: vec3<f32>,
+    metallic: f32,
+    roughness: f32,
+    f0: vec3<f32>,
+) -> vec3<f32> {
+    var total = vec3<f32>(0.0);
+    let count = i32(uniforms.camera_position.w);
+    for (var i = 0; i < 4; i = i + 1) {
+        if (i >= count) {
+            break;
+        }
+        let a = uniforms.punctual_lights[i * 4];
+        let b = uniforms.punctual_lights[i * 4 + 1];
+        let cvec = uniforms.punctual_lights[i * 4 + 2];
+        let dvec = uniforms.punctual_lights[i * 4 + 3];
+        let kind = a.w;
+
+        var l: vec3<f32>;
+        var attenuation = 1.0;
+        if (kind > 2.5) {
+            // Directional: light points down cvec.xyz.
+            l = normalize(-cvec.xyz);
+        } else {
+            let to_light = a.xyz - world_pos;
+            let dist = max(length(to_light), 1e-4);
+            l = to_light / dist;
+            // Inverse-square with the KHR range window.
+            attenuation = 1.0 / (dist * dist);
+            let range = b.w;
+            if (range > 0.0) {
+                let k = clamp(1.0 - pow(dist / range, 4.0), 0.0, 1.0);
+                attenuation *= k * k;
+            }
+            if (kind > 1.5) {
+                // Spot cone falloff between outer and inner cosines.
+                let cos_angle = dot(normalize(cvec.xyz), -l);
+                attenuation *= smoothstep(dvec.x, cvec.w, cos_angle);
+            }
+        }
+        if (attenuation <= 0.0) {
+            continue;
+        }
+        total += brdf_direct(n, v, l, albedo, metallic, roughness, f0, b.rgb * attenuation);
+    }
+    return total;
+}
+
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // All implicit-derivative samples up front, in uniform control flow.
@@ -225,6 +304,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let specular_ibl = env * env_brdf_approx(f0, roughness, n_dot_v);
     let ambient = ibl_strength * occlusion * (diffuse_ibl + specular_ibl);
 
-    let color = (diffuse + specular) * radiance * n_dot_l * shadow + ambient + emissive;
+    let punctual =
+        punctual_lighting(in.world_position, n, v, albedo.rgb, metallic, roughness, f0);
+
+    let color =
+        (diffuse + specular) * radiance * n_dot_l * shadow + punctual + ambient + emissive;
     return vec4<f32>(color, albedo.a);
 }

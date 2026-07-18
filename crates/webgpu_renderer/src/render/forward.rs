@@ -9,7 +9,11 @@ use wgpu::util::DeviceExt as _;
 use crate::context::GpuContext;
 use crate::render::tonemap::TonemapPass;
 use crate::scene::camera::OrbitCamera;
-use crate::scene::{AlphaMode, CpuSampler, CpuScene, CpuTexture, CpuWrap, Vertex};
+use crate::scene::{
+    AlphaMode, CpuLight, CpuLightKind, CpuSampler, CpuScene, CpuTexture, CpuWrap, Vertex,
+};
+
+pub const MAX_PUNCTUAL_LIGHTS: usize = 4;
 
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -34,7 +38,11 @@ struct Uniforms {
     light_color_intensity: [f32; 4],
     material_factors: [f32; 4],
     emissive_factor: [f32; 4],
+    // xyz: world-space camera position, w: active punctual light count
     camera_position: [f32; 4],
+    // Per light: [pos.xyz, kind], [color*intensity.rgb, range],
+    // [dir.xyz, cos_inner], [cos_outer, 0, 0, 0]
+    punctual_lights: [[f32; 4]; MAX_PUNCTUAL_LIGHTS * 4],
 }
 
 struct GpuPrimitive {
@@ -54,6 +62,42 @@ struct GpuPrimitive {
     alpha_blend: bool,
     casts_shadow: bool,
     world_center: Vec3,
+}
+
+fn pack_punctual_lights(lights: &[CpuLight]) -> ([[f32; 4]; MAX_PUNCTUAL_LIGHTS * 4], u32) {
+    let mut packed = [[0.0f32; 4]; MAX_PUNCTUAL_LIGHTS * 4];
+    let count = lights.len().min(MAX_PUNCTUAL_LIGHTS);
+    for (i, light) in lights.iter().take(count).enumerate() {
+        let (kind, cos_inner, cos_outer) = match light.kind {
+            CpuLightKind::Point => (1.0, 0.0, 0.0),
+            CpuLightKind::Spot {
+                cos_inner,
+                cos_outer,
+            } => (2.0, cos_inner, cos_outer),
+            CpuLightKind::Directional => (3.0, 0.0, 0.0),
+        };
+        let base = i * 4;
+        packed[base] = [
+            light.position[0],
+            light.position[1],
+            light.position[2],
+            kind,
+        ];
+        packed[base + 1] = [
+            light.color[0] * light.intensity,
+            light.color[1] * light.intensity,
+            light.color[2] * light.intensity,
+            light.range,
+        ];
+        packed[base + 2] = [
+            light.direction[0],
+            light.direction[1],
+            light.direction[2],
+            cos_inner,
+        ];
+        packed[base + 3] = [cos_outer, 0.0, 0.0, 0.0];
+    }
+    (packed, count as u32)
 }
 
 pub struct ForwardRenderer {
@@ -77,6 +121,8 @@ pub struct ForwardRenderer {
     hdr_view: wgpu::TextureView,
     target_size: (u32, u32),
     hdr_rebound_needed: bool,
+    punctual_lights: [[f32; 4]; MAX_PUNCTUAL_LIGHTS * 4],
+    punctual_light_count: u32,
     /// Direction towards the light (world space) + ambient strength.
     pub light_dir_ambient: Vec4,
     /// Light color (rgb) + intensity multiplier (w). Values > 1 are the
@@ -400,6 +446,8 @@ impl ForwardRenderer {
             hdr_view,
             target_size: (width.max(1), height.max(1)),
             hdr_rebound_needed: true,
+            punctual_lights: [[0.0; 4]; MAX_PUNCTUAL_LIGHTS * 4],
+            punctual_light_count: 0,
             light_dir_ambient: Vec4::new(0.5, 0.8, 0.3, 0.35),
             // The BRDF divides diffuse by PI: intensity ~5 restores the
             // pre-PBR brightness ballpark.
@@ -412,6 +460,16 @@ impl ForwardRenderer {
         let device = &gpu.device;
         self.primitives.clear();
         self.scene_bounds = compute_world_bounds(scene);
+        let (packed, count) = pack_punctual_lights(&scene.lights);
+        self.punctual_lights = packed;
+        self.punctual_light_count = count;
+        if scene.lights.len() > MAX_PUNCTUAL_LIGHTS {
+            log::warn!(
+                "Scene has {} punctual lights; only the first {} are used.",
+                scene.lights.len(),
+                MAX_PUNCTUAL_LIGHTS
+            );
+        }
 
         for (i, prim) in scene.primitives.iter().enumerate() {
             let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -595,7 +653,8 @@ impl ForwardRenderer {
                 light_color_intensity: self.light_color_intensity.to_array(),
                 material_factors: prim.material_factors,
                 emissive_factor: prim.emissive_factor,
-                camera_position: [eye.x, eye.y, eye.z, 0.0],
+                camera_position: [eye.x, eye.y, eye.z, self.punctual_light_count as f32],
+                punctual_lights: self.punctual_lights,
             };
             gpu.queue
                 .write_buffer(&prim.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));

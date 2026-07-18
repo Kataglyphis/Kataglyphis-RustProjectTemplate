@@ -10,8 +10,8 @@ use anyhow::Context as _;
 use glam::{Mat4, Vec2, Vec3};
 
 use crate::scene::{
-    AlphaMode, CpuMaterial, CpuPrimitive, CpuSampler, CpuScene, CpuTexture, CpuTextureRef, CpuWrap,
-    Vertex,
+    AlphaMode, CpuLight, CpuLightKind, CpuMaterial, CpuPrimitive, CpuSampler, CpuScene, CpuTexture,
+    CpuTextureRef, CpuWrap, Vertex,
 };
 
 pub fn load_gltf(path: impl AsRef<Path>) -> anyhow::Result<CpuScene> {
@@ -153,6 +153,31 @@ fn visit_node(
 ) -> anyhow::Result<()> {
     let local = Mat4::from_cols_array_2d(&node.transform().matrix());
     let world = parent_transform * local;
+
+    if let Some(light) = node.light() {
+        use gltf::khr_lights_punctual::Kind;
+        let kind = match light.kind() {
+            Kind::Point => CpuLightKind::Point,
+            Kind::Spot {
+                inner_cone_angle,
+                outer_cone_angle,
+            } => CpuLightKind::Spot {
+                cos_inner: inner_cone_angle.cos(),
+                cos_outer: outer_cone_angle.cos(),
+            },
+            Kind::Directional => CpuLightKind::Directional,
+        };
+        // glTF lights point down their node's -Z axis.
+        let direction = world.transform_vector3(Vec3::NEG_Z).normalize_or_zero();
+        scene.lights.push(CpuLight {
+            kind,
+            color: light.color(),
+            intensity: light.intensity(),
+            range: light.range().unwrap_or(0.0),
+            position: world.transform_point3(Vec3::ZERO).to_array(),
+            direction: direction.to_array(),
+        });
+    }
 
     if let Some(mesh) = node.mesh() {
         for primitive in mesh.primitives() {

@@ -249,6 +249,62 @@ fn alpha_modes_blend_and_mask() {
 }
 
 #[test]
+fn punctual_lights_pool_on_plane() {
+    let Ok(gpu) = GpuContext::new_headless() else {
+        eprintln!("SKIP: no GPU adapter available in this environment");
+        return;
+    };
+
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/point_light.gltf");
+    let scene = load_gltf(&path).expect("point_light.gltf must load");
+    assert_eq!(scene.lights.len(), 2);
+    use kataglyphis_webgpu_renderer::scene::CpuLightKind;
+    assert!(scene
+        .lights
+        .iter()
+        .any(|l| matches!(l.kind, CpuLightKind::Point)));
+    assert!(scene
+        .lights
+        .iter()
+        .any(|l| matches!(l.kind, CpuLightKind::Spot { .. })));
+
+    let (width, height) = (256, 256);
+    let mut renderer = ForwardRenderer::new(&gpu, width, height);
+    renderer.upload_scene(&gpu, &scene);
+    // Dim the sun so the punctual pools dominate.
+    renderer.light_color_intensity.w = 0.4;
+
+    let camera = OrbitCamera {
+        radius: 7.0,
+        pitch_deg: 65.0,
+        ..OrbitCamera::default()
+    };
+    let pixels = renderer
+        .render_to_pixels(&gpu, width, height, &camera)
+        .expect("headless render must succeed");
+
+    let mut red_pool = 0usize;
+    let mut green_pool = 0usize;
+    for p in pixels.chunks_exact(4) {
+        let (r, g, b) = (p[0] as i32, p[1] as i32, p[2] as i32);
+        if r > 120 && r > g + 40 && r > b + 40 {
+            red_pool += 1;
+        } else if g > 120 && g > r + 40 && g > b + 40 {
+            green_pool += 1;
+        }
+    }
+    assert!(
+        red_pool > 200,
+        "expected a red point-light pool on the plane, got {red_pool} pixels"
+    );
+    assert!(
+        green_pool > 100,
+        "expected a green spot-light pool on the plane, got {green_pool} pixels"
+    );
+}
+
+#[test]
 fn resize_handles_zero_dimensions() {
     let Ok(mut gpu) = GpuContext::new_headless() else {
         eprintln!("SKIP: no GPU adapter available in this environment");
