@@ -78,11 +78,11 @@ fn renders_cube_headless() {
         "center pixel should be the red cube, got {center:?}"
     );
 
-    // Corner: dark clear color (linear 0.05/0.05/0.08), untouched by the cube.
+    // Corner: procedural sky (blue-dominant gradient), untouched by the cube.
     let corner = pixel(2, 2);
     assert!(
-        corner[0] < 80 && corner[1] < 80 && corner[2] < 100,
-        "corner pixel should be the clear color, got {corner:?}"
+        corner[2] > corner[0] && corner[2] > 60,
+        "corner pixel should be sky (blue-dominant), got {corner:?}"
     );
 
     // The cube must cover a plausible portion of the frame: count lit pixels.

@@ -17,6 +17,13 @@ pub const SHADOW_MAP_SIZE: u32 = 2048;
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct SkyUniforms {
+    inv_view_proj: [[f32; 4]; 4],
+    light_dir_intensity: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct Uniforms {
     view_proj: [[f32; 4]; 4],
     model: [[f32; 4]; 4],
@@ -50,6 +57,9 @@ pub struct ForwardRenderer {
     pipeline: wgpu::RenderPipeline,
     pipeline_double_sided: wgpu::RenderPipeline,
     shadow_pipeline: wgpu::RenderPipeline,
+    sky_pipeline: wgpu::RenderPipeline,
+    sky_uniform_buffer: wgpu::Buffer,
+    sky_bind_group: wgpu::BindGroup,
     bind_group_layout: wgpu::BindGroupLayout,
     shadow_bind_group_layout: wgpu::BindGroupLayout,
     shadow_sampler: wgpu::Sampler,
@@ -199,6 +209,78 @@ impl ForwardRenderer {
         let pipeline = make_forward_pipeline(Some(wgpu::Face::Back), "forward_pipeline");
         let pipeline_double_sided = make_forward_pipeline(None, "forward_pipeline_double_sided");
 
+        // Procedural sky: fullscreen triangle at far depth, only where no
+        // geometry was drawn (LessEqual vs the cleared 1.0, no depth writes).
+        let sky_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("sky_shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/sky.wgsl").into()),
+        });
+        let sky_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("sky_bind_group_layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+        let sky_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("sky_pipeline_layout"),
+                bind_group_layouts: &[&sky_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+        let sky_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("sky_pipeline"),
+            layout: Some(&sky_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &sky_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &sky_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: HDR_FORMAT,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+        let sky_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("sky_uniforms"),
+            size: std::mem::size_of::<SkyUniforms>() as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let sky_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("sky_bind_group"),
+            layout: &sky_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: sky_uniform_buffer.as_entire_binding(),
+            }],
+        });
+
         // Depth-only pipeline rendering the scene from the light's POV.
         let shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("shadow_pipeline"),
@@ -287,6 +369,9 @@ impl ForwardRenderer {
             pipeline,
             pipeline_double_sided,
             shadow_pipeline,
+            sky_pipeline,
+            sky_uniform_buffer,
+            sky_bind_group,
             bind_group_layout,
             shadow_bind_group_layout,
             shadow_sampler,
@@ -453,6 +538,21 @@ impl ForwardRenderer {
         let light_space = self.light_space_matrix();
         let eye = camera.eye();
 
+        let sky_uniforms = SkyUniforms {
+            inv_view_proj: view_proj.inverse().to_cols_array_2d(),
+            light_dir_intensity: [
+                self.light_dir_ambient.x,
+                self.light_dir_ambient.y,
+                self.light_dir_ambient.z,
+                self.light_color_intensity.w,
+            ],
+        };
+        gpu.queue.write_buffer(
+            &self.sky_uniform_buffer,
+            0,
+            bytemuck::bytes_of(&sky_uniforms),
+        );
+
         for prim in &self.primitives {
             let uniforms = Uniforms {
                 view_proj: view_proj.to_cols_array_2d(),
@@ -539,6 +639,11 @@ impl ForwardRenderer {
                 pass.set_index_buffer(prim.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..prim.index_count, 0, 0..1);
             }
+
+            // Sky fills every pixel geometry left untouched.
+            pass.set_pipeline(&self.sky_pipeline);
+            pass.set_bind_group(0, &self.sky_bind_group, &[]);
+            pass.draw(0..3, 0..1);
         }
 
         tonemap.render(&mut encoder, output_view);
