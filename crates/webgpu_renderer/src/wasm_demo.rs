@@ -167,6 +167,9 @@ impl ApplicationHandler for DemoApp {
 
                 // std::time::Instant is unavailable on wasm32: animate by frame.
                 self.frame += 1;
+                if state.renderer.has_animations() {
+                    state.renderer.set_animation_time(self.frame as f32 / 60.0);
+                }
                 if self.controller.auto_orbit {
                     self.camera.yaw_deg = 45.0 + self.frame as f32 * 0.5;
                     self.camera.radius = 6.0;
@@ -224,6 +227,7 @@ impl ApplicationHandler for DemoApp {
                     renderer.light_color_intensity.w = controls.intensity;
                     renderer.bloom_strength = controls.bloom;
                     renderer.ssao_strength = controls.ssao;
+                    renderer.exposure_ev = controls.exposure_ev;
                 }
 
                 window.pre_present_notify();

@@ -128,11 +128,17 @@ impl TonemapPass {
     }
 
     /// Per-frame parameters.
-    pub fn set_params(&self, queue: &wgpu::Queue, bloom_strength: f32, ssao_strength: f32) {
+    pub fn set_params(
+        &self,
+        queue: &wgpu::Queue,
+        bloom_strength: f32,
+        ssao_strength: f32,
+        exposure_ev: f32,
+    ) {
         queue.write_buffer(
             &self.uniform_buffer,
             0,
-            bytemuck::bytes_of(&[bloom_strength, ssao_strength, 0.0, 0.0]),
+            bytemuck::bytes_of(&[bloom_strength, ssao_strength, exposure_ev.exp2(), 0.0]),
         );
     }
 

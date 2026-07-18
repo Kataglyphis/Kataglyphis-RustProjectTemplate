@@ -388,6 +388,58 @@ fn ssao_darkens_geometry() {
 }
 
 #[test]
+fn animation_moves_the_cube() {
+    let Ok(gpu) = GpuContext::new_headless() else {
+        eprintln!("SKIP: no GPU adapter available in this environment");
+        return;
+    };
+
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_animated.gltf");
+    let scene = load_gltf(&path).expect("cube_animated.gltf must load");
+    assert_eq!(scene.animations.len(), 1);
+    assert!((scene.animations[0].duration - 2.0).abs() < 1e-5);
+
+    let (width, height) = (256, 256);
+    let mut renderer = ForwardRenderer::new(&gpu, width, height);
+    renderer.upload_scene(&gpu, &scene);
+    let camera = OrbitCamera {
+        radius: 6.0,
+        pitch_deg: 20.0,
+        yaw_deg: 90.0, // look along -z so x maps to screen x
+        ..OrbitCamera::default()
+    };
+
+    let red_centroid_x = |pixels: &[u8]| -> f32 {
+        let (mut sum_x, mut count) = (0.0f32, 0u32);
+        for (i, p) in pixels.chunks_exact(4).enumerate() {
+            let (r, g, b) = (p[0] as i32, p[1] as i32, p[2] as i32);
+            if r > 110 && r > g + 40 && r > b + 40 {
+                sum_x += (i % width as usize) as f32;
+                count += 1;
+            }
+        }
+        assert!(count > 200, "cube not found (only {count} red pixels)");
+        sum_x / count as f32
+    };
+
+    renderer.set_animation_time(0.05);
+    let start = renderer
+        .render_to_pixels(&gpu, width, height, &camera)
+        .expect("render at t=0");
+    renderer.set_animation_time(1.95);
+    let end = renderer
+        .render_to_pixels(&gpu, width, height, &camera)
+        .expect("render at t=1.95");
+
+    let (x0, x1) = (red_centroid_x(&start), red_centroid_x(&end));
+    assert!(
+        (x1 - x0).abs() > 30.0,
+        "animated cube should move across the frame: centroid {x0:.1} -> {x1:.1}"
+    );
+}
+
+#[test]
 fn resize_handles_zero_dimensions() {
     let Ok(mut gpu) = GpuContext::new_headless() else {
         eprintln!("SKIP: no GPU adapter available in this environment");

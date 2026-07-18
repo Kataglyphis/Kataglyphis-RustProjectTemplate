@@ -10,8 +10,9 @@ use anyhow::Context as _;
 use glam::{Mat4, Vec2, Vec3};
 
 use crate::scene::{
-    AlphaMode, CpuLight, CpuLightKind, CpuMaterial, CpuPrimitive, CpuSampler, CpuScene, CpuTexture,
-    CpuTextureRef, CpuWrap, Vertex,
+    AlphaMode, ChannelValues, CpuAnimation, CpuAnimationChannel, CpuLight, CpuLightKind,
+    CpuMaterial, CpuNode, CpuPrimitive, CpuSampler, CpuScene, CpuTexture, CpuTextureRef, CpuWrap,
+    Vertex,
 };
 
 pub fn load_gltf(path: impl AsRef<Path>) -> anyhow::Result<CpuScene> {
@@ -40,7 +41,77 @@ fn build_scene(
         .map(|img| to_rgba8(img).map(Arc::new))
         .collect::<anyhow::Result<_>>()?;
 
-    let mut scene = CpuScene::default();
+    // Full node table (index-aligned with glTF node indices).
+    let mut nodes: Vec<CpuNode> = document
+        .nodes()
+        .map(|n| {
+            let (t, r, s) = n.transform().decomposed();
+            CpuNode {
+                parent: None,
+                translation: glam::Vec3::from_array(t),
+                rotation: glam::Quat::from_array(r),
+                scale: glam::Vec3::from_array(s),
+            }
+        })
+        .collect();
+    for node in document.nodes() {
+        for child in node.children() {
+            nodes[child.index()].parent = Some(node.index());
+        }
+    }
+
+    let mut scene = CpuScene {
+        nodes,
+        ..CpuScene::default()
+    };
+
+    // Animations (linear/step; cubic spline collapses to linear on the
+    // in-between values for now).
+    for animation in document.animations() {
+        let mut channels = Vec::new();
+        let mut duration = 0.0f32;
+        for channel in animation.channels() {
+            let reader = channel.reader(|buffer| buffers.get(buffer.index()).map(|b| &b.0[..]));
+            let Some(times) = reader.read_inputs() else {
+                continue;
+            };
+            let times: Vec<f32> = times.collect();
+            if let Some(&last) = times.last() {
+                duration = duration.max(last);
+            }
+            let Some(outputs) = reader.read_outputs() else {
+                continue;
+            };
+            use gltf::animation::util::ReadOutputs;
+            let values = match outputs {
+                ReadOutputs::Translations(iter) => {
+                    ChannelValues::Translation(iter.map(glam::Vec3::from_array).collect())
+                }
+                ReadOutputs::Rotations(rotations) => ChannelValues::Rotation(
+                    rotations
+                        .into_f32()
+                        .map(glam::Quat::from_array)
+                        .collect(),
+                ),
+                ReadOutputs::Scales(iter) => {
+                    ChannelValues::Scale(iter.map(glam::Vec3::from_array).collect())
+                }
+                ReadOutputs::MorphTargetWeights(_) => continue,
+            };
+            channels.push(CpuAnimationChannel {
+                node: channel.target().node().index(),
+                times,
+                values,
+            });
+        }
+        if !channels.is_empty() {
+            scene.animations.push(CpuAnimation {
+                name: animation.name().unwrap_or("animation").to_string(),
+                duration,
+                channels,
+            });
+        }
+    }
 
     let gltf_scene = document
         .default_scene()
@@ -189,7 +260,8 @@ fn visit_node(
                 );
                 continue;
             }
-            if let Some(cpu) = load_primitive(&primitive, world, buffers, textures)? {
+            if let Some(mut cpu) = load_primitive(&primitive, world, buffers, textures)? {
+                cpu.node_index = Some(node.index());
                 scene.primitives.push(cpu);
             }
         }
@@ -324,6 +396,7 @@ fn load_primitive(
         vertices,
         indices,
         transform,
+        node_index: None,
         material: cpu_material,
     }))
 }

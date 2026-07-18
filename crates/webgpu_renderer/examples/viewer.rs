@@ -151,6 +151,9 @@ impl Viewer {
         if self.controller.auto_orbit {
             self.camera.yaw_deg = 45.0 + self.started.elapsed().as_secs_f32() * 30.0;
         }
+        if renderer.has_animations() {
+            renderer.set_animation_time(self.started.elapsed().as_secs_f32());
+        }
 
         let frame = match surface.get_current_texture() {
             Ok(frame) => frame,
@@ -201,6 +204,7 @@ impl Viewer {
             renderer.light_color_intensity.w = controls.intensity;
             renderer.bloom_strength = controls.bloom;
             renderer.ssao_strength = controls.ssao;
+            renderer.exposure_ev = controls.exposure_ev;
         }
 
         window.pre_present_notify();

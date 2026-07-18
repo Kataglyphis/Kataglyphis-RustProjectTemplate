@@ -7,7 +7,7 @@
 @group(0) @binding(2) var bloom_tex: texture_2d<f32>;
 @group(0) @binding(4) var ao_tex: texture_2d<f32>;
 struct TonemapUniforms {
-    // x: bloom strength, y: SSAO strength
+    // x: bloom strength, y: SSAO strength, z: exposure multiplier
     params: vec4<f32>,
 };
 @group(0) @binding(3) var<uniform> tonemap_uniforms: TonemapUniforms;
@@ -43,5 +43,6 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let bloom = textureSample(bloom_tex, hdr_sampler, in.uv).rgb;
     let ao_raw = textureSample(ao_tex, hdr_sampler, in.uv).r;
     let ao = mix(1.0, ao_raw, tonemap_uniforms.params.y);
-    return vec4<f32>(aces(hdr * ao + bloom * tonemap_uniforms.params.x), 1.0);
+    let exposure = tonemap_uniforms.params.z;
+    return vec4<f32>(aces((hdr * ao + bloom * tonemap_uniforms.params.x) * exposure), 1.0);
 }

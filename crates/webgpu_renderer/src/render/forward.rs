@@ -12,7 +12,8 @@ use crate::render::ssao::SsaoPass;
 use crate::render::tonemap::TonemapPass;
 use crate::scene::camera::OrbitCamera;
 use crate::scene::{
-    AlphaMode, CpuLight, CpuLightKind, CpuSampler, CpuScene, CpuTexture, CpuWrap, Vertex,
+    AlphaMode, ChannelValues, CpuAnimation, CpuLight, CpuLightKind, CpuNode, CpuSampler, CpuScene,
+    CpuTexture, CpuWrap, Vertex,
 };
 
 pub const MAX_PUNCTUAL_LIGHTS: usize = 4;
@@ -70,6 +71,9 @@ struct GpuPrimitive {
     world_center: Vec3,
     aabb_min: Vec3,
     aabb_max: Vec3,
+    node_index: Option<usize>,
+    local_aabb_min: Vec3,
+    local_aabb_max: Vec3,
 }
 
 fn pack_punctual_lights(lights: &[CpuLight]) -> ([[f32; 4]; MAX_PUNCTUAL_LIGHTS * 4], u32) {
@@ -138,8 +142,12 @@ pub struct ForwardRenderer {
     pub bloom_strength: f32,
     /// SSAO strength applied by the tonemap pass (0 = off).
     pub ssao_strength: f32,
+    /// Exposure in EV stops (0 = neutral).
+    pub exposure_ev: f32,
     punctual_lights: [[f32; 4]; MAX_PUNCTUAL_LIGHTS * 4],
     punctual_light_count: u32,
+    nodes: Vec<CpuNode>,
+    animations: Vec<CpuAnimation>,
     /// Direction towards the light (world space) + ambient strength.
     pub light_dir_ambient: Vec4,
     /// Light color (rgb) + intensity multiplier (w). Values > 1 are the
@@ -365,8 +373,11 @@ impl ForwardRenderer {
             ssao: SsaoPass::new(gpu),
             bloom_strength: 0.6,
             ssao_strength: 0.7,
+            exposure_ev: 0.0,
             punctual_lights: [[0.0; 4]; MAX_PUNCTUAL_LIGHTS * 4],
             punctual_light_count: 0,
+            nodes: Vec::new(),
+            animations: Vec::new(),
             light_dir_ambient: Vec4::new(0.5, 0.8, 0.3, 0.35),
             // The BRDF divides diffuse by PI: intensity ~5 restores the
             // pre-PBR brightness ballpark.
@@ -382,6 +393,8 @@ impl ForwardRenderer {
         let (packed, count) = pack_punctual_lights(&scene.lights);
         self.punctual_lights = packed;
         self.punctual_light_count = count;
+        self.nodes = scene.nodes.clone();
+        self.animations = scene.animations.clone();
         if scene.lights.len() > MAX_PUNCTUAL_LIGHTS {
             log::warn!(
                 "Scene has {} punctual lights; only the first {} are used.",
@@ -409,6 +422,7 @@ impl ForwardRenderer {
             });
 
             let prim_bounds = primitive_world_aabb(prim);
+            let local_bounds = primitive_local_aabb(prim);
             let material = &prim.material;
             let slots = [
                 (&material.base_color_texture, &self.white_texture_view),
@@ -504,6 +518,9 @@ impl ForwardRenderer {
                     },
                 ],
                 base_uv_transform: material.base_uv_transform,
+                node_index: prim.node_index,
+                local_aabb_min: local_bounds.0,
+                local_aabb_max: local_bounds.1,
                 double_sided: material.double_sided,
                 alpha_blend: material.alpha_mode == AlphaMode::Blend,
                 // Transparents cast no shadow (v1); a MASK primitive whose
@@ -556,7 +573,7 @@ impl ForwardRenderer {
             tonemap.set_input(gpu, &self.hdr_view, &bloom_out, &ao_out);
             self.hdr_rebound_needed = false;
         }
-        tonemap.set_params(&gpu.queue, self.bloom_strength, self.ssao_strength);
+        tonemap.set_params(&gpu.queue, self.bloom_strength, self.ssao_strength, self.exposure_ev);
 
         let aspect = width as f32 / height as f32;
         let view_proj = camera.view_projection(aspect);
@@ -851,6 +868,78 @@ impl ForwardRenderer {
         Ok(())
     }
 
+    /// True when the uploaded scene carries animations.
+    pub fn has_animations(&self) -> bool {
+        !self.animations.is_empty()
+    }
+
+    /// Longest animation duration in seconds (0 when none).
+    pub fn animation_duration(&self) -> f32 {
+        self.animations
+            .iter()
+            .map(|a| a.duration)
+            .fold(0.0, f32::max)
+    }
+
+    /// Samples every animation at `time` (seconds), recomputes node world
+    /// transforms and retargets the affected primitives (transforms, AABBs,
+    /// blend-sort centers).
+    pub fn set_animation_time(&mut self, time: f32) {
+        if self.animations.is_empty() || self.nodes.is_empty() {
+            return;
+        }
+        for animation in &self.animations {
+            for channel in &animation.channels {
+                let Some(node) = self.nodes.get_mut(channel.node) else {
+                    continue;
+                };
+                let t = if animation.duration > 0.0 {
+                    time % animation.duration
+                } else {
+                    0.0
+                };
+                let (i0, i1, frac) = keyframe_lerp_indices(&channel.times, t);
+                match &channel.values {
+                    ChannelValues::Translation(values) => {
+                        if let (Some(a), Some(b)) = (values.get(i0), values.get(i1)) {
+                            node.translation = a.lerp(*b, frac);
+                        }
+                    }
+                    ChannelValues::Rotation(values) => {
+                        if let (Some(a), Some(b)) = (values.get(i0), values.get(i1)) {
+                            node.rotation = a.slerp(*b, frac);
+                        }
+                    }
+                    ChannelValues::Scale(values) => {
+                        if let (Some(a), Some(b)) = (values.get(i0), values.get(i1)) {
+                            node.scale = a.lerp(*b, frac);
+                        }
+                    }
+                }
+            }
+        }
+
+        let world = CpuScene::compute_world_transforms(&self.nodes);
+        let mut scene_min = Vec3::splat(f32::INFINITY);
+        let mut scene_max = Vec3::splat(f32::NEG_INFINITY);
+        for prim in &mut self.primitives {
+            if let Some(node) = prim.node_index {
+                if let Some(m) = world.get(node) {
+                    prim.model = *m;
+                    let (min, max) = transform_aabb(*m, prim.local_aabb_min, prim.local_aabb_max);
+                    prim.aabb_min = min;
+                    prim.aabb_max = max;
+                    prim.world_center = (min + max) * 0.5;
+                }
+            }
+            scene_min = scene_min.min(prim.aabb_min);
+            scene_max = scene_max.max(prim.aabb_max);
+        }
+        if scene_min.x <= scene_max.x {
+            self.scene_bounds = Some((scene_min, scene_max));
+        }
+    }
+
     /// Orthographic world->light-clip matrix fitted to the scene bounds.
     fn light_space_matrix(&self) -> Mat4 {
         let (min, max) = self
@@ -1082,6 +1171,61 @@ fn primitive_world_center(prim: &crate::scene::CpuPrimitive) -> Vec3 {
     }
     prim.transform
         .transform_point3(sum / prim.vertices.len() as f32)
+}
+
+fn keyframe_lerp_indices(times: &[f32], t: f32) -> (usize, usize, f32) {
+    if times.is_empty() {
+        return (0, 0, 0.0);
+    }
+    if t <= times[0] {
+        return (0, 0, 0.0);
+    }
+    if t >= *times.last().unwrap() {
+        let last = times.len() - 1;
+        return (last, last, 0.0);
+    }
+    let mut i = 0;
+    while i + 1 < times.len() && times[i + 1] < t {
+        i += 1;
+    }
+    let span = (times[i + 1] - times[i]).max(1e-6);
+    (i, i + 1, (t - times[i]) / span)
+}
+
+fn primitive_local_aabb(prim: &crate::scene::CpuPrimitive) -> (Vec3, Vec3) {
+    let mut min = Vec3::splat(f32::INFINITY);
+    let mut max = Vec3::splat(f32::NEG_INFINITY);
+    for vertex in &prim.vertices {
+        let p = Vec3::from_array(vertex.position);
+        min = min.min(p);
+        max = max.max(p);
+    }
+    if min.x > max.x {
+        (Vec3::ZERO, Vec3::ZERO)
+    } else {
+        (min, max)
+    }
+}
+
+fn transform_aabb(m: Mat4, min: Vec3, max: Vec3) -> (Vec3, Vec3) {
+    let corners = [
+        Vec3::new(min.x, min.y, min.z),
+        Vec3::new(max.x, min.y, min.z),
+        Vec3::new(min.x, max.y, min.z),
+        Vec3::new(max.x, max.y, min.z),
+        Vec3::new(min.x, min.y, max.z),
+        Vec3::new(max.x, min.y, max.z),
+        Vec3::new(min.x, max.y, max.z),
+        Vec3::new(max.x, max.y, max.z),
+    ];
+    let mut out_min = Vec3::splat(f32::INFINITY);
+    let mut out_max = Vec3::splat(f32::NEG_INFINITY);
+    for corner in corners {
+        let p = m.transform_point3(corner);
+        out_min = out_min.min(p);
+        out_max = out_max.max(p);
+    }
+    (out_min, out_max)
 }
 
 fn compute_world_bounds(scene: &CpuScene) -> Option<(Vec3, Vec3)> {

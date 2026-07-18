@@ -6,7 +6,7 @@ pub mod controller;
 
 use std::sync::Arc;
 
-use glam::Mat4;
+use glam::{Mat4, Quat, Vec3};
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -136,12 +136,46 @@ pub struct CpuLight {
     pub direction: [f32; 3],
 }
 
+/// A scene-graph node with its local TRS (animation targets these).
+#[derive(Clone, Debug)]
+pub struct CpuNode {
+    pub parent: Option<usize>,
+    pub translation: Vec3,
+    pub rotation: Quat,
+    pub scale: Vec3,
+}
+
+#[derive(Clone, Debug)]
+pub enum ChannelValues {
+    Translation(Vec<Vec3>),
+    Rotation(Vec<Quat>),
+    Scale(Vec<Vec3>),
+}
+
+#[derive(Clone, Debug)]
+pub struct CpuAnimationChannel {
+    pub node: usize,
+    /// Keyframe times (seconds), ascending.
+    pub times: Vec<f32>,
+    pub values: ChannelValues,
+}
+
+#[derive(Clone, Debug)]
+pub struct CpuAnimation {
+    pub name: String,
+    pub duration: f32,
+    pub channels: Vec<CpuAnimationChannel>,
+}
+
 /// One drawable: an indexed triangle list with a world transform and material.
 #[derive(Clone, Debug)]
 pub struct CpuPrimitive {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
     pub transform: Mat4,
+    /// Index into `CpuScene::nodes` when the primitive belongs to the scene
+    /// graph (animation retargets its transform).
+    pub node_index: Option<usize>,
     pub material: CpuMaterial,
 }
 
@@ -149,6 +183,42 @@ pub struct CpuPrimitive {
 pub struct CpuScene {
     pub primitives: Vec<CpuPrimitive>,
     pub lights: Vec<CpuLight>,
+    pub nodes: Vec<CpuNode>,
+    pub animations: Vec<CpuAnimation>,
+}
+
+impl CpuScene {
+    /// World transforms for all nodes from their current local TRS.
+    pub fn compute_world_transforms(nodes: &[CpuNode]) -> Vec<Mat4> {
+        let mut world = vec![Mat4::IDENTITY; nodes.len()];
+        let mut done = vec![false; nodes.len()];
+        fn resolve(
+            i: usize,
+            nodes: &[CpuNode],
+            world: &mut Vec<Mat4>,
+            done: &mut Vec<bool>,
+        ) -> Mat4 {
+            if done[i] {
+                return world[i];
+            }
+            let local = Mat4::from_scale_rotation_translation(
+                nodes[i].scale,
+                nodes[i].rotation,
+                nodes[i].translation,
+            );
+            let m = match nodes[i].parent {
+                Some(p) => resolve(p, nodes, world, done) * local,
+                None => local,
+            };
+            world[i] = m;
+            done[i] = true;
+            m
+        }
+        for i in 0..nodes.len() {
+            resolve(i, nodes, &mut world, &mut done);
+        }
+        world
+    }
 }
 
 impl CpuScene {
