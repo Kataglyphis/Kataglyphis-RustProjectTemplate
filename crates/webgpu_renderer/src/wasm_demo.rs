@@ -20,8 +20,22 @@ use crate::render::tonemap::TonemapPass;
 use crate::scene::camera::OrbitCamera;
 
 const DEMO_SCENE: &[u8] = include_bytes!("../tests/assets/cube_on_plane.gltf");
-const CANVAS_WIDTH: u32 = 1024;
-const CANVAS_HEIGHT: u32 = 640;
+
+/// Syncs the canvas backing store to its CSS layout size x devicePixelRatio
+/// and returns the backing size. winit does not do this on web — an unsized
+/// canvas leads to an invisible ~1x1 surface.
+fn sync_canvas_backing_size(canvas: &web_sys::HtmlCanvasElement) -> (u32, u32) {
+    let dpr = web_sys::window().map_or(1.0, |w| w.device_pixel_ratio());
+    let width = ((canvas.client_width().max(1) as f64) * dpr) as u32;
+    let height = ((canvas.client_height().max(1) as f64) * dpr) as u32;
+    if canvas.width() != width {
+        canvas.set_width(width);
+    }
+    if canvas.height() != height {
+        canvas.set_height(height);
+    }
+    (width.max(1), height.max(1))
+}
 
 struct GpuState {
     gpu: GpuContext,
@@ -52,12 +66,12 @@ impl ApplicationHandler for DemoApp {
                 .expect("failed to create window"),
         );
 
-        // Attach the winit canvas to the page. winit does not reliably size
-        // the canvas backing store on web — set it explicitly, otherwise the
-        // surface gets configured at ~1x1 and renders invisibly.
+        // Attach the winit canvas to the page; CSS drives the layout size,
+        // the backing store follows it (responsive, DPI-aware).
         let canvas = window.canvas().expect("winit window must expose a canvas");
-        canvas.set_width(CANVAS_WIDTH);
-        canvas.set_height(CANVAS_HEIGHT);
+        let style = canvas.style();
+        let _ = style.set_property("width", "100%");
+        let _ = style.set_property("height", "100%");
         let document = web_sys::window()
             .and_then(|w| w.document())
             .expect("no document");
@@ -65,6 +79,7 @@ impl ApplicationHandler for DemoApp {
             .get_element_by_id("demo")
             .unwrap_or_else(|| document.body().expect("no body").into());
         mount.append_child(&canvas).expect("failed to append canvas");
+        let (initial_width, initial_height) = sync_canvas_backing_size(&canvas);
 
         // WebGPU init is async-only in browsers: fill the shared state slot
         // when ready and kick the first redraw.
@@ -75,10 +90,10 @@ impl ApplicationHandler for DemoApp {
                 .await
                 .expect("WebGPU init failed (does this browser support WebGPU?)");
             let format = gpu.surface_format().expect("windowed context has a format");
-            // The context read inner_size before the canvas resize propagated
+            // The context read inner_size before the canvas sizing propagated
             // through winit — force the surface to the real canvas size.
-            gpu.resize(CANVAS_WIDTH, CANVAS_HEIGHT);
-            let mut renderer = ForwardRenderer::new(&gpu, CANVAS_WIDTH, CANVAS_HEIGHT);
+            gpu.resize(initial_width, initial_height);
+            let mut renderer = ForwardRenderer::new(&gpu, initial_width, initial_height);
             let tonemap = TonemapPass::new(&gpu, format);
 
             let scene = load_gltf_slice(DEMO_SCENE).expect("embedded demo scene must load");
@@ -110,6 +125,21 @@ impl ApplicationHandler for DemoApp {
                 let Some(state) = state_ref.as_mut() else {
                     return;
                 };
+
+                // Responsive canvas: follow the CSS layout size every frame
+                // and reconfigure the surface when it changes.
+                if let Some(canvas) = window.canvas() {
+                    let (width, height) = sync_canvas_backing_size(&canvas);
+                    let configured = state
+                        .gpu
+                        .surface_config
+                        .as_ref()
+                        .map(|c| (c.width, c.height));
+                    if configured != Some((width, height)) {
+                        state.gpu.resize(width, height);
+                    }
+                }
+
                 let Some(surface) = state.gpu.surface.as_ref() else {
                     return;
                 };

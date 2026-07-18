@@ -4,9 +4,11 @@
   <meta charset="utf-8">
   <title>Kataglyphis WebGPU glTF demo</title>
   <style>
-    body { margin: 0; background: #14141c; color: #dcdce6; font-family: system-ui, sans-serif; }
-    header { padding: 0.6rem 1rem; font-size: 0.9rem; opacity: 0.8; }
-    #demo canvas { display: block; margin: 0 auto; outline: none; }
+    html, body { margin: 0; height: 100%; background: #14141c; color: #dcdce6; font-family: system-ui, sans-serif; }
+    body { display: flex; flex-direction: column; }
+    header { padding: 0.6rem 1rem; font-size: 0.9rem; opacity: 0.8; flex: none; }
+    #demo { flex: 1 1 auto; min-height: 0; }
+    #demo canvas { display: block; outline: none; }
   </style>
 </head>
 <body>
