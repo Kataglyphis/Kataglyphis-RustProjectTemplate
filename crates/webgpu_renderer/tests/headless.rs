@@ -189,6 +189,66 @@ fn shadow_darkens_plane_under_cube() {
 }
 
 #[test]
+fn alpha_modes_blend_and_mask() {
+    let Ok(gpu) = GpuContext::new_headless() else {
+        eprintln!("SKIP: no GPU adapter available in this environment");
+        return;
+    };
+
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_alpha.gltf");
+    let scene = load_gltf(&path).expect("cube_alpha.gltf must load");
+    assert_eq!(scene.primitives.len(), 4);
+
+    use kataglyphis_webgpu_renderer::scene::AlphaMode;
+    let modes: Vec<AlphaMode> = scene
+        .primitives
+        .iter()
+        .map(|p| p.material.alpha_mode)
+        .collect();
+    assert!(modes.contains(&AlphaMode::Blend));
+    assert!(modes.iter().any(|m| matches!(m, AlphaMode::Mask(c) if (c - 0.5).abs() < 1e-6)));
+
+    let (width, height) = (256, 256);
+    let mut renderer = ForwardRenderer::new(&gpu, width, height);
+    renderer.upload_scene(&gpu, &scene);
+
+    // Look down so the translucent green quad overlaps the red cube.
+    let camera = OrbitCamera {
+        radius: 5.0,
+        pitch_deg: 60.0,
+        ..OrbitCamera::default()
+    };
+    let pixels = renderer
+        .render_to_pixels(&gpu, width, height, &camera)
+        .expect("headless render must succeed");
+
+    let mut blended_over_cube = 0usize;
+    let mut yellowish = 0usize;
+    for p in pixels.chunks_exact(4) {
+        let (r, g, b) = (p[0] as i32, p[1] as i32, p[2] as i32);
+        // Green blend quad over the bright white plane: green-tinted but
+        // clearly translucent (red/blue still present from the white below).
+        if g > 140 && g > r + 25 && g > b + 25 && r > 70 && b > 60 {
+            blended_over_cube += 1;
+        }
+        // The MASK quad (yellow, alpha 0.3 < cutoff 0.5) must be fully
+        // discarded: no yellow-dominant pixels anywhere.
+        if r > 140 && g > 140 && b < 90 {
+            yellowish += 1;
+        }
+    }
+    assert!(
+        blended_over_cube > 200,
+        "expected the green BLEND quad composited over the red cube, got {blended_over_cube} pixels"
+    );
+    assert_eq!(
+        yellowish, 0,
+        "MASK quad below cutoff must be discarded entirely, got {yellowish} yellow pixels"
+    );
+}
+
+#[test]
 fn resize_handles_zero_dimensions() {
     let Ok(mut gpu) = GpuContext::new_headless() else {
         eprintln!("SKIP: no GPU adapter available in this environment");

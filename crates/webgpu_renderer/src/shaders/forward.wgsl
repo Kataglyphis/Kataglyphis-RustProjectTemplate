@@ -171,6 +171,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let occlusion_sample = textureSample(occlusion_tex, occlusion_sampler, in.uv);
 
     let albedo = uniforms.base_color * base_sample;
+    // MASK alpha mode: emissive_factor.w carries the cutoff (0 = keep all).
+    if (albedo.a < uniforms.emissive_factor.w) {
+        discard;
+    }
     // glTF: metallic in B, roughness in G.
     let metallic = clamp(uniforms.material_factors.x * mr_sample.b, 0.0, 1.0);
     let roughness = clamp(uniforms.material_factors.y * mr_sample.g, 0.045, 1.0);

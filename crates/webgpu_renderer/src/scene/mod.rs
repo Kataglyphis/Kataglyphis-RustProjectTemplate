@@ -64,9 +64,19 @@ pub struct CpuTextureRef {
     pub srgb: bool,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum AlphaMode {
+    Opaque,
+    /// Fragments with alpha below the cutoff are discarded.
+    Mask(f32),
+    /// Sorted back-to-front, alpha-blended, no depth writes.
+    Blend,
+}
+
 #[derive(Clone, Debug)]
 pub struct CpuMaterial {
     pub base_color: [f32; 4],
+    pub alpha_mode: AlphaMode,
     pub metallic_factor: f32,
     pub roughness_factor: f32,
     pub emissive_factor: [f32; 3],
@@ -84,6 +94,7 @@ impl Default for CpuMaterial {
     fn default() -> Self {
         Self {
             base_color: [1.0, 1.0, 1.0, 1.0],
+            alpha_mode: AlphaMode::Opaque,
             metallic_factor: 1.0,
             roughness_factor: 1.0,
             emissive_factor: [0.0, 0.0, 0.0],

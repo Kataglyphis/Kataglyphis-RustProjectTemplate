@@ -9,7 +9,7 @@ use wgpu::util::DeviceExt as _;
 use crate::context::GpuContext;
 use crate::render::tonemap::TonemapPass;
 use crate::scene::camera::OrbitCamera;
-use crate::scene::{CpuSampler, CpuScene, CpuTexture, CpuWrap, Vertex};
+use crate::scene::{AlphaMode, CpuSampler, CpuScene, CpuTexture, CpuWrap, Vertex};
 
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -51,11 +51,16 @@ struct GpuPrimitive {
     material_factors: [f32; 4],
     emissive_factor: [f32; 4],
     double_sided: bool,
+    alpha_blend: bool,
+    casts_shadow: bool,
+    world_center: Vec3,
 }
 
 pub struct ForwardRenderer {
     pipeline: wgpu::RenderPipeline,
     pipeline_double_sided: wgpu::RenderPipeline,
+    pipeline_blend: wgpu::RenderPipeline,
+    pipeline_blend_double_sided: wgpu::RenderPipeline,
     shadow_pipeline: wgpu::RenderPipeline,
     sky_pipeline: wgpu::RenderPipeline,
     sky_uniform_buffer: wgpu::Buffer,
@@ -169,7 +174,7 @@ impl ForwardRenderer {
                 push_constant_ranges: &[],
             });
 
-        let make_forward_pipeline = |cull_mode: Option<wgpu::Face>, label: &str| {
+        let make_forward_pipeline = |cull_mode: Option<wgpu::Face>, blend: bool, label: &str| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(&pipeline_layout),
@@ -184,7 +189,11 @@ impl ForwardRenderer {
                     entry_point: Some("fs_main"),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: HDR_FORMAT,
-                        blend: Some(wgpu::BlendState::REPLACE),
+                        blend: Some(if blend {
+                            wgpu::BlendState::ALPHA_BLENDING
+                        } else {
+                            wgpu::BlendState::REPLACE
+                        }),
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
                     compilation_options: Default::default(),
@@ -195,7 +204,7 @@ impl ForwardRenderer {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: DEPTH_FORMAT,
-                    depth_write_enabled: true,
+                    depth_write_enabled: !blend,
                     depth_compare: wgpu::CompareFunction::Less,
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
@@ -206,8 +215,13 @@ impl ForwardRenderer {
             })
         };
 
-        let pipeline = make_forward_pipeline(Some(wgpu::Face::Back), "forward_pipeline");
-        let pipeline_double_sided = make_forward_pipeline(None, "forward_pipeline_double_sided");
+        let pipeline = make_forward_pipeline(Some(wgpu::Face::Back), false, "forward_pipeline");
+        let pipeline_double_sided =
+            make_forward_pipeline(None, false, "forward_pipeline_double_sided");
+        let pipeline_blend =
+            make_forward_pipeline(Some(wgpu::Face::Back), true, "forward_pipeline_blend");
+        let pipeline_blend_double_sided =
+            make_forward_pipeline(None, true, "forward_pipeline_blend_double_sided");
 
         // Procedural sky: fullscreen triangle at far depth, only where no
         // geometry was drawn (LessEqual vs the cleared 1.0, no depth writes).
@@ -368,6 +382,8 @@ impl ForwardRenderer {
         Self {
             pipeline,
             pipeline_double_sided,
+            pipeline_blend,
+            pipeline_blend_double_sided,
             shadow_pipeline,
             sky_pipeline,
             sky_uniform_buffer,
@@ -503,9 +519,24 @@ impl ForwardRenderer {
                     material.emissive_factor[0],
                     material.emissive_factor[1],
                     material.emissive_factor[2],
-                    0.0,
+                    // w carries the MASK alpha cutoff (0 = never discard).
+                    match material.alpha_mode {
+                        AlphaMode::Mask(cutoff) => cutoff,
+                        _ => 0.0,
+                    },
                 ],
                 double_sided: material.double_sided,
+                alpha_blend: material.alpha_mode == AlphaMode::Blend,
+                // Transparents cast no shadow (v1); a MASK primitive whose
+                // base alpha is fully below the cutoff is invisible and must
+                // not shadow either. Per-pixel alpha-tested shadows for
+                // textured masks are a later refinement.
+                casts_shadow: match material.alpha_mode {
+                    AlphaMode::Blend => false,
+                    AlphaMode::Mask(cutoff) => material.base_color[3] >= cutoff,
+                    AlphaMode::Opaque => true,
+                },
+                world_center: primitive_world_center(prim),
             });
         }
     }
@@ -591,7 +622,7 @@ impl ForwardRenderer {
                 occlusion_query_set: None,
             });
             pass.set_pipeline(&self.shadow_pipeline);
-            for prim in &self.primitives {
+            for prim in self.primitives.iter().filter(|p| p.casts_shadow) {
                 pass.set_bind_group(0, &prim.shadow_bind_group, &[]);
                 pass.set_vertex_buffer(0, prim.vertex_buffer.slice(..));
                 pass.set_index_buffer(prim.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
@@ -627,7 +658,7 @@ impl ForwardRenderer {
                 occlusion_query_set: None,
             });
 
-            for prim in &self.primitives {
+            for prim in self.primitives.iter().filter(|p| !p.alpha_blend) {
                 let pipeline = if prim.double_sided {
                     &self.pipeline_double_sided
                 } else {
@@ -644,6 +675,27 @@ impl ForwardRenderer {
             pass.set_pipeline(&self.sky_pipeline);
             pass.set_bind_group(0, &self.sky_bind_group, &[]);
             pass.draw(0..3, 0..1);
+
+            // Transparents last, farthest first, no depth writes.
+            let mut blended: Vec<&GpuPrimitive> =
+                self.primitives.iter().filter(|p| p.alpha_blend).collect();
+            blended.sort_by(|a, b| {
+                let da = a.world_center.distance_squared(eye);
+                let db = b.world_center.distance_squared(eye);
+                db.partial_cmp(&da).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            for prim in blended {
+                let pipeline = if prim.double_sided {
+                    &self.pipeline_blend_double_sided
+                } else {
+                    &self.pipeline_blend
+                };
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(0, &prim.bind_group, &[]);
+                pass.set_vertex_buffer(0, prim.vertex_buffer.slice(..));
+                pass.set_index_buffer(prim.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..prim.index_count, 0, 0..1);
+            }
         }
 
         tonemap.render(&mut encoder, output_view);
@@ -769,6 +821,18 @@ impl ForwardRenderer {
             Mat4::orthographic_rh(-radius, radius, -radius, radius, 0.1, radius * 4.0);
         projection * view
     }
+}
+
+fn primitive_world_center(prim: &crate::scene::CpuPrimitive) -> Vec3 {
+    if prim.vertices.is_empty() {
+        return prim.transform.transform_point3(Vec3::ZERO);
+    }
+    let mut sum = Vec3::ZERO;
+    for vertex in &prim.vertices {
+        sum += Vec3::from_array(vertex.position);
+    }
+    prim.transform
+        .transform_point3(sum / prim.vertices.len() as f32)
 }
 
 fn compute_world_bounds(scene: &CpuScene) -> Option<(Vec3, Vec3)> {

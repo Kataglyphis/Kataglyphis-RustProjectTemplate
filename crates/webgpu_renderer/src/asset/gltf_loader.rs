@@ -10,7 +10,8 @@ use anyhow::Context as _;
 use glam::{Mat4, Vec2, Vec3};
 
 use crate::scene::{
-    CpuMaterial, CpuPrimitive, CpuSampler, CpuScene, CpuTexture, CpuTextureRef, CpuWrap, Vertex,
+    AlphaMode, CpuMaterial, CpuPrimitive, CpuSampler, CpuScene, CpuTexture, CpuTextureRef, CpuWrap,
+    Vertex,
 };
 
 pub fn load_gltf(path: impl AsRef<Path>) -> anyhow::Result<CpuScene> {
@@ -242,8 +243,15 @@ fn load_primitive(
     let material = primitive.material();
     let pbr = material.pbr_metallic_roughness();
 
+    let alpha_mode = match material.alpha_mode() {
+        gltf::material::AlphaMode::Opaque => AlphaMode::Opaque,
+        gltf::material::AlphaMode::Mask => AlphaMode::Mask(material.alpha_cutoff().unwrap_or(0.5)),
+        gltf::material::AlphaMode::Blend => AlphaMode::Blend,
+    };
+
     let cpu_material = CpuMaterial {
         base_color: pbr.base_color_factor(),
+        alpha_mode,
         metallic_factor: pbr.metallic_factor(),
         roughness_factor: pbr.roughness_factor(),
         emissive_factor: material.emissive_factor(),
