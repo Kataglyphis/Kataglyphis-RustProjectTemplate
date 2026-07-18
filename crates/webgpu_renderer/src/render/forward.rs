@@ -21,6 +21,8 @@ pub const MAX_PUNCTUAL_LIGHTS: usize = 4;
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 pub const SHADOW_MAP_SIZE: u32 = 2048;
+/// Cascaded shadow map layers (split by view distance).
+pub const CASCADE_COUNT: usize = 3;
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -36,6 +38,8 @@ struct Uniforms {
     model: [[f32; 4]; 4],
     normal_matrix: [[f32; 4]; 4],
     light_space: [[f32; 4]; 4],
+    light_space_1: [[f32; 4]; 4],
+    light_space_2: [[f32; 4]; 4],
     base_color: [f32; 4],
     light_dir_ambient: [f32; 4],
     light_color_intensity: [f32; 4],
@@ -49,6 +53,7 @@ struct Uniforms {
     // KHR_texture_transform rows for the base color UV.
     base_uv_row0: [f32; 4],
     base_uv_row1: [f32; 4],
+    cascade_splits: [f32; 4],
 }
 
 struct GpuPrimitive {
@@ -130,6 +135,9 @@ pub struct ForwardRenderer {
     white_texture_view: wgpu::TextureView,
     flat_normal_view: wgpu::TextureView,
     shadow_view: wgpu::TextureView,
+    shadow_layer_views: Vec<wgpu::TextureView>,
+    cascade_matrices: [Mat4; CASCADE_COUNT],
+    cascade_splits: [f32; 4],
     primitives: Vec<GpuPrimitive>,
     scene_bounds: Option<(Vec3, Vec3)>,
     depth: wgpu::TextureView,
@@ -179,7 +187,7 @@ impl ForwardRenderer {
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Texture {
                     sample_type: wgpu::TextureSampleType::Depth,
-                    view_dimension: wgpu::TextureViewDimension::D2,
+                    view_dimension: wgpu::TextureViewDimension::D2Array,
                     multisampled: false,
                 },
                 count: None,
@@ -324,23 +332,36 @@ impl ForwardRenderer {
             Some("flat_normal_fallback"),
         );
 
-        let shadow_view = device
-            .create_texture(&wgpu::TextureDescriptor {
-                label: Some("shadow_map"),
-                size: wgpu::Extent3d {
-                    width: SHADOW_MAP_SIZE,
-                    height: SHADOW_MAP_SIZE,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: DEPTH_FORMAT,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
+        let shadow_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("shadow_map_array"),
+            size: wgpu::Extent3d {
+                width: SHADOW_MAP_SIZE,
+                height: SHADOW_MAP_SIZE,
+                depth_or_array_layers: CASCADE_COUNT as u32,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: DEPTH_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let shadow_view = shadow_texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("shadow_map_array_view"),
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        });
+        let shadow_layer_views: Vec<wgpu::TextureView> = (0..CASCADE_COUNT as u32)
+            .map(|layer| {
+                shadow_texture.create_view(&wgpu::TextureViewDescriptor {
+                    label: Some("shadow_map_layer"),
+                    dimension: Some(wgpu::TextureViewDimension::D2),
+                    base_array_layer: layer,
+                    array_layer_count: Some(1),
+                    ..Default::default()
+                })
             })
-            .create_view(&wgpu::TextureViewDescriptor::default());
+            .collect();
 
         let depth = create_depth_texture(device, width, height);
         let hdr_view = create_hdr_texture(device, width, height);
@@ -363,6 +384,9 @@ impl ForwardRenderer {
             white_texture_view,
             flat_normal_view,
             shadow_view,
+            shadow_layer_views,
+            cascade_matrices: [Mat4::IDENTITY; CASCADE_COUNT],
+            cascade_splits: [10.0, 30.0, CASCADE_COUNT as f32, 0.0],
             primitives: Vec::new(),
             scene_bounds: None,
             depth,
@@ -580,7 +604,8 @@ impl ForwardRenderer {
         let frustum = Frustum::from_view_proj(&view_proj);
         self.ssao
             .write_uniforms(&gpu.queue, camera.projection(aspect), 0.6, 0.02, 1.0);
-        let light_space = self.light_space_matrix();
+        self.update_cascades(camera);
+        let light_space = self.cascade_matrices[0];
         let eye = camera.eye();
 
         let sky_uniforms = SkyUniforms {
@@ -604,6 +629,8 @@ impl ForwardRenderer {
                 model: prim.model.to_cols_array_2d(),
                 normal_matrix: prim.model.inverse().transpose().to_cols_array_2d(),
                 light_space: light_space.to_cols_array_2d(),
+                light_space_1: self.cascade_matrices[1].to_cols_array_2d(),
+                light_space_2: self.cascade_matrices[2].to_cols_array_2d(),
                 base_color: prim.base_color,
                 light_dir_ambient: self.light_dir_ambient.to_array(),
                 light_color_intensity: self.light_color_intensity.to_array(),
@@ -623,6 +650,7 @@ impl ForwardRenderer {
                     prim.base_uv_transform[1][2],
                     0.0,
                 ],
+                cascade_splits: self.cascade_splits,
             };
             gpu.queue
                 .write_buffer(&prim.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
@@ -633,12 +661,20 @@ impl ForwardRenderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("forward_encoder"),
             });
-        {
+        for cascade in 0..CASCADE_COUNT {
+            // vs_shadow selects its matrix from cascade_splits.w.
+            let mut splits = self.cascade_splits;
+            splits[3] = cascade as f32;
+            let offset = std::mem::offset_of!(Uniforms, cascade_splits) as u64;
+            for prim in &self.primitives {
+                gpu.queue
+                    .write_buffer(&prim.uniform_buffer, offset, bytemuck::bytes_of(&splits));
+            }
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("shadow_pass"),
                 color_attachments: &[],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.shadow_view,
+                    view: &self.shadow_layer_views[cascade],
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Store,
@@ -940,7 +976,57 @@ impl ForwardRenderer {
         }
     }
 
+    /// Fits one orthographic light matrix per cascade: cascade 0 hugs the
+    /// camera focus (crisp near shadows), the last covers the whole scene.
+    fn update_cascades(&mut self, camera: &OrbitCamera) {
+        let (min, max) = self
+            .scene_bounds
+            .unwrap_or((Vec3::splat(-1.0), Vec3::splat(1.0)));
+        let scene_center = (min + max) * 0.5;
+        let scene_radius = ((max - min).length() * 0.5).max(1e-3);
+
+        let near_radius = (scene_radius * 0.35).max(0.5);
+        let mid_radius = (scene_radius * 0.7).max(1.0);
+        self.cascade_splits = [
+            near_radius * 2.0,
+            mid_radius * 2.0,
+            CASCADE_COUNT as f32,
+            0.0,
+        ];
+
+        let focus_near = camera.target.lerp(camera.eye(), 0.15);
+        let cascades = [
+            (focus_near, near_radius),
+            (camera.target, mid_radius),
+            (scene_center, scene_radius),
+        ];
+        for (i, (center, radius)) in cascades.into_iter().enumerate() {
+            self.cascade_matrices[i] = self.light_matrix_for(center, radius);
+        }
+    }
+
+    fn light_matrix_for(&self, center: Vec3, radius: f32) -> Mat4 {
+        let light_dir = self.light_dir_ambient.truncate().normalize_or_zero();
+        let light_dir = if light_dir == Vec3::ZERO {
+            Vec3::Y
+        } else {
+            light_dir
+        };
+        let up = if light_dir.dot(Vec3::Y).abs() > 0.99 {
+            Vec3::Z
+        } else {
+            Vec3::Y
+        };
+        // Pull the eye far back so casters outside the cascade box still fit
+        // in the depth range.
+        let eye = center + light_dir * (radius * 4.0);
+        let view = Mat4::look_at_rh(eye, center, up);
+        let projection = Mat4::orthographic_rh(-radius, radius, -radius, radius, 0.1, radius * 8.0);
+        projection * view
+    }
+
     /// Orthographic world->light-clip matrix fitted to the scene bounds.
+    #[allow(dead_code)]
     fn light_space_matrix(&self) -> Mat4 {
         let (min, max) = self
             .scene_bounds

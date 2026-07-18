@@ -13,8 +13,10 @@ struct Uniforms {
     model: mat4x4<f32>,
     // Inverse-transpose of model (upper 3x3 meaningful).
     normal_matrix: mat4x4<f32>,
-    // World -> light clip space (directional shadow map).
+    // World -> light clip space per cascade (CASCADE_COUNT used).
     light_space: mat4x4<f32>,
+    light_space_1: mat4x4<f32>,
+    light_space_2: mat4x4<f32>,
     base_color: vec4<f32>,
     // xyz: direction TOWARDS the light, w: ambient strength
     light_dir_ambient: vec4<f32>,
@@ -32,10 +34,12 @@ struct Uniforms {
     // KHR_texture_transform affine rows for the base color UV.
     base_uv_row0: vec4<f32>,
     base_uv_row1: vec4<f32>,
+    // x,y: cascade split distances (view depth), z: cascade count
+    cascade_splits: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
-@group(0) @binding(1) var shadow_map: texture_depth_2d;
+@group(0) @binding(1) var shadow_map: texture_depth_2d_array;
 @group(0) @binding(2) var shadow_sampler: sampler_comparison;
 @group(0) @binding(3) var base_color_tex: texture_2d<f32>;
 @group(0) @binding(4) var base_color_sampler: sampler;
@@ -62,6 +66,7 @@ struct VsOut {
     @location(2) light_space_pos: vec4<f32>,
     @location(3) world_tangent: vec4<f32>,
     @location(4) world_position: vec3<f32>,
+    @location(5) view_depth: f32,
 };
 
 @vertex
@@ -77,16 +82,47 @@ fn vs_main(in: VsIn) -> VsOut {
     out.uv = in.uv;
     out.light_space_pos = uniforms.light_space * world_pos;
     out.world_position = world_pos.xyz;
+    out.view_depth = distance(world_pos.xyz, uniforms.camera_position.xyz);
     return out;
 }
 
 // Depth-only variant for the shadow pass (no fragment stage).
 @vertex
 fn vs_shadow(in: VsIn) -> @builtin(position) vec4<f32> {
-    return uniforms.light_space * uniforms.model * vec4<f32>(in.position, 1.0);
+    let world = uniforms.model * vec4<f32>(in.position, 1.0);
+    let cascade = i32(uniforms.cascade_splits.w);
+    if (cascade == 1) {
+        return uniforms.light_space_1 * world;
+    }
+    if (cascade == 2) {
+        return uniforms.light_space_2 * world;
+    }
+    return uniforms.light_space * world;
 }
 
-fn shadow_factor(light_space_pos: vec4<f32>, n_dot_l: f32) -> f32 {
+fn shadow_factor(view_depth: f32, world_pos: vec3<f32>, n_dot_l: f32) -> f32 {
+    // Cascade selection by view distance.
+    var cascade = 0;
+    if (view_depth > uniforms.cascade_splits.x) {
+        cascade = 1;
+    }
+    if (view_depth > uniforms.cascade_splits.y) {
+        cascade = 2;
+    }
+    let count = i32(uniforms.cascade_splits.z);
+    if (cascade > count - 1) {
+        cascade = count - 1;
+    }
+
+    var light_space_pos: vec4<f32>;
+    if (cascade == 1) {
+        light_space_pos = uniforms.light_space_1 * vec4<f32>(world_pos, 1.0);
+    } else if (cascade == 2) {
+        light_space_pos = uniforms.light_space_2 * vec4<f32>(world_pos, 1.0);
+    } else {
+        light_space_pos = uniforms.light_space * vec4<f32>(world_pos, 1.0);
+    }
+
     let proj = light_space_pos.xyz / light_space_pos.w;
     let uv = vec2<f32>(proj.x * 0.5 + 0.5, 0.5 - proj.y * 0.5);
     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || proj.z > 1.0) {
@@ -100,7 +136,13 @@ fn shadow_factor(light_space_pos: vec4<f32>, n_dot_l: f32) -> f32 {
     for (var y = -1; y <= 1; y = y + 1) {
         for (var x = -1; x <= 1; x = x + 1) {
             let offset = vec2<f32>(f32(x), f32(y)) * texel;
-            sum += textureSampleCompareLevel(shadow_map, shadow_sampler, uv + offset, proj.z - bias);
+            sum += textureSampleCompareLevel(
+                shadow_map,
+                shadow_sampler,
+                uv + offset,
+                cascade,
+                proj.z - bias,
+            );
         }
     }
     return sum / 9.0;
@@ -295,7 +337,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let k_d = (vec3<f32>(1.0) - f) * (1.0 - metallic);
     let diffuse = k_d * albedo.rgb / PI;
 
-    let shadow = shadow_factor(in.light_space_pos, n_dot_l);
+    let shadow = shadow_factor(in.view_depth, in.world_position, n_dot_l);
     let radiance = uniforms.light_color_intensity.rgb * uniforms.light_color_intensity.w;
 
     // Analytic IBL: hemisphere irradiance for diffuse, roughness-blended sky
