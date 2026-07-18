@@ -305,6 +305,45 @@ fn punctual_lights_pool_on_plane() {
 }
 
 #[test]
+fn bloom_adds_energy_around_bright_sources() {
+    let Ok(gpu) = GpuContext::new_headless() else {
+        eprintln!("SKIP: no GPU adapter available in this environment");
+        return;
+    };
+
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/point_light.gltf");
+    let scene = load_gltf(&path).expect("point_light.gltf must load");
+    let (width, height) = (256, 256);
+    let mut renderer = ForwardRenderer::new(&gpu, width, height);
+    renderer.upload_scene(&gpu, &scene);
+    renderer.light_color_intensity.w = 0.4;
+
+    let camera = OrbitCamera {
+        radius: 7.0,
+        pitch_deg: 65.0,
+        ..OrbitCamera::default()
+    };
+
+    let total = |pixels: &[u8]| -> u64 { pixels.iter().map(|&b| b as u64).sum() };
+
+    renderer.bloom_strength = 0.0;
+    let without = renderer
+        .render_to_pixels(&gpu, width, height, &camera)
+        .expect("render without bloom");
+    renderer.bloom_strength = 1.5;
+    let with = renderer
+        .render_to_pixels(&gpu, width, height, &camera)
+        .expect("render with bloom");
+
+    let (sum_without, sum_with) = (total(&without), total(&with));
+    assert!(
+        sum_with > sum_without + 50_000,
+        "bloom should add visible energy: {sum_without} -> {sum_with}"
+    );
+}
+
+#[test]
 fn resize_handles_zero_dimensions() {
     let Ok(mut gpu) = GpuContext::new_headless() else {
         eprintln!("SKIP: no GPU adapter available in this environment");

@@ -4,6 +4,12 @@
 
 @group(0) @binding(0) var hdr_tex: texture_2d<f32>;
 @group(0) @binding(1) var hdr_sampler: sampler;
+@group(0) @binding(2) var bloom_tex: texture_2d<f32>;
+struct TonemapUniforms {
+    // x: bloom strength
+    params: vec4<f32>,
+};
+@group(0) @binding(3) var<uniform> tonemap_uniforms: TonemapUniforms;
 
 struct VsOut {
     @builtin(position) clip_position: vec4<f32>,
@@ -32,6 +38,7 @@ fn aces(x: vec3<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    let hdr = textureSample(hdr_tex, hdr_sampler, in.uv);
-    return vec4<f32>(aces(hdr.rgb), 1.0);
+    let hdr = textureSample(hdr_tex, hdr_sampler, in.uv).rgb;
+    let bloom = textureSample(bloom_tex, hdr_sampler, in.uv).rgb;
+    return vec4<f32>(aces(hdr + bloom * tonemap_uniforms.params.x), 1.0);
 }

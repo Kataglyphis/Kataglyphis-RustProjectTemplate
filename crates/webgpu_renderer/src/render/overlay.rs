@@ -102,6 +102,7 @@ pub struct OverlayControls {
     pub light_elevation_deg: f32,
     pub intensity: f32,
     pub ambient: f32,
+    pub bloom: f32,
 }
 
 impl OverlayControls {
@@ -115,6 +116,7 @@ impl OverlayControls {
                 .to_degrees(),
             intensity: light_color_intensity.w,
             ambient: light_dir_ambient.w,
+            bloom: 0.6,
         }
     }
 
@@ -152,6 +154,9 @@ impl OverlayControls {
                     .changed();
                 changed |= ui
                     .add(egui::Slider::new(&mut self.ambient, 0.0..=2.0).text("IBL strength"))
+                    .changed();
+                changed |= ui
+                    .add(egui::Slider::new(&mut self.bloom, 0.0..=2.0).text("bloom"))
                     .changed();
                 ui.separator();
                 ui.label("drag: orbit - wheel: zoom");

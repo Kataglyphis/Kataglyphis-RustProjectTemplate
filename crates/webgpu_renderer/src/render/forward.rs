@@ -7,6 +7,7 @@ use glam::{Mat4, Vec3, Vec4};
 use wgpu::util::DeviceExt as _;
 
 use crate::context::GpuContext;
+use crate::render::bloom::BloomPass;
 use crate::render::tonemap::TonemapPass;
 use crate::scene::camera::OrbitCamera;
 use crate::scene::{
@@ -123,6 +124,9 @@ pub struct ForwardRenderer {
     hdr_view: wgpu::TextureView,
     target_size: (u32, u32),
     hdr_rebound_needed: bool,
+    bloom: BloomPass,
+    /// Bloom contribution mixed in by the tonemap pass.
+    pub bloom_strength: f32,
     punctual_lights: [[f32; 4]; MAX_PUNCTUAL_LIGHTS * 4],
     punctual_light_count: u32,
     /// Direction towards the light (world space) + ambient strength.
@@ -448,6 +452,8 @@ impl ForwardRenderer {
             hdr_view,
             target_size: (width.max(1), height.max(1)),
             hdr_rebound_needed: true,
+            bloom: BloomPass::new(gpu),
+            bloom_strength: 0.6,
             punctual_lights: [[0.0; 4]; MAX_PUNCTUAL_LIGHTS * 4],
             punctual_light_count: 0,
             light_dir_ambient: Vec4::new(0.5, 0.8, 0.3, 0.35),
@@ -623,9 +629,16 @@ impl ForwardRenderer {
             self.hdr_rebound_needed = true;
         }
         if self.hdr_rebound_needed {
-            tonemap.set_input(gpu, &self.hdr_view);
+            self.bloom.rebuild(gpu, width, height, &self.hdr_view);
+            let bloom_out = self
+                .bloom
+                .output()
+                .expect("bloom output exists after rebuild")
+                .clone();
+            tonemap.set_input(gpu, &self.hdr_view, &bloom_out);
             self.hdr_rebound_needed = false;
         }
+        tonemap.set_params(&gpu.queue, self.bloom_strength);
 
         let aspect = width as f32 / height as f32;
         let view_proj = camera.view_projection(aspect);
@@ -770,6 +783,7 @@ impl ForwardRenderer {
             }
         }
 
+        self.bloom.encode(&mut encoder);
         tonemap.render(&mut encoder, output_view);
         gpu.queue.submit(Some(encoder.finish()));
     }

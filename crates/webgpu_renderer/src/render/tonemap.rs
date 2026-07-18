@@ -6,6 +6,7 @@ pub struct TonemapPass {
     pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
+    uniform_buffer: wgpu::Buffer,
     bind_group: Option<wgpu::BindGroup>,
 }
 
@@ -36,6 +37,26 @@ impl TonemapPass {
                     binding: 1,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
                     count: None,
                 },
             ],
@@ -80,16 +101,38 @@ impl TonemapPass {
             ..Default::default()
         });
 
+        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("tonemap_uniforms"),
+            size: 16,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         Self {
             pipeline,
             bind_group_layout,
             sampler,
+            uniform_buffer,
             bind_group: None,
         }
     }
 
-    /// (Re)binds the HDR input; call whenever the HDR target is recreated.
-    pub fn set_input(&mut self, gpu: &GpuContext, hdr_view: &wgpu::TextureView) {
+    /// Per-frame parameters (x = bloom strength).
+    pub fn set_params(&self, queue: &wgpu::Queue, bloom_strength: f32) {
+        queue.write_buffer(
+            &self.uniform_buffer,
+            0,
+            bytemuck::bytes_of(&[bloom_strength, 0.0, 0.0, 0.0]),
+        );
+    }
+
+    /// (Re)binds the HDR + bloom inputs; call whenever they are recreated.
+    pub fn set_input(
+        &mut self,
+        gpu: &GpuContext,
+        hdr_view: &wgpu::TextureView,
+        bloom_view: &wgpu::TextureView,
+    ) {
         self.bind_group = Some(gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("tonemap_bind_group"),
             layout: &self.bind_group_layout,
@@ -101,6 +144,14 @@ impl TonemapPass {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(bloom_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.uniform_buffer.as_entire_binding(),
                 },
             ],
         }));

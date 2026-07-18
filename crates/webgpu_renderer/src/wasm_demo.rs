@@ -222,6 +222,7 @@ impl ApplicationHandler for DemoApp {
                     renderer.light_dir_ambient =
                         glam::Vec4::new(dir.x, dir.y, dir.z, controls.ambient);
                     renderer.light_color_intensity.w = controls.intensity;
+                    renderer.bloom_strength = controls.bloom;
                 }
 
                 window.pre_present_notify();
