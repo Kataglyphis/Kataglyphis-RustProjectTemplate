@@ -44,6 +44,9 @@ struct Uniforms {
     // Per light: [pos.xyz, kind], [color*intensity.rgb, range],
     // [dir.xyz, cos_inner], [cos_outer, 0, 0, 0]
     punctual_lights: [[f32; 4]; MAX_PUNCTUAL_LIGHTS * 4],
+    // KHR_texture_transform rows for the base color UV.
+    base_uv_row0: [f32; 4],
+    base_uv_row1: [f32; 4],
 }
 
 struct GpuPrimitive {
@@ -59,6 +62,7 @@ struct GpuPrimitive {
     base_color: [f32; 4],
     material_factors: [f32; 4],
     emissive_factor: [f32; 4],
+    base_uv_transform: [[f32; 3]; 2],
     double_sided: bool,
     alpha_blend: bool,
     casts_shadow: bool,
@@ -592,6 +596,7 @@ impl ForwardRenderer {
                         _ => 0.0,
                     },
                 ],
+                base_uv_transform: material.base_uv_transform,
                 double_sided: material.double_sided,
                 alpha_blend: material.alpha_mode == AlphaMode::Blend,
                 // Transparents cast no shadow (v1); a MASK primitive whose
@@ -674,6 +679,18 @@ impl ForwardRenderer {
                 emissive_factor: prim.emissive_factor,
                 camera_position: [eye.x, eye.y, eye.z, self.punctual_light_count as f32],
                 punctual_lights: self.punctual_lights,
+                base_uv_row0: [
+                    prim.base_uv_transform[0][0],
+                    prim.base_uv_transform[0][1],
+                    prim.base_uv_transform[0][2],
+                    0.0,
+                ],
+                base_uv_row1: [
+                    prim.base_uv_transform[1][0],
+                    prim.base_uv_transform[1][1],
+                    prim.base_uv_transform[1][2],
+                    0.0,
+                ],
             };
             gpu.queue
                 .write_buffer(&prim.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));

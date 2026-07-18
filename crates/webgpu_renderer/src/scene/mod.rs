@@ -76,6 +76,10 @@ pub enum AlphaMode {
 #[derive(Clone, Debug)]
 pub struct CpuMaterial {
     pub base_color: [f32; 4],
+    /// KHR_texture_transform for the base color UV set, as two affine rows
+    /// [m00, m01, tx], [m10, m11, ty]. Identity when absent. Applied to the
+    /// base color slot only (other slots: roadmap refinement).
+    pub base_uv_transform: [[f32; 3]; 2],
     pub alpha_mode: AlphaMode,
     pub metallic_factor: f32,
     pub roughness_factor: f32,
@@ -94,6 +98,7 @@ impl Default for CpuMaterial {
     fn default() -> Self {
         Self {
             base_color: [1.0, 1.0, 1.0, 1.0],
+            base_uv_transform: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
             alpha_mode: AlphaMode::Opaque,
             metallic_factor: 1.0,
             roughness_factor: 1.0,

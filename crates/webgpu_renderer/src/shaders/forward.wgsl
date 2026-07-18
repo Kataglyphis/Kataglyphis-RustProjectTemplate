@@ -29,6 +29,9 @@ struct Uniforms {
     // Per light: [pos.xyz, kind], [color*intensity.rgb, range],
     // [dir.xyz, cos_inner], [cos_outer, 0, 0, 0]. kind: 1=point 2=spot 3=dir.
     punctual_lights: array<vec4<f32>, 16>,
+    // KHR_texture_transform affine rows for the base color UV.
+    base_uv_row0: vec4<f32>,
+    base_uv_row1: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -243,7 +246,13 @@ fn punctual_lighting(
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // All implicit-derivative samples up front, in uniform control flow.
-    let base_sample = textureSample(base_color_tex, base_color_sampler, in.uv);
+    let base_uv = vec2<f32>(
+        uniforms.base_uv_row0.x * in.uv.x + uniforms.base_uv_row0.y * in.uv.y
+            + uniforms.base_uv_row0.z,
+        uniforms.base_uv_row1.x * in.uv.x + uniforms.base_uv_row1.y * in.uv.y
+            + uniforms.base_uv_row1.z,
+    );
+    let base_sample = textureSample(base_color_tex, base_color_sampler, base_uv);
     let mr_sample = textureSample(metal_rough_tex, metal_rough_sampler, in.uv);
     let normal_sample = textureSample(normal_tex, normal_sampler, in.uv);
     let emissive_sample = textureSample(emissive_tex, emissive_sampler, in.uv);

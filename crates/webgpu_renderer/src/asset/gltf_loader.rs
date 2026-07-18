@@ -274,8 +274,26 @@ fn load_primitive(
         gltf::material::AlphaMode::Blend => AlphaMode::Blend,
     };
 
+    // KHR_texture_transform (base color slot): T * R * S per spec.
+    let base_uv_transform = pbr
+        .base_color_texture()
+        .and_then(|info| info.texture_transform())
+        .map(|t| {
+            let offset = glam::Vec2::from_array(t.offset());
+            let scale = glam::Vec2::from_array(t.scale());
+            let m = glam::Mat3::from_translation(offset)
+                * glam::Mat3::from_angle(-t.rotation())
+                * glam::Mat3::from_scale(scale);
+            [
+                [m.x_axis.x, m.y_axis.x, m.z_axis.x],
+                [m.x_axis.y, m.y_axis.y, m.z_axis.y],
+            ]
+        })
+        .unwrap_or([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]);
+
     let cpu_material = CpuMaterial {
         base_color: pbr.base_color_factor(),
+        base_uv_transform,
         alpha_mode,
         metallic_factor: pbr.metallic_factor(),
         roughness_factor: pbr.roughness_factor(),

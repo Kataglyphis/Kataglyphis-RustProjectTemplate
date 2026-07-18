@@ -43,6 +43,11 @@ fn gltf_loader_reads_base_color_texture() {
     // The asset requests NEAREST filtering (A1: sampler modes honored).
     assert!(texture_ref.sampler.mag_nearest && texture_ref.sampler.min_nearest);
     assert!(texture_ref.srgb);
+    // KHR_texture_transform: offset (0.25, 0), scale (2, 2), no rotation.
+    let t = material.base_uv_transform;
+    assert!((t[0][0] - 2.0).abs() < 1e-5 && (t[1][1] - 2.0).abs() < 1e-5);
+    assert!((t[0][2] - 0.25).abs() < 1e-5 && t[1][2].abs() < 1e-5);
+    assert!(t[0][1].abs() < 1e-5 && t[1][0].abs() < 1e-5);
 }
 
 #[test]

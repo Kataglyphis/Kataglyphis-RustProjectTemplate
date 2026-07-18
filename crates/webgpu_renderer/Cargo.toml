@@ -19,7 +19,7 @@ winit = "0.30"
 pollster = "0.4"
 bytemuck = { version = "1.25", features = ["derive"] }
 glam = { version = "0.30", features = ["bytemuck"] }
-gltf = { version = "1", features = ["import", "KHR_lights_punctual"] }
+gltf = { version = "1", features = ["import", "KHR_lights_punctual", "KHR_texture_transform"] }
 egui = "0.33.3"
 egui-wgpu = "0.33.3"
 egui-winit = { version = "0.33.3", default-features = false }
