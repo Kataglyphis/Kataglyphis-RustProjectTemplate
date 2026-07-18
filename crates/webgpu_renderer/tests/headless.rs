@@ -440,6 +440,71 @@ fn animation_moves_the_cube() {
 }
 
 #[test]
+fn skinning_bends_the_bar() {
+    let Ok(gpu) = GpuContext::new_headless() else {
+        eprintln!("SKIP: no GPU adapter available in this environment");
+        return;
+    };
+
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/skinned_bar.gltf");
+    let scene = load_gltf(&path).expect("skinned_bar.gltf must load");
+    assert_eq!(scene.skins.len(), 1);
+    assert_eq!(scene.skins[0].joints.len(), 2);
+    assert_eq!(scene.skins[0].inverse_bind_matrices.len(), 2);
+    // Vertices must carry non-zero skin weights.
+    assert!(scene.primitives[0]
+        .vertices
+        .iter()
+        .any(|v| v.weights.iter().sum::<f32>() > 0.5));
+
+    let (width, height) = (256, 256);
+    let mut renderer = ForwardRenderer::new(&gpu, width, height);
+    renderer.upload_scene(&gpu, &scene);
+    let camera = OrbitCamera {
+        radius: 5.0,
+        pitch_deg: 5.0,
+        yaw_deg: 90.0,
+        target: glam::Vec3::new(0.0, 1.0, 0.0),
+        ..OrbitCamera::default()
+    };
+
+    // Mean x of the bar's red pixels in the TOP half of the frame: bending
+    // joint 1 swings the upper half sideways.
+    let upper_centroid_x = |pixels: &[u8]| -> f32 {
+        let (mut sum, mut count) = (0.0f32, 0u32);
+        for (i, p) in pixels.chunks_exact(4).enumerate() {
+            let (x, y) = (i % width as usize, i / width as usize);
+            if y > (height as usize) / 2 {
+                continue;
+            }
+            let (r, g, b) = (p[0] as i32, p[1] as i32, p[2] as i32);
+            if r > 90 && r > g + 30 && r > b + 30 {
+                sum += x as f32;
+                count += 1;
+            }
+        }
+        assert!(count > 50, "bar not visible in upper half ({count} px)");
+        sum / count as f32
+    };
+
+    renderer.set_animation_time(0.0);
+    let straight = renderer
+        .render_to_pixels(&gpu, width, height, &camera)
+        .expect("render straight");
+    renderer.set_animation_time(1.0);
+    let bent = renderer
+        .render_to_pixels(&gpu, width, height, &camera)
+        .expect("render bent");
+
+    let (x0, x1) = (upper_centroid_x(&straight), upper_centroid_x(&bent));
+    assert!(
+        (x1 - x0).abs() > 8.0,
+        "skinned bar should bend: upper centroid {x0:.1} -> {x1:.1}"
+    );
+}
+
+#[test]
 fn resize_handles_zero_dimensions() {
     let Ok(mut gpu) = GpuContext::new_headless() else {
         eprintln!("SKIP: no GPU adapter available in this environment");

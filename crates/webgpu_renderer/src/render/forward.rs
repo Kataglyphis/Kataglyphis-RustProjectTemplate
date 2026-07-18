@@ -13,8 +13,11 @@ use crate::render::tonemap::TonemapPass;
 use crate::scene::camera::OrbitCamera;
 use crate::scene::{
     AlphaMode, ChannelValues, CpuAnimation, CpuLight, CpuLightKind, CpuNode, CpuSampler, CpuScene,
-    CpuTexture, CpuWrap, Vertex,
+    CpuSkin, CpuTexture, CpuWrap, Vertex,
 };
+
+/// Upper bound on joints per skin (storage buffer is sized to the skin).
+pub const MAX_JOINTS: usize = 256;
 
 pub const MAX_PUNCTUAL_LIGHTS: usize = 4;
 
@@ -77,6 +80,8 @@ struct GpuPrimitive {
     aabb_min: Vec3,
     aabb_max: Vec3,
     node_index: Option<usize>,
+    skin_index: Option<usize>,
+    joint_buffer: wgpu::Buffer,
     local_aabb_min: Vec3,
     local_aabb_max: Vec3,
 }
@@ -156,6 +161,8 @@ pub struct ForwardRenderer {
     punctual_light_count: u32,
     nodes: Vec<CpuNode>,
     animations: Vec<CpuAnimation>,
+    skins: Vec<CpuSkin>,
+    pending_joint_world: Option<Vec<Mat4>>,
     /// Direction towards the light (world space) + ambient strength.
     pub light_dir_ambient: Vec4,
     /// Light color (rgb) + intensity multiplier (w). Values > 1 are the
@@ -220,6 +227,17 @@ impl ForwardRenderer {
             });
         }
 
+        entries.push(wgpu::BindGroupLayoutEntry {
+            binding: 13,
+            visibility: wgpu::ShaderStages::VERTEX,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        });
+
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("forward_bind_group_layout"),
             entries: &entries,
@@ -228,16 +246,28 @@ impl ForwardRenderer {
         let shadow_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("shadow_bind_group_layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 13,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
             });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -402,6 +432,8 @@ impl ForwardRenderer {
             punctual_light_count: 0,
             nodes: Vec::new(),
             animations: Vec::new(),
+            skins: Vec::new(),
+            pending_joint_world: None,
             light_dir_ambient: Vec4::new(0.5, 0.8, 0.3, 0.35),
             // The BRDF divides diffuse by PI: intensity ~5 restores the
             // pre-PBR brightness ballpark.
@@ -419,6 +451,7 @@ impl ForwardRenderer {
         self.punctual_light_count = count;
         self.nodes = scene.nodes.clone();
         self.animations = scene.animations.clone();
+        self.skins = scene.skins.clone();
         if scene.lights.len() > MAX_PUNCTUAL_LIGHTS {
             log::warn!(
                 "Scene has {} punctual lights; only the first {} are used.",
@@ -476,6 +509,19 @@ impl ForwardRenderer {
                 }
             }
 
+            // Joint matrices: sized to the skin (identity when unskinned).
+            let joint_count = prim
+                .skin_index
+                .and_then(|s| scene.skins.get(s))
+                .map(|s| s.joints.len().clamp(1, MAX_JOINTS))
+                .unwrap_or(1);
+            let identity = vec![Mat4::IDENTITY.to_cols_array_2d(); joint_count];
+            let joint_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(&format!("joints_{i}")),
+                contents: bytemuck::cast_slice(&identity),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            });
+
             let mut bind_entries: Vec<wgpu::BindGroupEntry> = vec![
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -501,6 +547,11 @@ impl ForwardRenderer {
                 });
             }
 
+            bind_entries.push(wgpu::BindGroupEntry {
+                binding: 13,
+                resource: joint_buffer.as_entire_binding(),
+            });
+
             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(&format!("bind_group_{i}")),
                 layout: &self.bind_group_layout,
@@ -510,10 +561,16 @@ impl ForwardRenderer {
             let shadow_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(&format!("shadow_bind_group_{i}")),
                 layout: &self.shadow_bind_group_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: uniform_buffer.as_entire_binding(),
-                }],
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: uniform_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 13,
+                        resource: joint_buffer.as_entire_binding(),
+                    },
+                ],
             });
 
             self.primitives.push(GpuPrimitive {
@@ -543,6 +600,8 @@ impl ForwardRenderer {
                 ],
                 base_uv_transform: material.base_uv_transform,
                 node_index: prim.node_index,
+                skin_index: prim.skin_index,
+                joint_buffer,
                 local_aabb_min: local_bounds.0,
                 local_aabb_max: local_bounds.1,
                 double_sided: material.double_sided,
@@ -598,6 +657,8 @@ impl ForwardRenderer {
             self.hdr_rebound_needed = false;
         }
         tonemap.set_params(&gpu.queue, self.bloom_strength, self.ssao_strength, self.exposure_ev);
+
+        self.update_joint_matrices(gpu);
 
         let aspect = width as f32 / height as f32;
         let view_proj = camera.view_projection(aspect);
@@ -904,6 +965,44 @@ impl ForwardRenderer {
         Ok(())
     }
 
+    /// Uploads joint matrices for skinned primitives (skin joint world
+    /// transform * inverse bind matrix), called once per frame.
+    fn update_joint_matrices(&mut self, gpu: &GpuContext) {
+        let Some(world) = self.pending_joint_world.take() else {
+            return;
+        };
+        if self.skins.is_empty() {
+            return;
+        }
+        for prim in &self.primitives {
+            let Some(skin_index) = prim.skin_index else {
+                continue;
+            };
+            let Some(skin) = self.skins.get(skin_index) else {
+                continue;
+            };
+            let matrices: Vec<[[f32; 4]; 4]> = skin
+                .joints
+                .iter()
+                .take(MAX_JOINTS)
+                .enumerate()
+                .map(|(i, &node)| {
+                    let joint_world = world.get(node).copied().unwrap_or(Mat4::IDENTITY);
+                    let inverse_bind = skin
+                        .inverse_bind_matrices
+                        .get(i)
+                        .copied()
+                        .unwrap_or(Mat4::IDENTITY);
+                    (joint_world * inverse_bind).to_cols_array_2d()
+                })
+                .collect();
+            if !matrices.is_empty() {
+                gpu.queue
+                    .write_buffer(&prim.joint_buffer, 0, bytemuck::cast_slice(&matrices));
+            }
+        }
+    }
+
     /// True when the uploaded scene carries animations.
     pub fn has_animations(&self) -> bool {
         !self.animations.is_empty()
@@ -956,6 +1055,7 @@ impl ForwardRenderer {
         }
 
         let world = CpuScene::compute_world_transforms(&self.nodes);
+        self.pending_joint_world = Some(world.clone());
         let mut scene_min = Vec3::splat(f32::INFINITY);
         let mut scene_max = Vec3::splat(f32::NEG_INFINITY);
         for prim in &mut self.primitives {

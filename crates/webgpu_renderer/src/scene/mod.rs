@@ -16,6 +16,10 @@ pub struct Vertex {
     pub uv: [f32; 2],
     /// xyz: tangent, w: bitangent handedness (+1/-1), glTF convention.
     pub tangent: [f32; 4],
+    /// Skin joint indices (glTF JOINTS_0), as floats for a simple layout.
+    pub joints: [f32; 4],
+    /// Skin weights (glTF WEIGHTS_0); all zero = unskinned.
+    pub weights: [f32; 4],
 }
 
 impl Vertex {
@@ -23,7 +27,8 @@ impl Vertex {
         array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
         step_mode: wgpu::VertexStepMode::Vertex,
         attributes: &wgpu::vertex_attr_array![
-            0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4
+            0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4,
+            4 => Float32x4, 5 => Float32x4
         ],
     };
 }
@@ -167,6 +172,13 @@ pub struct CpuAnimation {
     pub channels: Vec<CpuAnimationChannel>,
 }
 
+/// A glTF skin: joint nodes plus their inverse bind matrices.
+#[derive(Clone, Debug)]
+pub struct CpuSkin {
+    pub joints: Vec<usize>,
+    pub inverse_bind_matrices: Vec<Mat4>,
+}
+
 /// One drawable: an indexed triangle list with a world transform and material.
 #[derive(Clone, Debug)]
 pub struct CpuPrimitive {
@@ -176,6 +188,8 @@ pub struct CpuPrimitive {
     /// Index into `CpuScene::nodes` when the primitive belongs to the scene
     /// graph (animation retargets its transform).
     pub node_index: Option<usize>,
+    /// Index into `CpuScene::skins` for skinned primitives.
+    pub skin_index: Option<usize>,
     pub material: CpuMaterial,
 }
 
@@ -185,6 +199,7 @@ pub struct CpuScene {
     pub lights: Vec<CpuLight>,
     pub nodes: Vec<CpuNode>,
     pub animations: Vec<CpuAnimation>,
+    pub skins: Vec<CpuSkin>,
 }
 
 impl CpuScene {

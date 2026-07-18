@@ -57,7 +57,26 @@ struct VsIn {
     @location(1) normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
     @location(3) tangent: vec4<f32>,
+    @location(4) joints: vec4<f32>,
+    @location(5) weights: vec4<f32>,
 };
+
+// Joint matrices for skinned primitives (identity-filled when unskinned).
+@group(0) @binding(13) var<storage, read> joint_matrices: array<mat4x4<f32>>;
+
+/// Linear blend skinning; returns the model matrix to use for this vertex.
+fn skin_matrix(in: VsIn) -> mat4x4<f32> {
+    let w = in.weights;
+    let total = w.x + w.y + w.z + w.w;
+    if (total <= 0.0001) {
+        return uniforms.model;
+    }
+    var m = joint_matrices[u32(in.joints.x)] * w.x;
+    m += joint_matrices[u32(in.joints.y)] * w.y;
+    m += joint_matrices[u32(in.joints.z)] * w.z;
+    m += joint_matrices[u32(in.joints.w)] * w.w;
+    return m * (1.0 / total);
+}
 
 struct VsOut {
     @builtin(position) clip_position: vec4<f32>,
@@ -72,11 +91,18 @@ struct VsOut {
 @vertex
 fn vs_main(in: VsIn) -> VsOut {
     var out: VsOut;
-    let world_pos = uniforms.model * vec4<f32>(in.position, 1.0);
+    let model = skin_matrix(in);
+    let world_pos = model * vec4<f32>(in.position, 1.0);
     out.clip_position = uniforms.view_proj * world_pos;
-    out.world_normal = normalize((uniforms.normal_matrix * vec4<f32>(in.normal, 0.0)).xyz);
+    // Skinned normals use the skinning matrix (uniform scale assumed);
+    // unskinned vertices keep the precomputed normal matrix.
+    if (in.weights.x + in.weights.y + in.weights.z + in.weights.w > 0.0001) {
+        out.world_normal = normalize((model * vec4<f32>(in.normal, 0.0)).xyz);
+    } else {
+        out.world_normal = normalize((uniforms.normal_matrix * vec4<f32>(in.normal, 0.0)).xyz);
+    }
     out.world_tangent = vec4<f32>(
-        normalize((uniforms.model * vec4<f32>(in.tangent.xyz, 0.0)).xyz),
+        normalize((model * vec4<f32>(in.tangent.xyz, 0.0)).xyz),
         in.tangent.w,
     );
     out.uv = in.uv;
@@ -89,7 +115,7 @@ fn vs_main(in: VsIn) -> VsOut {
 // Depth-only variant for the shadow pass (no fragment stage).
 @vertex
 fn vs_shadow(in: VsIn) -> @builtin(position) vec4<f32> {
-    let world = uniforms.model * vec4<f32>(in.position, 1.0);
+    let world = skin_matrix(in) * vec4<f32>(in.position, 1.0);
     let cascade = i32(uniforms.cascade_splits.w);
     if (cascade == 1) {
         return uniforms.light_space_1 * world;

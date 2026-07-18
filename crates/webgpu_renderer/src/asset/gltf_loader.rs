@@ -11,8 +11,8 @@ use glam::{Mat4, Vec2, Vec3};
 
 use crate::scene::{
     AlphaMode, ChannelValues, CpuAnimation, CpuAnimationChannel, CpuLight, CpuLightKind,
-    CpuMaterial, CpuNode, CpuPrimitive, CpuSampler, CpuScene, CpuTexture, CpuTextureRef, CpuWrap,
-    Vertex,
+    CpuMaterial, CpuNode, CpuPrimitive, CpuSampler, CpuScene, CpuSkin, CpuTexture, CpuTextureRef,
+    CpuWrap, Vertex,
 };
 
 pub fn load_gltf(path: impl AsRef<Path>) -> anyhow::Result<CpuScene> {
@@ -111,6 +111,19 @@ fn build_scene(
                 channels,
             });
         }
+    }
+
+    // Skins: joint node indices + inverse bind matrices.
+    for skin in document.skins() {
+        let reader = skin.reader(|buffer| buffers.get(buffer.index()).map(|b| &b.0[..]));
+        let inverse_bind_matrices = reader
+            .read_inverse_bind_matrices()
+            .map(|iter| iter.map(|m| Mat4::from_cols_array_2d(&m)).collect())
+            .unwrap_or_default();
+        scene.skins.push(CpuSkin {
+            joints: skin.joints().map(|j| j.index()).collect(),
+            inverse_bind_matrices,
+        });
     }
 
     let gltf_scene = document
@@ -262,6 +275,7 @@ fn visit_node(
             }
             if let Some(mut cpu) = load_primitive(&primitive, world, buffers, textures)? {
                 cpu.node_index = Some(node.index());
+                cpu.skin_index = node.skin().map(|s| s.index());
                 scene.primitives.push(cpu);
             }
         }
@@ -294,6 +308,18 @@ fn load_primitive(
         Some(iter) => iter.into_f32().collect(),
         None => vec![[0.0, 0.0]; positions.len()],
     };
+    let joints: Vec<[f32; 4]> = match reader.read_joints(0) {
+        Some(iter) => iter
+            .into_u16()
+            .map(|j| [j[0] as f32, j[1] as f32, j[2] as f32, j[3] as f32])
+            .collect(),
+        None => vec![[0.0; 4]; positions.len()],
+    };
+    let weights: Vec<[f32; 4]> = match reader.read_weights(0) {
+        Some(iter) => iter.into_f32().collect(),
+        None => vec![[0.0; 4]; positions.len()],
+    };
+
     let tangents: Vec<[f32; 4]> = match reader.read_tangents() {
         Some(iter) => iter.collect(),
         None => vec![[0.0, 0.0, 0.0, 0.0]; positions.len()],
@@ -316,11 +342,14 @@ fn load_primitive(
         .zip(normals.iter())
         .zip(uvs.iter())
         .zip(tangents.iter())
-        .map(|(((p, n), t), tan)| Vertex {
+        .enumerate()
+        .map(|(i, (((p, n), t), tan))| Vertex {
             position: *p,
             normal: *n,
             uv: *t,
             tangent: *tan,
+            joints: joints.get(i).copied().unwrap_or([0.0; 4]),
+            weights: weights.get(i).copied().unwrap_or([0.0; 4]),
         })
         .collect();
 
@@ -397,6 +426,7 @@ fn load_primitive(
         indices,
         transform,
         node_index: None,
+        skin_index: None,
         material: cpu_material,
     }))
 }
@@ -478,6 +508,8 @@ mod tests {
             normal: [0.0, 0.0, 1.0],
             uv: *uv,
             tangent: [0.0; 4],
+            joints: [0.0; 4],
+            weights: [0.0; 4],
         })
         .collect();
         let indices = [0u32, 1, 2, 0, 2, 3];
