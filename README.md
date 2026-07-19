@@ -49,6 +49,13 @@ For **__official docs__** follow this [link](https://rust.jonasheinle.de).
 
 ## About The Project
 
+The workspace also contains **`crates/webgpu_renderer`** — a WebGPU (wgpu)
+glTF renderer that runs natively (Vulkan/DX12/Metal) and in the browser
+(wasm32 + WebGPU): PBR with IBL, cascaded shadow maps, SSAO, bloom, GPU
+skinning, animations, LOD, hot shader reload, and headless golden tests.
+See `crates/webgpu_renderer/README.md` for demos and the SPIR-V/GLSL
+shader-export pipeline shared with the C++ Vulkan engine.
+
 This template is a foundational part of the **Kataglyphis Ecosystem**, providing robust Rust best practices. It works synergistically with other projects like [Kataglyphis ContainerHub](https://github.com/Kataglyphis/kataglyphis-containerhub) to provide seamless code sharing, rapid development, and consistent identity across our web and systems engineering stack.
 
 ### Key Features

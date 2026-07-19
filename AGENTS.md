@@ -10,6 +10,7 @@ Cargo workspace (`Cargo.toml` at the root is both the workspace and the root pac
 - `crates/telemetry` — resource monitoring (`kataglyphis_telemetry`; has the unit tests)
 - `crates/inference` — ONNX backends, feature-gated (`onnx_tract`, `onnxruntime`, `onnxruntime_directml`, `onnxruntime_cuda`)
 - `crates/gui` — feature-gated GUI (`gui_windows`, `gui_linux`, `gui_wgpu`, `gui_unix`)
+- `crates/webgpu_renderer` - WebGPU (wgpu) glTF renderer, native + wasm32/browser (`kataglyphis_webgpu_renderer`): PBR, cascaded shadows, SSAO, bloom, skinning, animations, LOD
 - `crates/cli` — the CLI binary; its bin target is named `kataglyphis_rustprojecttemplate` (read/stats/gui subcommands; `stats --path <file>`)
 - `tests/` — root-package integration tests (`integration.rs`) and proptest fuzz tests (`fuzz_test.rs`)
 - `ExternalLib/Kataglyphis-ContainerHub` — git submodule; canonical container/toolchain docs live there (`docs/windows-builds.md`). Do not edit it from this repo.
