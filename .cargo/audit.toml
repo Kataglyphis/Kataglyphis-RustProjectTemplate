@@ -2,4 +2,10 @@
 ignore = [
   "RUSTSEC-2025-0141", # bincode: unmaintained (via burn-core)
   "RUSTSEC-2024-0436", # paste: unmaintained (via burn-ndarray, cubecl-core)
+  # quick-xml 0.39.4 (latest; no fixed release yet) via wayland-scanner, a
+  # BUILD-TIME Wayland-protocol code generator. Its XML input is the trusted
+  # protocol spec shipped with the toolchain, never attacker-controlled
+  # runtime data, so these two DoS advisories are not reachable here.
+  "RUSTSEC-2026-0194", # quick-xml: quadratic run time on crafted XML (build-time only)
+  "RUSTSEC-2026-0195", # quick-xml: unbounded namespace declarations (build-time only)
 ]
