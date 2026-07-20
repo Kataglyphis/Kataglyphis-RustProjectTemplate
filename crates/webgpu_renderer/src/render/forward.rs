@@ -201,6 +201,7 @@ pub struct ForwardRenderer {
     flat_normal_view: wgpu::TextureView,
     shadow_view: wgpu::TextureView,
     shadow_layer_views: Vec<wgpu::TextureView>,
+    cascade_index_bind_groups: Vec<wgpu::BindGroup>,
     cascade_matrices: [Mat4; CASCADE_COUNT],
     cascade_splits: [f32; 4],
     /// Caster draws submitted / considered across all cascades in the last
@@ -376,10 +377,56 @@ impl ForwardRenderer {
             push_constant_ranges: &[],
         });
 
+        // One tiny static buffer per cascade, bound at group(1) of the shadow
+        // pipeline, telling vs_shadow which cascade matrix to project with.
+        //
+        // This is the fix for a real ordering bug, not a convenience. The
+        // cascade index used to be written into every primitive's SHARED
+        // uniform buffer once per cascade inside a single encoder, and
+        // Queue::write_buffer applies all its writes before the command buffer
+        // executes - so every one of the three shadow passes saw the LAST
+        // cascade's index, and all three depth layers were rendered with
+        // cascade 2's matrix while the fragment stage still sampled them as
+        // 0/1/2. The structural shadow tests could not see it (a shadow still
+        // appeared); it showed up as coarse, slightly-wrong cascades. Static
+        // per-cascade buffers written once cannot express the bug, and they
+        // also delete 3 x primitive-count queue writes per frame.
+        let cascade_index_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("shadow_cascade_index_layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+        let cascade_index_bind_groups: Vec<wgpu::BindGroup> = (0..CASCADE_COUNT as u32)
+            .map(|cascade| {
+                let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some(&format!("shadow_cascade_index_{cascade}")),
+                    contents: bytemuck::bytes_of(&[cascade, 0u32, 0u32, 0u32]),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some(&format!("shadow_cascade_index_bg_{cascade}")),
+                    layout: &cascade_index_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: buffer.as_entire_binding(),
+                    }],
+                })
+            })
+            .collect();
+
         let shadow_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("shadow_pipeline_layout"),
-                bind_group_layouts: &[&shadow_bind_group_layout],
+                bind_group_layouts: &[&shadow_bind_group_layout, &cascade_index_layout],
                 push_constant_ranges: &[],
             });
 
@@ -542,6 +589,7 @@ impl ForwardRenderer {
             flat_normal_view,
             shadow_view,
             shadow_layer_views,
+            cascade_index_bind_groups,
             cascade_matrices: [Mat4::IDENTITY; CASCADE_COUNT],
             shadow_casters_drawn: 0,
             shadow_casters_considered: 0,
@@ -1151,14 +1199,6 @@ impl ForwardRenderer {
             // identical geometry, and per-cascade culling is the difference
             // between the two shadow paths.
             let light_frustum = Frustum::from_view_proj(&self.cascade_matrices[cascade]);
-            // vs_shadow selects its matrix from cascade_splits.w.
-            let mut splits = self.cascade_splits;
-            splits[3] = cascade as f32;
-            let offset = std::mem::offset_of!(Uniforms, cascade_splits) as u64;
-            for prim in &self.primitives {
-                gpu.queue
-                    .write_buffer(&prim.uniform_buffer, offset, bytemuck::bytes_of(&splits));
-            }
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("shadow_pass"),
                 color_attachments: &[],
@@ -1174,6 +1214,7 @@ impl ForwardRenderer {
                 occlusion_query_set: None,
             });
             pass.set_pipeline(&self.shadow_pipeline);
+            pass.set_bind_group(1, &self.cascade_index_bind_groups[cascade], &[]);
             // Shadow casters draw at FULL detail regardless of LOD.
             //
             // Two reasons. First, camera distance is the wrong metric here at

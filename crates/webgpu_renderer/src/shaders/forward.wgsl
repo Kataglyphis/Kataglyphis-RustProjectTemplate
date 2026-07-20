@@ -149,17 +149,27 @@ fn vs_main(in: VsIn) -> VsOut {
     return out;
 }
 
+// Which cascade the CURRENT shadow pass renders. A static per-cascade buffer
+// bound at group(1), NOT a field written into the shared uniforms per pass:
+// Queue.write_buffer executes before every queued command at submit, so
+// rewriting a shared field per cascade inside one encoder hands EVERY pass
+// the last value - all three layers were being rendered with cascade 2's
+// matrix while the fragment stage projected with 0/1/2. The visible symptom
+// was shadows that existed but sat coarse and slightly wrong; the structural
+// tests could not tell.
+@group(1) @binding(0) var<uniform> shadow_cascade_index: vec4<u32>;
+
 // Depth-only variant for the shadow pass (no fragment stage).
 @vertex
 fn vs_shadow(in: VsIn) -> @builtin(position) vec4<f32> {
     // Instanced casters must shadow from their instance position, not the
     // authored one - otherwise every copy casts the original's shadow.
     let world = instance_matrix(in) * skin_matrix(in) * vec4<f32>(in.position, 1.0);
-    let cascade = i32(uniforms.cascade_splits.w);
-    if (cascade == 1) {
+    let cascade = shadow_cascade_index.x;
+    if (cascade == 1u) {
         return uniforms.light_space_1 * world;
     }
-    if (cascade == 2) {
+    if (cascade == 2u) {
         return uniforms.light_space_2 * world;
     }
     return uniforms.light_space * world;
