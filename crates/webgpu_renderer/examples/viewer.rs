@@ -264,6 +264,14 @@ impl ApplicationHandler for Viewer {
         );
         renderer.upload_scene(&gpu, &scene);
 
+        // Light the scene with real split-sum IBL, baked from the same
+        // procedural sky the background shows, so reflections and ambient come
+        // from the actual environment rather than the analytic hemisphere
+        // fallback. Baked once here; 256x128 is plenty for the low-frequency
+        // irradiance and prefilter this feeds.
+        let sky_env = kataglyphis_webgpu_renderer::EquirectImage::sky(256, 128);
+        renderer.set_environment(&gpu, &sky_env);
+
         self.gpu = Some(gpu);
         self.renderer = Some(renderer);
         self.tonemap = Some(tonemap);

@@ -106,6 +106,13 @@ impl ApplicationHandler for DemoApp {
             let scene = load_gltf_slice(DEMO_SCENE).expect("embedded demo scene must load");
             renderer.upload_scene(&gpu, &scene);
 
+            // Real split-sum IBL from the procedural sky, so the web showcase
+            // shows environment-lit reflections rather than the analytic
+            // fallback. Baked once from a small panorama - enough for the
+            // low-frequency irradiance and prefilter.
+            let sky_env = crate::render::ibl::EquirectImage::sky(256, 128);
+            renderer.set_environment(&gpu, &sky_env);
+
             let overlay = Overlay::new(&init_window, &gpu.device, format);
             let controls = OverlayControls::from_light(
                 renderer.light_dir_ambient,
