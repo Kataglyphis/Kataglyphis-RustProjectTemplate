@@ -65,3 +65,94 @@ fn cs_clear_histogram(@builtin(global_invocation_id) id: vec3<u32>) {
         atomicStore(&histogram[id.x], 0u);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Reduction: histogram -> adapted exposure, entirely on the GPU.
+//
+// Deliberately never reads back to the CPU. A per-frame readback would
+// serialise the pipeline behind a map_async round trip; the exposure the
+// tonemap needs can just stay in a buffer the tonemap reads.
+//
+// Mirrors render::auto_exposure::{average_luminance, exposure_ev_for_luminance,
+// adapt_exposure_ev}, all of which are unit-tested on the CPU side.
+
+const EXPOSURE_KEY: f32 = 0.18;
+
+struct ExposureParams {
+    // x: seconds since the previous frame
+    // y: adaptation rate constant (0 disables adaptation)
+    // z: 1 when auto-exposure is enabled, else 0
+    // w: manual exposure EV, used when auto is off
+    values: vec4<f32>,
+};
+
+// The reduction reads the SAME storage binding the build pass writes, via
+// atomicLoad, rather than aliasing it to a second read-only binding. wgpu
+// rejects that: STORAGE_READ_WRITE is an exclusive usage and cannot coexist
+// with STORAGE_READ_ONLY for one buffer inside a dispatch scope.
+@group(0) @binding(2) var<storage, read_write> exposure_state: array<f32, 2>;
+@group(0) @binding(3) var<uniform> exposure_params: ExposureParams;
+
+// Inverse of histogram_bin, evaluated at the bin centre.
+fn bin_luminance(bin: u32) -> f32 {
+    if (bin == 0u) {
+        return 0.0;
+    }
+    let index = f32(bin - 1u) + 0.5;
+    let normalized = index / f32(HISTOGRAM_BINS - 2u);
+    return exp2(MIN_LOG_LUMINANCE + normalized * (MAX_LOG_LUMINANCE - MIN_LOG_LUMINANCE));
+}
+
+// One invocation: 64 bins is far too little work to justify a parallel
+// reduction, and a single thread removes any question of shared-memory
+// barriers being right.
+@compute @workgroup_size(1, 1, 1)
+fn cs_reduce_exposure() {
+    let dt = exposure_params.values.x;
+    let speed = exposure_params.values.y;
+    let auto_enabled = exposure_params.values.z;
+    let manual_ev = exposure_params.values.w;
+
+    if (auto_enabled < 0.5) {
+        // Manual mode still writes the buffer, so the tonemap has one source
+        // of truth and switching modes cannot leave a stale auto value behind.
+        exposure_state[0] = manual_ev;
+        exposure_state[1] = manual_ev;
+        return;
+    }
+
+    // Geometric mean over the non-black bins.
+    var weighted_log_sum = 0.0;
+    var counted = 0.0;
+    for (var bin = 1u; bin < HISTOGRAM_BINS; bin = bin + 1u) {
+        let count = f32(atomicLoad(&histogram[bin]));
+        if (count > 0.0) {
+            weighted_log_sum = weighted_log_sum + log2(bin_luminance(bin)) * count;
+            counted = counted + count;
+        }
+    }
+
+    let current_ev = exposure_state[0];
+
+    if (counted <= 0.0) {
+        // Nothing but black: hold the previous exposure rather than adapt to
+        // a meaningless number. Deriving one here would drive exposure to
+        // infinity on the first frame of a scene that has not loaded yet.
+        exposure_state[1] = current_ev;
+        return;
+    }
+
+    let average_luminance = exp2(weighted_log_sum / counted);
+    let target_ev = log2(EXPOSURE_KEY / average_luminance);
+
+    // Exponential, not a plain lerp: a lerp converges twice as fast at 120 Hz
+    // as at 60, so a speed tuned on one machine is wrong on every other.
+    var adapted = target_ev;
+    if (dt > 0.0 && speed > 0.0) {
+        let blend = clamp(1.0 - exp(-dt * speed), 0.0, 1.0);
+        adapted = current_ev + (target_ev - current_ev) * blend;
+    }
+
+    exposure_state[0] = adapted;
+    exposure_state[1] = target_ev;
+}

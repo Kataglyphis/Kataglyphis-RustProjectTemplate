@@ -13,12 +13,40 @@ const BUILD_WORKGROUP: u32 = 16;
 /// Workgroup size of `cs_clear_histogram`; must match the shader.
 const CLEAR_WORKGROUP: u32 = 64;
 
+/// Per-frame inputs to the reduction pass.
+#[derive(Copy, Clone, Debug)]
+pub struct ExposureSettings {
+    pub delta_time_seconds: f32,
+    /// Adaptation rate constant; 0 snaps straight to the target.
+    pub speed: f32,
+    pub auto_enabled: bool,
+    /// Used when `auto_enabled` is false.
+    pub manual_ev: f32,
+}
+
+impl Default for ExposureSettings {
+    fn default() -> Self {
+        Self {
+            delta_time_seconds: 1.0 / 60.0,
+            speed: 3.0,
+            auto_enabled: true,
+            manual_ev: 0.0,
+        }
+    }
+}
+
 pub struct HistogramPass {
     build_pipeline: wgpu::ComputePipeline,
     clear_pipeline: wgpu::ComputePipeline,
+    reduce_pipeline: wgpu::ComputePipeline,
     bind_group_layout: wgpu::BindGroupLayout,
     bind_group: Option<wgpu::BindGroup>,
     histogram_buffer: wgpu::Buffer,
+    /// [adapted EV, target EV]. Lives on the GPU for the tonemap to read;
+    /// reading it back per frame would serialise the pipeline.
+    exposure_buffer: wgpu::Buffer,
+    exposure_params_buffer: wgpu::Buffer,
+    exposure_readback_buffer: wgpu::Buffer,
     /// MAP_READ staging target. Kept alive rather than allocated per read so a
     /// diagnostic readback does not churn allocations.
     readback_buffer: wgpu::Buffer,
@@ -58,6 +86,26 @@ impl HistogramPass {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -72,6 +120,15 @@ impl HistogramPass {
             layout: Some(&pipeline_layout),
             module: &shader,
             entry_point: Some("cs_build_histogram"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
+        let reduce_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("histogram_reduce_pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: Some("cs_reduce_exposure"),
             compilation_options: Default::default(),
             cache: None,
         });
@@ -100,9 +157,34 @@ impl HistogramPass {
             mapped_at_creation: false,
         });
 
+        let exposure_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("exposure_state"),
+            size: 8,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let exposure_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("exposure_params"),
+            size: 16,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let exposure_readback_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("exposure_readback"),
+            size: 8,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
         Self {
             build_pipeline,
             clear_pipeline,
+            reduce_pipeline,
+            exposure_buffer,
+            exposure_params_buffer,
+            exposure_readback_buffer,
             bind_group_layout,
             bind_group: None,
             histogram_buffer,
@@ -124,6 +206,14 @@ impl HistogramPass {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: self.histogram_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.exposure_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.exposure_params_buffer.as_entire_binding(),
                 },
             ],
         }));
@@ -160,6 +250,76 @@ impl HistogramPass {
             // whatever is in the middle of the frame.
             pass.dispatch_workgroups(width.div_ceil(BUILD_WORKGROUP), height.div_ceil(BUILD_WORKGROUP), 1);
         }
+    }
+
+    /// Uploads this frame's adaptation inputs. Call before [`Self::encode_reduce`].
+    pub fn set_exposure_settings(&self, queue: &wgpu::Queue, settings: ExposureSettings) {
+        queue.write_buffer(
+            &self.exposure_params_buffer,
+            0,
+            bytemuck::bytes_of(&[
+                settings.delta_time_seconds,
+                settings.speed,
+                if settings.auto_enabled { 1.0f32 } else { 0.0f32 },
+                settings.manual_ev,
+            ]),
+        );
+    }
+
+    /// Reduces the histogram to an adapted exposure, in the same encoder and
+    /// after [`Self::encode`] so the barrier between them is wgpu's problem.
+    pub fn encode_reduce(&self, encoder: &mut wgpu::CommandEncoder) {
+        let Some(bind_group) = self.bind_group.as_ref() else {
+            return;
+        };
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("exposure_reduce"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&self.reduce_pipeline);
+        pass.set_bind_group(0, bind_group, &[]);
+        pass.dispatch_workgroups(1, 1, 1);
+    }
+
+    /// The buffer the tonemap should read the adapted exposure from.
+    pub fn exposure_buffer(&self) -> &wgpu::Buffer {
+        &self.exposure_buffer
+    }
+
+    /// Resets the adaptation state. Without this a test (or a scene change)
+    /// inherits whatever exposure the previous frames converged to, which
+    /// makes "did it adapt?" unanswerable.
+    pub fn reset_exposure(&self, queue: &wgpu::Queue, ev: f32) {
+        queue.write_buffer(&self.exposure_buffer, 0, bytemuck::bytes_of(&[ev, ev]));
+    }
+
+    /// Copies the exposure state out for tests and diagnostics. Same caveat as
+    /// [`Self::read_back`]: it stalls the queue and must not be on the frame
+    /// path.
+    pub fn encode_exposure_readback(&self, encoder: &mut wgpu::CommandEncoder) {
+        encoder.copy_buffer_to_buffer(&self.exposure_buffer, 0, &self.exposure_readback_buffer, 0, 8);
+    }
+
+    /// Returns (adapted EV, target EV) from the last copied exposure state.
+    pub fn read_back_exposure(&self, gpu: &GpuContext) -> (f32, f32) {
+        let slice = self.exposure_readback_buffer.slice(..);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = sender.send(result);
+        });
+        let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
+        let _ = receiver.recv();
+
+        let values = {
+            let data = slice.get_mapped_range();
+            let floats: Vec<f32> = data
+                .chunks_exact(4)
+                .map(|b| f32::from_ne_bytes([b[0], b[1], b[2], b[3]]))
+                .collect();
+            (floats[0], floats[1])
+        };
+        self.exposure_readback_buffer.unmap();
+        values
     }
 
     /// Copies the histogram into the mappable staging buffer. Must be encoded
