@@ -1,11 +1,17 @@
 //! Mesh simplification and runtime LOD selection.
 //!
-//! The simplifier is vertex-clustering (grid quantization): vertices are
-//! snapped to a grid, merged, and degenerate triangles dropped. It is not
-//! quadric-error decimation — it is O(n), dependency-free, deterministic,
-//! and good enough to cut triangle counts on dense photogrammetry meshes
-//! where the LOD is only ever seen at distance. Swapping in meshoptimizer
-//! later only replaces `simplify_primitive`.
+//! The simplifier is vertex-clustering (grid quantization): vertices in the
+//! same grid cell are merged to their centroid and degenerate triangles
+//! dropped. It is not quadric-error decimation — it is O(n), dependency-free,
+//! deterministic, and good enough to cut triangle counts on dense
+//! photogrammetry meshes where the LOD is only ever seen at distance.
+//! Swapping in meshoptimizer or a QEM pass later only replaces
+//! `simplify_primitive`.
+//!
+//! QEM would place merged vertices to minimise distance to the original
+//! SURFACE rather than to the original vertices, which preserves silhouettes
+//! and creases that clustering rounds off. That is the upgrade this module is
+//! shaped for and has not had.
 
 use std::collections::HashMap;
 
@@ -40,11 +46,22 @@ pub fn simplify_primitive(prim: &CpuPrimitive, cell_ratio: f32) -> CpuPrimitive 
     }
     let cell = (diagonal * cell_ratio).max(1e-6);
 
-    // Map each grid cell to a merged vertex (first-wins position, averaged
-    // normal so shading stays smooth).
+    // Map each grid cell to a merged vertex.
+    //
+    // Position is the CENTROID of the vertices that fell in the cell, not the
+    // first one seen. First-wins snaps every vertex to whichever happened to
+    // be visited first, so the simplified surface jitters toward an arbitrary
+    // corner of each cell and the error depends on vertex ORDER - reordering
+    // an unchanged mesh changed the result. The centroid minimises squared
+    // distance to the merged vertices and is order-independent.
+    //
+    // Normals are averaged for the same reason: a merged vertex that kept one
+    // input normal shades as a facet.
     let mut cell_to_index: HashMap<(i64, i64, i64), u32> = HashMap::new();
     let mut vertices: Vec<Vertex> = Vec::new();
     let mut normal_sums: Vec<Vec3> = Vec::new();
+    let mut position_sums: Vec<Vec3> = Vec::new();
+    let mut merge_counts: Vec<f32> = Vec::new();
     let mut remap: Vec<u32> = Vec::with_capacity(prim.vertices.len());
 
     for v in &prim.vertices {
@@ -57,16 +74,24 @@ pub fn simplify_primitive(prim: &CpuPrimitive, cell_ratio: f32) -> CpuPrimitive 
         let index = *cell_to_index.entry(key).or_insert_with(|| {
             vertices.push(*v);
             normal_sums.push(Vec3::ZERO);
+            position_sums.push(Vec3::ZERO);
+            merge_counts.push(0.0);
             (vertices.len() - 1) as u32
         });
         normal_sums[index as usize] += Vec3::from_array(v.normal);
+        position_sums[index as usize] += p;
+        merge_counts[index as usize] += 1.0;
         remap.push(index);
     }
 
-    for (vertex, sum) in vertices.iter_mut().zip(&normal_sums) {
-        let n = sum.normalize_or_zero();
+    for (index, vertex) in vertices.iter_mut().enumerate() {
+        let n = normal_sums[index].normalize_or_zero();
         if n != Vec3::ZERO {
             vertex.normal = n.to_array();
+        }
+        let count = merge_counts[index];
+        if count > 0.0 {
+            vertex.position = (position_sums[index] / count).to_array();
         }
     }
 
@@ -209,5 +234,138 @@ mod tests {
         }
         let simplified = simplify_primitive(&prim, 0.05);
         assert_eq!(simplified.vertices.len(), prim.vertices.len());
+    }
+
+    /// Mean distance from each ORIGINAL vertex to the merged vertex it was
+    /// mapped onto - i.e. how far the simplifier moved the surface.
+    fn mean_displacement(original: &CpuPrimitive, cell_ratio: f32) -> f32 {
+        let simplified = simplify_primitive(original, cell_ratio);
+
+        // Re-derive the mapping the simplifier used: nearest merged vertex.
+        // Cheap enough for a test-sized grid and independent of the internal
+        // remap table, so this measures the RESULT rather than the bookkeeping.
+        let mut total = 0.0f32;
+        for v in &original.vertices {
+            let p = Vec3::from_array(v.position);
+            let nearest = simplified
+                .vertices
+                .iter()
+                .map(|s| (Vec3::from_array(s.position) - p).length())
+                .fold(f32::INFINITY, f32::min);
+            total += nearest;
+        }
+        total / original.vertices.len() as f32
+    }
+
+    #[test]
+    fn merged_vertices_sit_at_the_cell_centroid() {
+        // Four vertices in one cell, at known offsets. The merged position
+        // must be their average, not whichever was visited first.
+        let mut prim = grid_primitive(2);
+        prim.vertices[0].position = [0.0, 0.0, 0.0];
+        prim.vertices[1].position = [1.0, 0.0, 0.0];
+        prim.vertices[2].position = [0.0, 1.0, 0.0];
+        prim.vertices[3].position = [1.0, 1.0, 0.0];
+
+        // A cell ratio large enough to swallow the whole mesh.
+        let simplified = simplify_primitive(&prim, 10.0);
+        assert_eq!(simplified.vertices.len(), 1, "the whole mesh should collapse to one vertex");
+
+        let merged = Vec3::from_array(simplified.vertices[0].position);
+        let expected = Vec3::new(0.5, 0.5, 0.0);
+        assert!(
+            (merged - expected).length() < 1e-5,
+            "merged vertex at {merged:?}, expected the centroid {expected:?}"
+        );
+    }
+
+    #[test]
+    fn simplification_is_independent_of_vertex_order() {
+        // The property first-wins merging did NOT have: reversing the vertex
+        // list changed which position each cell kept, so an unchanged mesh
+        // simplified differently depending on how it was authored.
+        //
+        // The jitter is load-bearing. A regular grid is SYMMETRIC under
+        // reversal - first-wins picks each cell's min corner forwards and its
+        // max corner backwards, and for a symmetric grid those two sets are
+        // identical, so the test passed against the very bug it exists for.
+        // Verified: with first-wins restored, this fails only with the jitter.
+        let mut original = grid_primitive(16);
+        for (i, v) in original.vertices.iter_mut().enumerate() {
+            let n = i as f32;
+            v.position[0] += (n * 0.37).fract() * 0.01;
+            v.position[1] += (n * 0.71).fract() * 0.01;
+            v.position[2] += (n * 0.13).fract() * 0.01;
+        }
+
+        let mut reordered = original.clone();
+        reordered.vertices.reverse();
+        let last = (original.vertices.len() - 1) as u32;
+        for index in &mut reordered.indices {
+            *index = last - *index;
+        }
+
+        let a = simplify_primitive(&original, 0.1);
+        let b = simplify_primitive(&reordered, 0.1);
+
+        assert_eq!(
+            a.vertices.len(),
+            b.vertices.len(),
+            "vertex order changed the simplified vertex count"
+        );
+
+        // Same set of positions, order aside - compared with a tolerance, not
+        // for bit equality.
+        //
+        // Centroid merging is order-independent in exact arithmetic but not in
+        // f32: summing the same positions in a different sequence rounds
+        // differently in the last digits. An exact comparison (quantise, sort,
+        // assert_eq) fails on that alone, which is what a first attempt here
+        // did. The property worth asserting is that the surface is the same,
+        // and 1e-4 is far tighter than the cell size while leaving room for
+        // summation order.
+        let key = |v: &Vertex| {
+            let p = v.position;
+            (p[0].to_bits(), p[1].to_bits(), p[2].to_bits())
+        };
+        let mut sorted_a: Vec<&Vertex> = a.vertices.iter().collect();
+        let mut sorted_b: Vec<&Vertex> = b.vertices.iter().collect();
+        sorted_a.sort_by_key(|v| key(v));
+        sorted_b.sort_by_key(|v| key(v));
+
+        for (va, vb) in sorted_a.iter().zip(&sorted_b) {
+            let pa = Vec3::from_array(va.position);
+            let pb = Vec3::from_array(vb.position);
+            assert!(
+                (pa - pb).length() < 1e-4,
+                "vertex order changed a merged position: {pa:?} vs {pb:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn displacement_stays_within_the_cell_size() {
+        // The bound clustering can actually promise: no vertex moves further
+        // than the cell it was merged within. A regression that placed merged
+        // vertices outside their cell would pass the reduction tests and
+        // quietly warp the mesh.
+        let original = grid_primitive(24);
+        let cell_ratio = 0.1f32;
+
+        let mut min = Vec3::splat(f32::INFINITY);
+        let mut max = Vec3::splat(f32::NEG_INFINITY);
+        for v in &original.vertices {
+            let p = Vec3::from_array(v.position);
+            min = min.min(p);
+            max = max.max(p);
+        }
+        let cell = (max - min).length() * cell_ratio;
+
+        let mean = mean_displacement(&original, cell_ratio);
+        assert!(
+            mean < cell,
+            "mean displacement {mean} exceeds one cell ({cell}); merged vertices are leaving their cells"
+        );
+        assert!(mean > 0.0, "nothing moved at all - the mesh was not simplified");
     }
 }
