@@ -461,10 +461,24 @@ fn compute_flat_normals(vertices: &mut [Vertex], indices: &[u32]) {
     }
 }
 
-/// Per-vertex tangent accumulation from triangle UV gradients (Lengyel-style,
-/// not full MikkTSpace — sufficient until baked assets demand exact parity).
+/// Per-vertex tangent frame from triangle UV gradients (Lengyel's method).
+///
+/// Accumulates BOTH the tangent and the bitangent per vertex, then stores the
+/// tangent with a handedness sign in `.w`. Handedness is the part that
+/// matters and that the earlier version got wrong: it hard-coded `w = 1.0`,
+/// so every mirrored UV island (the norm on a symmetric mesh - a face, a
+/// character) sampled its normal map with the bitangent flipped the wrong way,
+/// lighting the mirrored half as if lit from the opposite side. `w` now
+/// carries `sign(dot(cross(N, T), B))`, which the shader multiplies into its
+/// reconstructed bitangent - the glTF convention.
+///
+/// Still not full MikkTSpace: it does not split vertices across hard UV seams,
+/// so a vertex shared by islands of opposite handedness gets one averaged
+/// frame. That needs the welding pass MikkTSpace does and is a separate step;
+/// this fixes the handedness error, which is the visible one.
 pub(crate) fn compute_tangents(vertices: &mut [Vertex], indices: &[u32]) {
-    let mut accum = vec![Vec3::ZERO; vertices.len()];
+    let mut tan_accum = vec![Vec3::ZERO; vertices.len()];
+    let mut bitan_accum = vec![Vec3::ZERO; vertices.len()];
 
     for tri in indices.chunks_exact(3) {
         let [i0, i1, i2] = [tri[0] as usize, tri[1] as usize, tri[2] as usize];
@@ -486,12 +500,16 @@ pub(crate) fn compute_tangents(vertices: &mut [Vertex], indices: &[u32]) {
         }
         let r = 1.0 / det;
         let tangent = (e1 * d2.y - e2 * d1.y) * r;
+        let bitangent = (e2 * d1.x - e1 * d2.x) * r;
         for i in [i0, i1, i2] {
-            accum[i] += tangent;
+            tan_accum[i] += tangent;
+            bitan_accum[i] += bitangent;
         }
     }
 
-    for (vertex, tangent) in vertices.iter_mut().zip(accum) {
+    for ((vertex, tangent), bitangent) in
+        vertices.iter_mut().zip(tan_accum).zip(bitan_accum)
+    {
         let n = Vec3::from_array(vertex.normal);
         // Gram-Schmidt against the normal; fall back to any perpendicular
         // axis for degenerate UVs.
@@ -502,7 +520,11 @@ pub(crate) fn compute_tangents(vertices: &mut [Vertex], indices: &[u32]) {
                 t = n.cross(Vec3::X).normalize_or_zero();
             }
         }
-        vertex.tangent = [t.x, t.y, t.z, 1.0];
+        // Handedness: negative when the UV chart is mirrored relative to the
+        // geometric bitangent. Default to +1 for degenerate accumulation
+        // rather than 0, which would zero the shader's bitangent entirely.
+        let w = if n.cross(t).dot(bitangent) < 0.0 { -1.0 } else { 1.0 };
+        vertex.tangent = [t.x, t.y, t.z, w];
     }
 }
 
@@ -540,6 +562,57 @@ mod tests {
                     && vertex.tangent[2].abs() < 1e-4,
                 "tangent should be +X, got {:?}",
                 vertex.tangent
+            );
+            // Right-handed UVs: handedness must be +1.
+            assert_eq!(vertex.tangent[3], 1.0, "expected +1 handedness");
+        }
+    }
+
+    fn quad_with_uvs(uvs: [[f32; 2]; 4]) -> (Vec<Vertex>, [u32; 6]) {
+        let pos = [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ];
+        let vertices = pos
+            .iter()
+            .zip(uvs)
+            .map(|(p, uv)| Vertex {
+                position: *p,
+                normal: [0.0, 0.0, 1.0],
+                uv,
+                tangent: [0.0; 4],
+                joints: [0.0; 4],
+                weights: [0.0; 4],
+            })
+            .collect();
+        (vertices, [0u32, 1, 2, 0, 2, 3])
+    }
+
+    #[test]
+    fn mirrored_uvs_flip_handedness() {
+        // The headline regression this rewrite fixes. Same quad, but the V
+        // axis of the UVs is mirrored (v = 1 - v). The geometry is unchanged,
+        // so the tangent still points along +X, but the chart is now
+        // left-handed and the handedness sign MUST flip to -1. The previous
+        // implementation hard-coded +1 and would fail this.
+        let (mut normal, idx) =
+            quad_with_uvs([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
+        compute_tangents(&mut normal, &idx);
+
+        let (mut mirrored, idx) =
+            quad_with_uvs([[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]]);
+        compute_tangents(&mut mirrored, &idx);
+
+        for v in &normal {
+            assert_eq!(v.tangent[3], 1.0, "unmirrored chart is right-handed");
+        }
+        for v in &mirrored {
+            assert_eq!(
+                v.tangent[3], -1.0,
+                "mirrored chart must be left-handed, got {:?}",
+                v.tangent
             );
         }
     }
