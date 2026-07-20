@@ -34,11 +34,11 @@
 //! Nothing here runs per frame, which is why none of it is wired into
 //! [`crate::render::gpu_timing`].
 //!
-//! Loading an actual `.hdr`/`.exr` file is deliberately NOT this module's job.
-//! The crate has no HDR decoder (`image` is a dev-dependency, PNG only) and
-//! ships to wasm, where a decoder is real download weight. So the entry point
-//! takes decoded linear float pixels ([`EquirectImage`]) and the caller
-//! chooses how they were produced - a decoder, or [`EquirectImage::sky`].
+//! Decoding image files is still not this module's job: the entry point takes
+//! decoded linear float pixels ([`EquirectImage`]) and the caller chooses how
+//! they were produced - [`crate::asset::hdr::decode_hdr`] for Radiance `.hdr`
+//! files, or [`EquirectImage::sky`] for the procedural fallback.
+//! [`IblEnvironment::bake_hdr`] composes decode and bake for the common case.
 
 use crate::context::GpuContext;
 
@@ -628,6 +628,19 @@ impl IblEnvironment {
             irradiance_view,
             prefiltered_view,
         }
+    }
+
+    /// Radiance `.hdr` bytes straight to a baked environment.
+    ///
+    /// Just [`crate::asset::hdr::decode_hdr`] into [`Self::bake`], so a caller
+    /// holding a downloaded panorama does not have to learn the intermediate
+    /// [`EquirectImage`] step. The only error is the decode - the bake itself
+    /// cannot fail.
+    pub fn bake_hdr(
+        gpu: &GpuContext,
+        hdr_bytes: &[u8],
+    ) -> Result<Self, crate::asset::hdr::HdrError> {
+        Ok(Self::bake(gpu, &crate::asset::hdr::decode_hdr(hdr_bytes)?))
     }
 
     pub fn irradiance_view(&self) -> &wgpu::TextureView {

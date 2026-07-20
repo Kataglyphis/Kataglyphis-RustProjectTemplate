@@ -17,6 +17,7 @@ pub mod scene;
 pub mod wasm_demo;
 
 pub use asset::gltf_loader::load_gltf;
+pub use asset::hdr::{decode_hdr, HdrError};
 pub use context::GpuContext;
 pub use render::forward::ForwardRenderer;
 pub use render::ibl::{BrdfLut, EquirectImage, IblEnvironment};

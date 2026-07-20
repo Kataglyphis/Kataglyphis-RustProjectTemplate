@@ -23,7 +23,7 @@ use kataglyphis_webgpu_renderer::render::ibl::{
     BrdfLut, IblEnvironment, BRDF_LUT_SIZE, IRRADIANCE_SIZE, PREFILTER_MIPS, PREFILTER_SIZE,
 };
 use kataglyphis_webgpu_renderer::{
-    load_gltf, EquirectImage, ForwardRenderer, GpuContext, OrbitCamera,
+    decode_hdr, load_gltf, EquirectImage, ForwardRenderer, GpuContext, OrbitCamera,
 };
 
 fn cube_path() -> std::path::PathBuf {
@@ -461,6 +461,101 @@ fn setting_an_environment_actually_changes_the_rendered_frame() {
     assert!(
         dim_luma < analytic_luma,
         "a near-black environment should darken the cube: {analytic_luma} -> {dim_luma}"
+    );
+}
+
+/// Radiance-encodes an [`EquirectImage`] as a flat (unRLE'd) `.hdr` file.
+///
+/// A test-local encoder rather than a crate API on purpose: the renderer only
+/// ever *reads* `.hdr`, and keeping the writer beside the test that needs it
+/// stops it from looking like a supported feature.
+fn encode_hdr_flat(image: &EquirectImage) -> Vec<u8> {
+    let mut out = format!(
+        "#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y {} +X {}\n",
+        image.height, image.width
+    )
+    .into_bytes();
+    for texel in image.rgba32f.chunks_exact(4) {
+        let max = texel[0].max(texel[1]).max(texel[2]);
+        if max < 1e-32 {
+            out.extend_from_slice(&[0; 4]);
+            continue;
+        }
+        // frexp by hand: max = v * 2^e, v in [0.5, 1); mantissas are then
+        // 8-bit fractions of 2^e, matching Radiance's setcolr.
+        let mut e = 0i32;
+        let mut v = max;
+        while v >= 1.0 {
+            v *= 0.5;
+            e += 1;
+        }
+        while v < 0.5 {
+            v *= 2.0;
+            e -= 1;
+        }
+        let scale = f64::from(v) * 256.0 / f64::from(max);
+        out.extend_from_slice(&[
+            (f64::from(texel[0]) * scale) as u8,
+            (f64::from(texel[1]) * scale) as u8,
+            (f64::from(texel[2]) * scale) as u8,
+            (e + 128) as u8,
+        ]);
+    }
+    out
+}
+
+#[test]
+fn hdr_bytes_decode_and_bake_into_the_same_environment_as_the_source_pixels() {
+    // The whole pipeline the decoder exists for: sky -> .hdr bytes -> decode
+    // -> bake, checked against baking the sky directly. The CPU half runs
+    // everywhere; the bake comparison needs an adapter.
+    let sky = EquirectImage::sky(64, 32);
+    let bytes = encode_hdr_flat(&sky);
+    let decoded = decode_hdr(&bytes).expect("the encoded sky must decode");
+    assert_eq!((decoded.width, decoded.height), (sky.width, sky.height));
+
+    let mut worst = 0.0f32;
+    for (got, want) in decoded
+        .rgba32f
+        .chunks_exact(4)
+        .zip(sky.rgba32f.chunks_exact(4))
+    {
+        let max = want[0].max(want[1]).max(want[2]);
+        for channel in 0..3 {
+            worst = worst.max((got[channel] - want[channel]).abs() / max);
+        }
+    }
+    eprintln!("hdr round-trip of the sky: worst relative error {worst:.6}");
+    assert!(
+        worst < 1.0 / 128.0,
+        "RGBE round-trip error {worst} exceeds its quantum"
+    );
+
+    let Ok(gpu) = GpuContext::new_headless() else {
+        eprintln!("SKIP: no GPU adapter available in this environment");
+        return;
+    };
+
+    let direct = IblEnvironment::bake(&gpu, &sky);
+    let via_hdr = IblEnvironment::bake_hdr(&gpu, &bytes).expect("bake_hdr composes decode + bake");
+
+    // The irradiance convolution averages thousands of environment texels, so
+    // the per-pixel RGBE quantisation (< 1/128) cannot grow on the way
+    // through; 2% also covers the half-float storage of both maps.
+    let mut worst = 0.0f32;
+    for face in 0..6u32 {
+        let a = direct.read_irradiance_face(&gpu, face);
+        let b = via_hdr.read_irradiance_face(&gpu, face);
+        for (x, y) in a.iter().zip(&b) {
+            for channel in 0..3 {
+                worst = worst.max((x[channel] - y[channel]).abs() / x[channel].max(1e-3));
+            }
+        }
+    }
+    eprintln!("irradiance from .hdr vs from source pixels: worst relative diff {worst:.6}");
+    assert!(
+        worst < 0.02,
+        "baking the decoded .hdr diverged from the source: {worst}"
     );
 }
 
