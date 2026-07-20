@@ -9,6 +9,7 @@ use wgpu::util::DeviceExt as _;
 use crate::context::GpuContext;
 use crate::render::bloom::BloomPass;
 use crate::render::gpu_timing::{GpuTiming, TimedPass};
+use crate::render::ibl::{BrdfLut, EquirectImage, IblEnvironment, IblFallback};
 use crate::render::ssao::SsaoPass;
 use crate::render::tonemap::TonemapPass;
 use crate::scene::camera::OrbitCamera;
@@ -181,6 +182,20 @@ pub struct ForwardRenderer {
     sky_bind_group: wgpu::BindGroup,
     bind_group_layout: wgpu::BindGroupLayout,
     shadow_bind_group_layout: wgpu::BindGroupLayout,
+    /// Group 1 of the forward pipeline: the IBL maps, bound once per pass.
+    ibl_bind_group_layout: wgpu::BindGroupLayout,
+    ibl_uniform_buffer: wgpu::Buffer,
+    ibl_bind_group: wgpu::BindGroup,
+    /// 1x1 stand-ins so group 1 is always bindable, environment or not.
+    ibl_fallback: IblFallback,
+    /// `None` until [`Self::set_environment`]; the fallback analytic path runs
+    /// until then, unchanged.
+    ibl_environment: Option<IblEnvironment>,
+    /// Environment-independent, so it is baked at most once and survives every
+    /// later `set_environment`. Lazily built rather than built in `new`: a
+    /// renderer that never sets an environment must not pay for a 256x256 x
+    /// 1024-sample pass it will never sample.
+    brdf_lut: Option<BrdfLut>,
     shadow_sampler: wgpu::Sampler,
     white_texture_view: wgpu::TextureView,
     flat_normal_view: wgpu::TextureView,
@@ -231,6 +246,10 @@ pub struct ForwardRenderer {
     /// test keeps the meaning it was written with. Set it (and
     /// `lod_switch_distances`) BEFORE `upload_scene`.
     pub lod_enabled: bool,
+    /// Multiplier on the environment's contribution. 1.0 means "use the
+    /// panorama's radiance as authored"; it is not the ambient slider, which
+    /// is `light_dir_ambient.w` and scales both IBL paths alike.
+    pub ibl_intensity: f32,
     /// Per-pass GPU timestamps. Inert until [`Self::enable_gpu_timing`].
     gpu_timing: GpuTiming,
     /// Camera distances at which successive levels take over, ascending.
@@ -341,9 +360,14 @@ impl ForwardRenderer {
                 ],
             });
 
+        let ibl_bind_group_layout = create_ibl_bind_group_layout(device);
+
+        // vs_shadow touches nothing in group 1, so the shadow pipeline layout
+        // stays single-group: a pipeline layout only has to cover the bindings
+        // its entry points actually use.
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("forward_pipeline_layout"),
-            bind_group_layouts: &[&bind_group_layout],
+            bind_group_layouts: &[&bind_group_layout, &ibl_bind_group_layout],
             push_constant_ranges: &[],
         });
 
@@ -471,6 +495,22 @@ impl ForwardRenderer {
         let mut histogram = crate::render::histogram::HistogramPass::new(gpu);
         histogram.set_input(gpu, &hdr_view);
 
+        let ibl_fallback = IblFallback::new(device);
+        let ibl_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("ibl_params"),
+            contents: bytemuck::bytes_of(&IblUniforms::disabled()),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let ibl_bind_group = create_ibl_bind_group(
+            device,
+            &ibl_bind_group_layout,
+            &ibl_uniform_buffer,
+            &ibl_fallback.irradiance,
+            &ibl_fallback.prefiltered,
+            &ibl_fallback.brdf_lut,
+            &ibl_fallback.sampler,
+        );
+
         Self {
             pipeline,
             pipeline_double_sided,
@@ -485,6 +525,13 @@ impl ForwardRenderer {
             sky_bind_group,
             bind_group_layout,
             shadow_bind_group_layout,
+            ibl_bind_group_layout,
+            ibl_uniform_buffer,
+            ibl_bind_group,
+            ibl_fallback,
+            ibl_environment: None,
+            brdf_lut: None,
+            ibl_intensity: 1.0,
             shadow_sampler,
             white_texture_view,
             flat_normal_view,
@@ -636,6 +683,79 @@ impl ForwardRenderer {
     /// True while per-pass GPU timings are being collected.
     pub fn gpu_timing_available(&self) -> bool {
         self.gpu_timing.is_available()
+    }
+
+    /// Bakes `equirect` into irradiance/prefiltered maps and lights the scene
+    /// with them from the next frame on.
+    ///
+    /// Off by default, like `lod_enabled` and `enable_gpu_timing`: with no
+    /// environment the forward shader takes the analytic hemisphere path it
+    /// always took, so every golden test keeps the meaning it was written
+    /// with. Setting one is the only thing that changes shading.
+    ///
+    /// Blocks for the length of the bake (one submit, tens of milliseconds) -
+    /// it is a load-time operation, not a per-frame one. Nothing is recomputed
+    /// afterwards; the frame path only samples the results.
+    pub fn set_environment(&mut self, gpu: &GpuContext, equirect: &EquirectImage) {
+        // The BRDF table integrates the GGX BRDF against a white furnace and
+        // never touches the environment, so it is baked once and reused for
+        // every environment this renderer is ever given.
+        let brdf_lut = self.brdf_lut.get_or_insert_with(|| BrdfLut::new(gpu));
+        let environment = IblEnvironment::bake(gpu, equirect);
+
+        gpu.queue.write_buffer(
+            &self.ibl_uniform_buffer,
+            0,
+            bytemuck::bytes_of(&IblUniforms::enabled(
+                environment.max_prefiltered_mip(),
+                self.ibl_intensity,
+            )),
+        );
+        self.ibl_bind_group = create_ibl_bind_group(
+            &gpu.device,
+            &self.ibl_bind_group_layout,
+            &self.ibl_uniform_buffer,
+            environment.irradiance_view(),
+            environment.prefiltered_view(),
+            brdf_lut.view(),
+            &self.ibl_fallback.sampler,
+        );
+        self.ibl_environment = Some(environment);
+    }
+
+    /// Drops the environment and returns to the analytic hemisphere path.
+    pub fn clear_environment(&mut self, gpu: &GpuContext) {
+        self.ibl_environment = None;
+        gpu.queue.write_buffer(
+            &self.ibl_uniform_buffer,
+            0,
+            bytemuck::bytes_of(&IblUniforms::disabled()),
+        );
+        self.ibl_bind_group = create_ibl_bind_group(
+            &gpu.device,
+            &self.ibl_bind_group_layout,
+            &self.ibl_uniform_buffer,
+            &self.ibl_fallback.irradiance,
+            &self.ibl_fallback.prefiltered,
+            &self.ibl_fallback.brdf_lut,
+            &self.ibl_fallback.sampler,
+        );
+    }
+
+    /// True when a baked environment is lighting the scene.
+    pub fn environment_enabled(&self) -> bool {
+        self.ibl_environment.is_some()
+    }
+
+    /// The baked environment, for tests and diagnostics that want to inspect
+    /// the maps the frame is actually sampling.
+    pub fn environment(&self) -> Option<&IblEnvironment> {
+        self.ibl_environment.as_ref()
+    }
+
+    /// The shared split-sum BRDF table, once an environment has been set.
+    pub fn brdf_lut(&self) -> Option<&BrdfLut> {
+        self.brdf_lut.as_ref()
     }
 
     pub fn upload_scene(&mut self, gpu: &GpuContext, scene: &CpuScene) {
@@ -1081,6 +1201,10 @@ impl ForwardRenderer {
                 occlusion_query_set: None,
             });
 
+            // Group 1 is per-frame, not per-draw, so it is set once here and
+            // again after the sky. The sky pipeline has its own layout, which
+            // invalidates every group binding when it is bound.
+            pass.set_bind_group(1, &self.ibl_bind_group, &[]);
             for prim in self
                 .primitives
                 .iter()
@@ -1120,6 +1244,9 @@ impl ForwardRenderer {
                 let db = b.world_center.distance_squared(eye);
                 db.partial_cmp(&da).unwrap_or(std::cmp::Ordering::Equal)
             });
+            if !blended.is_empty() {
+                pass.set_bind_group(1, &self.ibl_bind_group, &[]);
+            }
             for prim in blended {
                 let pipeline = if prim.double_sided {
                     &self.pipeline_blend_double_sided
@@ -1505,6 +1632,103 @@ impl ForwardRenderer {
             Mat4::orthographic_rh(-radius, radius, -radius, radius, 0.1, radius * 4.0);
         projection * view
     }
+}
+
+/// Group 1 uniforms, mirroring `IblParams` in forward.wgsl.
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct IblUniforms {
+    // x: enabled flag, y: highest prefiltered mip, z: intensity, w: unused
+    enabled_maxmip_intensity: [f32; 4],
+}
+
+impl IblUniforms {
+    fn disabled() -> Self {
+        Self {
+            enabled_maxmip_intensity: [0.0, 0.0, 1.0, 0.0],
+        }
+    }
+
+    fn enabled(max_mip: f32, intensity: f32) -> Self {
+        Self {
+            enabled_maxmip_intensity: [1.0, max_mip, intensity, 0.0],
+        }
+    }
+}
+
+fn create_ibl_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    let texture =
+        |binding: u32, dimension: wgpu::TextureViewDimension| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: dimension,
+                multisampled: false,
+            },
+            count: None,
+        };
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("ibl_forward_bind_group_layout"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            texture(1, wgpu::TextureViewDimension::Cube),
+            texture(2, wgpu::TextureViewDimension::Cube),
+            texture(3, wgpu::TextureViewDimension::D2),
+            wgpu::BindGroupLayoutEntry {
+                binding: 4,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
+    })
+}
+
+fn create_ibl_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    uniforms: &wgpu::Buffer,
+    irradiance: &wgpu::TextureView,
+    prefiltered: &wgpu::TextureView,
+    brdf_lut: &wgpu::TextureView,
+    sampler: &wgpu::Sampler,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("ibl_forward_bind_group"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniforms.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(irradiance),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(prefiltered),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::TextureView(brdf_lut),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+        ],
+    })
 }
 
 type ForwardPipelineSet = (

@@ -4,6 +4,7 @@ pub mod forward;
 pub mod gpu_timing;
 pub mod graph;
 pub mod histogram;
+pub mod ibl;
 pub mod overlay;
 pub mod ssao;
 pub mod tonemap;

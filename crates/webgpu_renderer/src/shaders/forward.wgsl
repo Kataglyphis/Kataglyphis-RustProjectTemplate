@@ -75,6 +75,26 @@ fn instance_matrix(in: VsIn) -> mat4x4<f32> {
 // Joint matrices for skinned primitives (identity-filled when unskinned).
 @group(0) @binding(13) var<storage, read> joint_matrices: array<mat4x4<f32>>;
 
+// ---- Image-based lighting (group 1, bound once per pass) -------------------
+//
+// A second group rather than more of group 0: these three maps are the same
+// for every primitive in the frame, and group 0 is rebound per draw.
+//
+// When no environment is set the textures are 1x1 stand-ins and `ibl_params.x`
+// is 0; fs_main still samples them (see the note at the ambient block) and
+// discards the result.
+struct IblParams {
+    // x: 1 when an environment is bound, y: highest prefiltered mip index,
+    // z: environment intensity multiplier, w: unused
+    enabled_maxmip_intensity: vec4<f32>,
+};
+
+@group(1) @binding(0) var<uniform> ibl_params: IblParams;
+@group(1) @binding(1) var irradiance_map: texture_cube<f32>;
+@group(1) @binding(2) var prefiltered_map: texture_cube<f32>;
+@group(1) @binding(3) var brdf_lut: texture_2d<f32>;
+@group(1) @binding(4) var ibl_sampler: sampler;
+
 /// Linear blend skinning; returns the model matrix to use for this vertex.
 fn skin_matrix(in: VsIn) -> mat4x4<f32> {
     let w = in.weights;
@@ -385,19 +405,54 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let shadow = shadow_factor(in.view_depth, in.world_position, n_dot_l);
     let radiance = uniforms.light_color_intensity.rgb * uniforms.light_color_intensity.w;
 
-    // Analytic IBL: hemisphere irradiance for diffuse, roughness-blended sky
-    // reflection (sun included -> metals catch sun glints) for specular.
+    // IBL. Two paths: a prefiltered environment when one is bound, and the
+    // analytic sky/ground approximation otherwise.
+    //
+    // Both are evaluated every fragment and chosen between with `select`, not
+    // `mix`: `mix(a, b, 0.0)` is a * 1 + b * 0, which is only bit-identical to
+    // `a` if the compiler is generous, while `select` picks one operand
+    // untouched. That matters because the no-environment path must render
+    // exactly what it rendered before this feature existed - every golden test
+    // in the suite depends on it.
+    //
+    // The cost of evaluating both is three texture fetches from 1x1 textures
+    // on the fallback path. The alternative, branching, would either need
+    // uniform control flow around the samples (they use explicit LODs, so it
+    // is legal, but Chrome's validator has historically been strict about
+    // cube samples in divergent flow) or a second pipeline.
     let ibl_strength = uniforms.light_dir_ambient.w;
     let k_s_ibl = fresnel_schlick(n_dot_v, f0);
-    let diffuse_ibl =
-        (vec3<f32>(1.0) - k_s_ibl) * (1.0 - metallic) * albedo.rgb * hemisphere_irradiance(n);
     let reflected = reflect(-v, n);
-    let env = mix(
+
+    let env_enabled = ibl_params.enabled_maxmip_intensity.x > 0.5;
+    let env_intensity = ibl_params.enabled_maxmip_intensity.z;
+
+    // Prefiltered mip is roughness * max_mip, the inverse of the bake's
+    // roughness = mip / (mip_count - 1) (see render::ibl).
+    let irradiance_env =
+        textureSampleLevel(irradiance_map, ibl_sampler, n, 0.0).rgb * env_intensity;
+    let prefiltered = textureSampleLevel(
+        prefiltered_map,
+        ibl_sampler,
+        reflected,
+        roughness * ibl_params.enabled_maxmip_intensity.y,
+    ).rgb * env_intensity;
+    // u = N.V, v = roughness; r is the scale on F0, g the bias.
+    let env_brdf =
+        textureSampleLevel(brdf_lut, ibl_sampler, vec2<f32>(n_dot_v, roughness), 0.0).rg;
+
+    let irradiance_analytic = hemisphere_irradiance(n);
+    let irradiance = select(irradiance_analytic, irradiance_env, env_enabled);
+    let diffuse_ibl = (vec3<f32>(1.0) - k_s_ibl) * (1.0 - metallic) * albedo.rgb * irradiance;
+
+    let env_analytic = mix(
         sky_radiance(reflected, true),
-        hemisphere_irradiance(n),
+        irradiance_analytic,
         roughness * roughness,
     );
-    let specular_ibl = env * env_brdf_approx(f0, roughness, n_dot_v);
+    let specular_analytic = env_analytic * env_brdf_approx(f0, roughness, n_dot_v);
+    let specular_split_sum = prefiltered * (f0 * env_brdf.x + vec3<f32>(env_brdf.y));
+    let specular_ibl = select(specular_analytic, specular_split_sum, env_enabled);
     let ambient = ibl_strength * occlusion * (diffuse_ibl + specular_ibl);
 
     let punctual =

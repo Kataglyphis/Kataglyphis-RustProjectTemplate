@@ -10,6 +10,7 @@ const SHADERS: &[(&str, &str)] = &[
     ("tonemap", include_str!("../src/shaders/tonemap.wgsl")),
     ("bloom", include_str!("../src/shaders/bloom.wgsl")),
     ("ssao", include_str!("../src/shaders/ssao.wgsl")),
+    ("ibl", include_str!("../src/shaders/ibl.wgsl")),
 ];
 
 #[test]

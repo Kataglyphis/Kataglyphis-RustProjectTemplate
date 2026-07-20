@@ -19,6 +19,7 @@ pub mod wasm_demo;
 pub use asset::gltf_loader::load_gltf;
 pub use context::GpuContext;
 pub use render::forward::ForwardRenderer;
+pub use render::ibl::{BrdfLut, EquirectImage, IblEnvironment};
 pub use render::overlay::{Overlay, OverlayControls};
 pub use render::tonemap::TonemapPass;
 pub use scene::camera::OrbitCamera;
