@@ -71,7 +71,7 @@ jobs:
         run: |
           for i in 1 2 3; do
             echo "Attempt $i to pull container..."
-            if timeout 900 docker pull ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest; then
+            if timeout 900 docker pull ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross; then
               echo "Successfully pulled container"
               exit 0
             fi
@@ -87,11 +87,11 @@ jobs:
             --platform ${{ env.PLATFORM }} \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
-            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest \
+            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross \
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_debug.sh
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_debug.sh
             '
 
       - name: Security checks (cargo audit + cargo deny)
@@ -101,11 +101,11 @@ jobs:
             --platform ${{ env.PLATFORM }} \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
-            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest \
+            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross \
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_security_checks.sh
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_security_checks.sh
             '
 
       - name: Check formatting
@@ -115,12 +115,12 @@ jobs:
             --platform ${{ env.PLATFORM }} \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
-            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest \
+            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross \
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
             apt-get update && apt-get install -y libunwind-dev libdw-dev libgtk-4-dev
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_fmt_clippy.sh
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_fmt_clippy.sh
           '
 
       - name: Run unit, integration, and doc tests
@@ -129,11 +129,11 @@ jobs:
             --platform ${{ env.PLATFORM }} \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
-            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest \
+            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross \
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_test.sh
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_test.sh
             '
 
       - name: Run coverage
@@ -142,11 +142,11 @@ jobs:
             --platform ${{ env.PLATFORM }} \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
-            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest \
+            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross \
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_coverage.sh
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_coverage.sh
             '
 
       # coverage reports are uploaded together with other artifacts later
@@ -157,11 +157,11 @@ jobs:
             --platform ${{ env.PLATFORM }} \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
-            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest \
+            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross \
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_bench.sh
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_bench.sh
             '
 
       - name: 🛠️ Build release binary
@@ -170,11 +170,11 @@ jobs:
             --platform ${{ env.PLATFORM }} \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
-            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest \
+            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross \
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_release.sh
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_release.sh
             '
 
       - name: 📦 Create archive (tar, deb, AppImage, Flatpak)
@@ -194,7 +194,7 @@ jobs:
             -e ARCH="${ARCH}" \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
-            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest \
+            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross \
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
@@ -250,11 +250,11 @@ jobs:
             --platform ${{ env.PLATFORM }} \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
-            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest \
+            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross \
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/rust/cargo_build_doc.sh
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_build_doc.sh
             '
 
       - name: Fix permissions on generated docs
