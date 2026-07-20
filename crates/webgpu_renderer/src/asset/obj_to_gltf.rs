@@ -6,16 +6,41 @@
 //! faces), and the output is checked by loading it back with the real `gltf`
 //! crate rather than by trusting the emitter.
 //!
+//! Materials carry across as far as glTF's PBR model allows: OBJ's diffuse
+//! `Kd` becomes `baseColorFactor` and `d`/`Tr` its alpha. OBJ is a
+//! Phong-era format, so `Ks`/`Ns` have no faithful PBR equivalent and are
+//! dropped rather than guessed into metallic/roughness - a converted asset
+//! should differ from the source in ways that are written down, not invented.
+//!
 //! Deliberately NOT supported, and rejected rather than silently mangled:
-//! materials (`usemtl`/`mtllib`), smoothing groups, and negative (relative)
-//! indices. A converter that quietly drops what it does not understand
-//! produces assets that differ from the source in ways nobody notices until
-//! the two renderers disagree.
+//! smoothing groups and negative (relative) indices. A converter that quietly
+//! drops what it does not understand produces assets that differ from the
+//! source in ways nobody notices until the two renderers disagree.
 
 use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::{bail, Context, Result};
+
+/// A material as OBJ describes it, reduced to what glTF can represent.
+#[derive(Debug, Clone)]
+pub struct ObjMaterial {
+    pub name: String,
+    /// `Kd` plus `d`/`Tr` as alpha.
+    pub base_color: [f32; 4],
+}
+
+impl Default for ObjMaterial {
+    fn default() -> Self {
+        Self {
+            name: "default".to_string(),
+            // glTF's own default base colour, so an OBJ without materials
+            // converts to something a loader treats as untinted rather than
+            // black.
+            base_color: [1.0, 1.0, 1.0, 1.0],
+        }
+    }
+}
 
 /// One triangulated mesh extracted from an OBJ file.
 #[derive(Debug, Default, Clone)]
@@ -25,6 +50,16 @@ pub struct ObjMesh {
     pub normals: Vec<[f32; 3]>,
     pub uvs: Vec<[f32; 2]>,
     pub indices: Vec<u32>,
+    /// Materials referenced by the file, in declaration order.
+    pub materials: Vec<ObjMaterial>,
+    /// `(first_index, index_count, material_index)` per material run.
+    ///
+    /// OBJ interleaves `usemtl` with faces, so one file becomes several glTF
+    /// primitives. Indices stay in ONE array and the ranges point into it -
+    /// splitting the vertex data per material would duplicate shared vertices
+    /// and change the geometry, which is exactly what a comparison harness
+    /// must not do.
+    pub submeshes: Vec<(u32, u32, usize)>,
 }
 
 impl ObjMesh {
@@ -47,6 +82,58 @@ impl ObjMesh {
     }
 }
 
+/// Parses the `.mtl` subset that maps onto glTF's PBR base colour.
+///
+/// Unknown directives are ignored here, unlike in the OBJ parser: MTL files
+/// are full of Phong-era fields (`Ns`, `Ka`, `Ks`, `illum`, `map_Bump`) that
+/// have no glTF equivalent, and refusing a file for containing them would
+/// reject essentially every real material library.
+pub fn parse_mtl(source: &str) -> Vec<ObjMaterial> {
+    let mut materials: Vec<ObjMaterial> = Vec::new();
+
+    for raw_line in source.lines() {
+        let line = raw_line.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        let mut parts = line.split_whitespace();
+        let Some(keyword) = parts.next() else { continue };
+        let values: Vec<&str> = parts.collect();
+
+        match keyword {
+            "newmtl" => materials.push(ObjMaterial {
+                name: values.first().copied().unwrap_or("unnamed").to_string(),
+                ..ObjMaterial::default()
+            }),
+            "Kd" if values.len() >= 3 => {
+                if let Some(material) = materials.last_mut() {
+                    for axis in 0..3 {
+                        if let Ok(component) = values[axis].parse::<f32>() {
+                            material.base_color[axis] = component;
+                        }
+                    }
+                }
+            }
+            // `d` is opacity, `Tr` is transparency - the same quantity
+            // inverted. Treating them as interchangeable makes transparent
+            // materials opaque and vice versa.
+            "d" if !values.is_empty() => {
+                if let (Some(material), Ok(opacity)) = (materials.last_mut(), values[0].parse::<f32>()) {
+                    material.base_color[3] = opacity.clamp(0.0, 1.0);
+                }
+            }
+            "Tr" if !values.is_empty() => {
+                if let (Some(material), Ok(transparency)) = (materials.last_mut(), values[0].parse::<f32>()) {
+                    material.base_color[3] = (1.0 - transparency).clamp(0.0, 1.0);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    materials
+}
+
 /// Parses the OBJ subset this converter supports.
 ///
 /// OBJ indices are 1-based and per-attribute: one face vertex is a
@@ -55,12 +142,20 @@ impl ObjMesh {
 /// becomes one vertex - which is why the output vertex count is usually
 /// higher than the OBJ's `v` count and that is not a bug.
 pub fn parse_obj(source: &str) -> Result<ObjMesh> {
+    parse_obj_with_materials(source, Vec::new())
+}
+
+/// As [`parse_obj`], with materials already loaded from the companion `.mtl`.
+pub fn parse_obj_with_materials(source: &str, materials: Vec<ObjMaterial>) -> Result<ObjMesh> {
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
     let mut uvs: Vec<[f32; 2]> = Vec::new();
 
     let mut mesh = ObjMesh::default();
+    mesh.materials = materials;
     let mut seen: HashMap<(i64, i64, i64), u32> = HashMap::new();
+    let mut active_material: usize = 0;
+    let mut run_start: u32 = 0;
 
     for (line_number, raw_line) in source.lines().enumerate() {
         let line = raw_line.split('#').next().unwrap_or("").trim();
@@ -141,18 +236,55 @@ pub fn parse_obj(source: &str) -> Result<ObjMesh> {
                     mesh.indices.extend_from_slice(&[face[0], face[i], face[i + 1]]);
                 }
             }
+            "usemtl" => {
+                // Close the run in progress before switching. A material
+                // change with no faces since the last one produces an empty
+                // run, which would become a glTF primitive drawing nothing.
+                let current = mesh.indices.len() as u32;
+                if current > run_start {
+                    mesh.submeshes.push((run_start, current - run_start, active_material));
+                    run_start = current;
+                }
+                let name = values.first().copied().unwrap_or("");
+                active_material = mesh
+                    .materials
+                    .iter()
+                    .position(|material| material.name == name)
+                    .unwrap_or_else(|| {
+                        // Referenced but not declared: keep the name so the
+                        // mismatch is visible in the output rather than
+                        // silently collapsing onto material 0.
+                        mesh.materials.push(ObjMaterial {
+                            name: name.to_string(),
+                            ..ObjMaterial::default()
+                        });
+                        mesh.materials.len() - 1
+                    });
+            }
             // Known-but-unsupported directives are ignored rather than fatal:
             // almost every real OBJ carries them, and refusing the file would
             // make the converter useless.
-            "mtllib" | "usemtl" | "o" | "g" | "s" => {}
+            "mtllib" | "o" | "g" | "s" => {}
             other => {
                 bail!("line {at}: unsupported OBJ directive '{other}'");
             }
         }
     }
 
+    // Close the final run.
+    let total = mesh.indices.len() as u32;
+    if total > run_start {
+        mesh.submeshes.push((run_start, total - run_start, active_material));
+    }
+
     if mesh.positions.is_empty() {
         bail!("the OBJ contained no geometry");
+    }
+    if mesh.materials.is_empty() {
+        mesh.materials.push(ObjMaterial::default());
+    }
+    if mesh.submeshes.is_empty() {
+        mesh.submeshes.push((0, mesh.indices.len() as u32, 0));
     }
     Ok(mesh)
 }
@@ -230,13 +362,57 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
     let vertex_count = mesh.positions.len();
     let index_count = mesh.indices.len();
 
+    // One index accessor and one primitive per material run. They all view
+    // the SAME index bufferView at different offsets, so shared vertices stay
+    // shared - splitting the vertex data per material would duplicate them
+    // and change the geometry a comparison harness is meant to hold constant.
+    let mut index_accessors = String::new();
+    let mut primitives = String::new();
+    for (run, &(first_index, count, material)) in mesh.submeshes.iter().enumerate() {
+        if run > 0 {
+            index_accessors.push_str(",
+    ");
+            primitives.push_str(", ");
+        }
+        index_accessors.push_str(&format!(
+            r#"{{ "bufferView": 3, "byteOffset": {}, "componentType": 5125, "count": {}, "type": "SCALAR" }}"#,
+            first_index as usize * 4,
+            count
+        ));
+        primitives.push_str(&format!(
+            r#"{{ "attributes": {{ "POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2 }}, "indices": {}, "material": {}, "mode": 4 }}"#,
+            3 + run,
+            material
+        ));
+    }
+
+    let materials_json = mesh
+        .materials
+        .iter()
+        .map(|material| {
+            let [r, g, b, a] = material.base_color;
+            // OBJ has no metallic/roughness. 0 metallic and 1 roughness is the
+            // closest thing to "plain diffuse", which is what Kd describes;
+            // inheriting glTF's default (metallic 1) would render every
+            // converted asset as a dark mirror.
+            format!(
+                r#"{{ "name": "{}", "pbrMetallicRoughness": {{ "baseColorFactor": [{}, {}, {}, {}], "metallicFactor": 0.0, "roughnessFactor": 1.0 }}{} }}"#,
+                material.name,
+                r, g, b, a,
+                if a < 1.0 { r#", "alphaMode": "BLEND""# } else { "" }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+
     let json = format!(
         r#"{{
   "asset": {{ "version": "2.0", "generator": "kataglyphis obj_to_gltf" }},
   "scene": 0,
   "scenes": [{{ "nodes": [0] }}],
   "nodes": [{{ "mesh": 0 }}],
-  "meshes": [{{ "primitives": [{{ "attributes": {{ "POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2 }}, "indices": 3, "mode": 4 }}] }}],
+  "meshes": [{{ "primitives": [{primitives}] }}],
+  "materials": [{materials_json}],
   "buffers": [{{ "uri": "{bin_uri}", "byteLength": {buffer_length} }}],
   "bufferViews": [
     {{ "buffer": 0, "byteOffset": {positions_offset}, "byteLength": {positions_length}, "target": 34962 }},
@@ -248,7 +424,7 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
     {{ "bufferView": 0, "componentType": 5126, "count": {vertex_count}, "type": "VEC3", "min": [{min0}, {min1}, {min2}], "max": [{max0}, {max1}, {max2}] }},
     {{ "bufferView": 1, "componentType": 5126, "count": {vertex_count}, "type": "VEC3" }},
     {{ "bufferView": 2, "componentType": 5126, "count": {vertex_count}, "type": "VEC2" }},
-    {{ "bufferView": 3, "componentType": 5125, "count": {index_count}, "type": "SCALAR" }}
+    {index_accessors}
   ]
 }}"#,
         bin_uri = bin_uri,
@@ -262,7 +438,9 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
         indices_offset = indices_offset,
         indices_length = index_count * 4,
         vertex_count = vertex_count,
-        index_count = index_count,
+        index_accessors = index_accessors,
+        primitives = primitives,
+        materials_json = materials_json,
         min0 = min[0], min1 = min[1], min2 = min[2],
         max0 = max[0], max1 = max[1], max2 = max[2],
     );
@@ -274,7 +452,29 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
 pub fn convert_file(obj_path: &Path, gltf_path: &Path) -> Result<ObjMesh> {
     let source = std::fs::read_to_string(obj_path)
         .with_context(|| format!("reading {}", obj_path.display()))?;
-    let mesh = parse_obj(&source).with_context(|| format!("parsing {}", obj_path.display()))?;
+
+    // Load every mtllib the OBJ names, resolved next to the OBJ itself. A
+    // missing library is not fatal: the geometry is still worth converting,
+    // and failing the whole conversion over an absent .mtl would block assets
+    // that ship without one.
+    let mut materials: Vec<ObjMaterial> = Vec::new();
+    for line in source.lines() {
+        let line = line.split('#').next().unwrap_or("").trim();
+        if let Some(rest) = line.strip_prefix("mtllib ") {
+            for name in rest.split_whitespace() {
+                let mtl_path = obj_path.with_file_name(name);
+                match std::fs::read_to_string(&mtl_path) {
+                    Ok(mtl) => materials.extend(parse_mtl(&mtl)),
+                    Err(error) => {
+                        log::warn!("{}: {error}; converting without it", mtl_path.display());
+                    }
+                }
+            }
+        }
+    }
+
+    let mesh = parse_obj_with_materials(&source, materials)
+        .with_context(|| format!("parsing {}", obj_path.display()))?;
 
     let bin_name = gltf_path
         .file_stem()

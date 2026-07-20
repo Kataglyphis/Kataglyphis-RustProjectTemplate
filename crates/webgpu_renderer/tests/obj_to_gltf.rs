@@ -167,3 +167,144 @@ fn converts_a_real_engine_asset() {
     assert_eq!(scene.primitives.len(), 1);
     assert_eq!(scene.primitives[0].indices.len(), mesh.indices.len());
 }
+
+const TWO_MATERIAL_OBJ: &str = "\
+mtllib pair.mtl
+v 0.0 0.0 0.0
+v 1.0 0.0 0.0
+v 1.0 1.0 0.0
+v 0.0 1.0 0.0
+vn 0.0 0.0 1.0
+usemtl red
+f 1//1 2//1 3//1
+usemtl blue
+f 1//1 3//1 4//1
+";
+
+const PAIR_MTL: &str = "\
+newmtl red
+Ka 0.1 0.1 0.1
+Kd 0.9 0.1 0.05
+Ks 0.5 0.5 0.5
+Ns 32
+d 1
+illum 2
+
+newmtl blue
+Kd 0.05 0.15 0.85
+d 0.4
+";
+
+#[test]
+fn mtl_diffuse_and_opacity_become_base_color() {
+    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::parse_mtl;
+
+    let materials = parse_mtl(PAIR_MTL);
+    assert_eq!(materials.len(), 2);
+
+    assert_eq!(materials[0].name, "red");
+    assert!((materials[0].base_color[0] - 0.9).abs() < 1e-6);
+    assert!((materials[0].base_color[3] - 1.0).abs() < 1e-6, "d 1 is fully opaque");
+
+    assert_eq!(materials[1].name, "blue");
+    assert!((materials[1].base_color[2] - 0.85).abs() < 1e-6);
+    assert!((materials[1].base_color[3] - 0.4).abs() < 1e-6, "d 0.4 is the alpha");
+}
+
+#[test]
+fn tr_is_inverted_relative_to_d() {
+    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::parse_mtl;
+
+    // The same quantity written two ways. Treating them as interchangeable
+    // makes transparent materials opaque and vice versa - a mistake that
+    // looks like a renderer bug, not a converter bug.
+    let by_opacity = parse_mtl("newmtl a\nd 0.25\n");
+    let by_transparency = parse_mtl("newmtl a\nTr 0.25\n");
+
+    assert!((by_opacity[0].base_color[3] - 0.25).abs() < 1e-6);
+    assert!((by_transparency[0].base_color[3] - 0.75).abs() < 1e-6);
+}
+
+#[test]
+fn each_usemtl_run_becomes_its_own_primitive() {
+    let dir = temp_dir("materials");
+    std::fs::write(dir.join("pair.mtl"), PAIR_MTL).expect("write mtl");
+    let obj_path = dir.join("pair.obj");
+    std::fs::write(&obj_path, TWO_MATERIAL_OBJ).expect("write obj");
+    let gltf_path = dir.join("pair.gltf");
+
+    let mesh = convert_file(&obj_path, &gltf_path).expect("conversion must succeed");
+    assert_eq!(mesh.submeshes.len(), 2, "two usemtl runs should produce two submeshes");
+
+    let scene = load_gltf(&gltf_path).expect("the converted glTF must load");
+    assert_eq!(scene.primitives.len(), 2, "each material run should load as its own primitive");
+
+    // The colours must survive, and land on the right half.
+    let red = scene
+        .primitives
+        .iter()
+        .find(|p| p.material.base_color[0] > 0.5)
+        .expect("a red-dominant primitive");
+    let blue = scene
+        .primitives
+        .iter()
+        .find(|p| p.material.base_color[2] > 0.5)
+        .expect("a blue-dominant primitive");
+
+    assert!((red.material.base_color[0] - 0.9).abs() < 1e-4);
+    assert!((blue.material.base_color[2] - 0.85).abs() < 1e-4);
+    assert!(
+        (blue.material.base_color[3] - 0.4).abs() < 1e-4,
+        "the transparent material lost its alpha: {:?}",
+        blue.material.base_color
+    );
+}
+
+#[test]
+fn material_runs_share_one_vertex_buffer() {
+    // Splitting vertex data per material would duplicate shared vertices and
+    // change the geometry - the exact thing a cross-renderer comparison must
+    // hold constant. Both triangles here share two of the four vertices.
+    let dir = temp_dir("shared_vertices");
+    std::fs::write(dir.join("pair.mtl"), PAIR_MTL).expect("write mtl");
+    let obj_path = dir.join("pair.obj");
+    std::fs::write(&obj_path, TWO_MATERIAL_OBJ).expect("write obj");
+    let gltf_path = dir.join("pair.gltf");
+
+    let mesh = convert_file(&obj_path, &gltf_path).expect("convert");
+    assert_eq!(mesh.positions.len(), 4, "the quad's four corners must not be duplicated");
+
+    let scene = load_gltf(&gltf_path).expect("load");
+    let total_indices: usize = scene.primitives.iter().map(|p| p.indices.len()).sum();
+    assert_eq!(total_indices, mesh.indices.len(), "index data changed across the split");
+}
+
+#[test]
+fn an_obj_without_materials_still_gets_a_usable_default() {
+    // glTF's default material is metallic 1 / roughness 1, which renders as a
+    // dark mirror. An OBJ with no mtllib must not convert into that.
+    let dir = temp_dir("no_materials");
+    let obj_path = dir.join("cube.obj");
+    std::fs::write(&obj_path, CUBE_OBJ).expect("write obj");
+    let gltf_path = dir.join("cube.gltf");
+
+    convert_file(&obj_path, &gltf_path).expect("convert");
+    let scene = load_gltf(&gltf_path).expect("load");
+
+    let material = &scene.primitives[0].material;
+    assert!(material.metallic_factor < 0.01, "converted assets must not be metallic by default");
+    assert!(material.base_color[0] > 0.9, "an untextured OBJ should convert to an untinted material");
+}
+
+#[test]
+fn a_usemtl_naming_an_undeclared_material_is_visible_not_silent() {
+    // Referencing a material the .mtl never declared is an authoring error.
+    // Collapsing it onto material 0 would render the geometry with someone
+    // else's colour and look intentional.
+    let mesh = parse_obj("v 0 0 0\nv 1 0 0\nv 1 1 0\nusemtl ghost\nf 1 2 3\n").expect("parse");
+    assert!(
+        mesh.materials.iter().any(|m| m.name == "ghost"),
+        "the undeclared name should survive into the output: {:?}",
+        mesh.materials.iter().map(|m| &m.name).collect::<Vec<_>>()
+    );
+}
