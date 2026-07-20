@@ -9,8 +9,10 @@
 //!   "passes": { "Forward": 0.02, ... } }
 //! ```
 //!
-//! Usage: `cargo run --example dump_gpu_timings -- <out.json> [scene.gltf]`
-//! Defaults to the bundled test cube when no scene is given.
+//! Usage: `cargo run --example dump_gpu_timings -- <out.json> [scene.gltf [width height]]`
+//! Defaults to the bundled test cube at 1280x720. The resolution arguments
+//! exist so the comparison script can match the C++ golden harness (1200x768)
+//! - per-pass milliseconds are only comparable at one pixel count.
 //!
 //! JSON is written by hand: the fixed schema is four lines, and this crate
 //! deliberately carries no JSON dependency.
@@ -31,13 +33,15 @@ fn main() {
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube.gltf")
         });
 
+    let width: u32 = args.next().and_then(|a| a.parse().ok()).unwrap_or(1280);
+    let height: u32 = args.next().and_then(|a| a.parse().ok()).unwrap_or(720);
+
     let Ok(gpu) = GpuContext::new_headless() else {
         eprintln!("no GPU adapter; writing an unsupported dump");
         write_json(&out_path, 0, false, &[]);
         return;
     };
 
-    let (width, height) = (1280u32, 720u32);
     let mut renderer = ForwardRenderer::new(&gpu, width, height);
     let supported = renderer.enable_gpu_timing(&gpu);
     renderer.upload_scene(&gpu, &load_gltf(scene_path).expect("scene must load"));
