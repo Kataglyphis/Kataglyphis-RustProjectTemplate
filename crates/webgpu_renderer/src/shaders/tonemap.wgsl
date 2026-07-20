@@ -7,11 +7,17 @@
 @group(0) @binding(2) var bloom_tex: texture_2d<f32>;
 @group(0) @binding(4) var ao_tex: texture_2d<f32>;
 struct TonemapUniforms {
-    // x: bloom strength, y: SSAO strength, z: exposure multiplier,
-    // w: 1.0 when this shader must gamma-encode its own output
+    // x: bloom strength, y: SSAO strength, z: unused (exposure now comes
+    // from exposure_state), w: 1.0 when this shader must gamma-encode its own
+    // output
     params: vec4<f32>,
 };
 @group(0) @binding(3) var<uniform> tonemap_uniforms: TonemapUniforms;
+// [adapted EV, target EV], written by cs_reduce_exposure. Read here rather
+// than passed through params.z so there is ONE source of truth: manual mode
+// writes the slider value into this same buffer, so switching modes cannot
+// leave the tonemap reading a stale value from the other path.
+@group(0) @binding(5) var<storage, read> exposure_state: array<f32, 2>;
 
 struct VsOut {
     @builtin(position) clip_position: vec4<f32>,
@@ -54,7 +60,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let bloom = textureSample(bloom_tex, hdr_sampler, in.uv).rgb;
     let ao_raw = textureSample(ao_tex, hdr_sampler, in.uv).r;
     let ao = mix(1.0, ao_raw, tonemap_uniforms.params.y);
-    let exposure = tonemap_uniforms.params.z;
+    let exposure = exp2(exposure_state[0]);
     let mapped = aces((hdr * ao + bloom * tonemap_uniforms.params.x) * exposure);
 
     // An sRGB target encodes in hardware and gets linear values. WebGPU

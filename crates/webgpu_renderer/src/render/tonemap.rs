@@ -78,6 +78,18 @@ impl TonemapPass {
                     },
                     count: None,
                 },
+                // Exposure comes from the auto-exposure reduction rather than
+                // a CPU uniform, so no frame has to wait on a readback.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -167,6 +179,7 @@ impl TonemapPass {
         hdr_view: &wgpu::TextureView,
         bloom_view: &wgpu::TextureView,
         ao_view: &wgpu::TextureView,
+        exposure_buffer: &wgpu::Buffer,
     ) {
         self.bind_group = Some(gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("tonemap_bind_group"),
@@ -191,6 +204,10 @@ impl TonemapPass {
                 wgpu::BindGroupEntry {
                     binding: 4,
                     resource: wgpu::BindingResource::TextureView(ao_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: exposure_buffer.as_entire_binding(),
                 },
             ],
         }));

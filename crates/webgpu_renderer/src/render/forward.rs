@@ -157,6 +157,16 @@ pub struct ForwardRenderer {
     pub ssao_strength: f32,
     /// Exposure in EV stops (0 = neutral).
     pub exposure_ev: f32,
+    /// Drive exposure from the scene histogram instead of `exposure_ev`.
+    pub auto_exposure: bool,
+    /// Adaptation rate; higher settles faster.
+    pub auto_exposure_speed: f32,
+    /// Seconds since the previous frame, for exposure adaptation. A field
+    /// rather than a render() parameter so existing call sites keep working;
+    /// leaving it at the default just means adaptation runs at a nominal
+    /// 60 Hz rate.
+    pub frame_delta_seconds: f32,
+    histogram: crate::render::histogram::HistogramPass,
     punctual_lights: [[f32; 4]; MAX_PUNCTUAL_LIGHTS * 4],
     punctual_light_count: u32,
     nodes: Vec<CpuNode>,
@@ -397,6 +407,8 @@ impl ForwardRenderer {
 
         let depth = create_depth_texture(device, width, height);
         let hdr_view = create_hdr_texture(device, width, height);
+        let mut histogram = crate::render::histogram::HistogramPass::new(gpu);
+        histogram.set_input(gpu, &hdr_view);
 
         Self {
             pipeline,
@@ -430,6 +442,10 @@ impl ForwardRenderer {
             bloom_strength: 0.6,
             ssao_strength: 0.7,
             exposure_ev: 0.0,
+            auto_exposure: false,
+            auto_exposure_speed: 3.0,
+            frame_delta_seconds: 1.0 / 60.0,
+            histogram,
             punctual_lights: [[0.0; 4]; MAX_PUNCTUAL_LIGHTS * 4],
             punctual_light_count: 0,
             nodes: Vec::new(),
@@ -639,6 +655,8 @@ impl ForwardRenderer {
         if self.target_size != (width, height) {
             self.depth = create_depth_texture(&gpu.device, width, height);
             self.hdr_view = create_hdr_texture(&gpu.device, width, height);
+            // A stale view here reads a destroyed texture.
+            self.histogram.set_input(gpu, &self.hdr_view);
             self.target_size = (width, height);
             self.hdr_rebound_needed = true;
         }
@@ -655,10 +673,22 @@ impl ForwardRenderer {
                 .output()
                 .expect("ssao output exists after rebuild")
                 .clone();
-            tonemap.set_input(gpu, &self.hdr_view, &bloom_out, &ao_out);
+            tonemap.set_input(gpu, &self.hdr_view, &bloom_out, &ao_out, self.histogram.exposure_buffer());
             self.hdr_rebound_needed = false;
         }
         tonemap.set_params(&gpu.queue, self.bloom_strength, self.ssao_strength, self.exposure_ev);
+        // Manual mode still routes through the reduction, which copies the
+        // slider value into the same buffer the tonemap reads - one source of
+        // truth, and switching modes cannot strand a stale value.
+        self.histogram.set_exposure_settings(
+            &gpu.queue,
+            crate::render::histogram::ExposureSettings {
+                delta_time_seconds: self.frame_delta_seconds.max(0.0),
+                speed: self.auto_exposure_speed,
+                auto_enabled: self.auto_exposure,
+                manual_ev: self.exposure_ev,
+            },
+        );
 
         self.update_joint_matrices(gpu);
 
@@ -843,6 +873,12 @@ impl ForwardRenderer {
 
         self.bloom.encode(&mut encoder);
         self.ssao.encode(&mut encoder);
+        // Histogram and reduction run against THIS frame's HDR target, before
+        // the tonemap reads the exposure they produce. Measuring the frame it
+        // is about to expose costs one extra pass over the HDR image and
+        // avoids the frame-of-lag a previous-frame measurement would add.
+        self.histogram.encode(&mut encoder, width, height);
+        self.histogram.encode_reduce(&mut encoder);
         tonemap.render(&mut encoder, output_view);
         gpu.queue.submit(Some(encoder.finish()));
     }
