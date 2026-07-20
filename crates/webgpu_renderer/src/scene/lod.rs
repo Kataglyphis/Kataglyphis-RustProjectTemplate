@@ -174,9 +174,31 @@ pub fn build_lod_chain_with(
 /// Picks the LOD index for a camera distance: the last level whose
 /// `min_distance` the camera has passed, or `None` for the full-detail mesh.
 pub fn select_lod(chain: &[Lod], distance: f32) -> Option<usize> {
+    select_lod_by_distance_iter(chain.iter().map(|lod| lod.min_distance), distance)
+}
+
+/// The same rule as `select_lod`, over the switch distances alone.
+///
+/// The renderer keeps only GPU buffers per level - the CPU `Lod` chain is
+/// dropped once uploaded - so it has no `&[Lod]` to hand `select_lod`. Rather
+/// than let the render path grow a second, silently divergent rule, both
+/// forms funnel through `select_lod_by_distance_iter`.
+pub fn select_lod_by_distance(min_distances: &[f32], distance: f32) -> Option<usize> {
+    select_lod_by_distance_iter(min_distances.iter().copied(), distance)
+}
+
+/// Last level whose switch distance the camera has passed. Levels are
+/// expected in ascending distance order, which is how `build_lod_chain_with`
+/// emits them; scanning to the end rather than stopping at the first miss
+/// means an out-of-order list degrades to "the farthest match" instead of
+/// silently picking level 0.
+fn select_lod_by_distance_iter(
+    min_distances: impl Iterator<Item = f32>,
+    distance: f32,
+) -> Option<usize> {
     let mut chosen = None;
-    for (i, lod) in chain.iter().enumerate() {
-        if distance >= lod.min_distance {
+    for (i, min_distance) in min_distances.enumerate() {
+        if distance >= min_distance {
             chosen = Some(i);
         }
     }

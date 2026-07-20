@@ -59,6 +59,19 @@ struct Uniforms {
     cascade_splits: [f32; 4],
 }
 
+/// One pre-uploaded LOD level: its own vertex and index buffer, built once.
+///
+/// Every level is simplified and uploaded at `upload_scene` time. Simplifying
+/// on demand inside a frame would make frame cost depend on how the camera
+/// moved, which is exactly the hitch LOD exists to avoid; this is a demo
+/// renderer, so the VRAM for all levels at once is the cheaper trade and
+/// nothing is streamed or evicted.
+struct LodLevel {
+    vertex_buffer: wgpu::Buffer,
+    index_buffer: wgpu::Buffer,
+    index_count: u32,
+}
+
 struct GpuPrimitive {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
@@ -88,6 +101,33 @@ struct GpuPrimitive {
     joint_buffer: wgpu::Buffer,
     local_aabb_min: Vec3,
     local_aabb_max: Vec3,
+    /// Simplified levels, coarsest last. Empty when LOD is off, which is what
+    /// makes the disabled path identical to the pre-LOD renderer rather than
+    /// merely equivalent to it.
+    lod_levels: Vec<LodLevel>,
+    /// Switch distance per entry in `lod_levels`. Held separately from the
+    /// levels so per-frame selection scans a contiguous f32 slice and never
+    /// allocates.
+    lod_min_distances: Vec<f32>,
+}
+
+impl GpuPrimitive {
+    /// Vertex buffer, index buffer and index count the draw path should use
+    /// from a camera at `eye`.
+    ///
+    /// Distance is measured to `world_center`, matching the metric the sorted
+    /// blend pass already uses, so a primitive cannot be "far" for one pass
+    /// and "near" for another.
+    fn geometry_for(&self, eye: Vec3) -> (&wgpu::Buffer, &wgpu::Buffer, u32) {
+        let distance = self.world_center.distance(eye);
+        match crate::scene::lod::select_lod_by_distance(&self.lod_min_distances, distance) {
+            Some(level) => {
+                let lod = &self.lod_levels[level];
+                (&lod.vertex_buffer, &lod.index_buffer, lod.index_count)
+            }
+            None => (&self.vertex_buffer, &self.index_buffer, self.index_count),
+        }
+    }
 }
 
 fn pack_punctual_lights(lights: &[CpuLight]) -> ([[f32; 4]; MAX_PUNCTUAL_LIGHTS * 4], u32) {
@@ -182,6 +222,20 @@ pub struct ForwardRenderer {
     /// Light color (rgb) + intensity multiplier (w). Values > 1 are the
     /// point of the HDR pipeline; the BRDF divides diffuse by PI.
     pub light_color_intensity: Vec4,
+    /// Build and draw per-primitive LOD chains.
+    ///
+    /// Off by default, and read only by `upload_scene`: with it off no chain
+    /// is built and every primitive keeps an empty level list, so the draw
+    /// path is the pre-LOD one instruction for instruction and every golden
+    /// test keeps the meaning it was written with. Set it (and
+    /// `lod_switch_distances`) BEFORE `upload_scene`.
+    pub lod_enabled: bool,
+    /// Camera distances at which successive levels take over, ascending.
+    ///
+    /// Two levels by default: the geometry roughly halves at each, so the
+    /// coarsest is a quarter of the original triangle budget. Tuned for the
+    /// unit-scale test assets; a scene in metres wants larger numbers.
+    pub lod_switch_distances: Vec<f32>,
 }
 
 impl ForwardRenderer {
@@ -436,6 +490,8 @@ impl ForwardRenderer {
             cascade_matrices: [Mat4::IDENTITY; CASCADE_COUNT],
             cascade_splits: [10.0, 30.0, CASCADE_COUNT as f32, 0.0],
             primitives: Vec::new(),
+            lod_enabled: false,
+            lod_switch_distances: vec![8.0, 24.0],
             scene_bounds: None,
             depth,
             hdr_view,
@@ -510,6 +566,36 @@ impl ForwardRenderer {
             .get(primitive_index)
             .map(|p| p.instance_count)
             .unwrap_or(0)
+    }
+
+    /// Number of pre-uploaded LOD levels for a primitive (0 when LOD is off).
+    pub fn lod_level_count(&self, primitive_index: usize) -> usize {
+        self.primitives
+            .get(primitive_index)
+            .map(|p| p.lod_levels.len())
+            .unwrap_or(0)
+    }
+
+    /// Index count of one pre-uploaded level, `None` if it does not exist.
+    pub fn lod_level_index_count(&self, primitive_index: usize, level: usize) -> Option<u32> {
+        self.primitives
+            .get(primitive_index)?
+            .lod_levels
+            .get(level)
+            .map(|l| l.index_count)
+    }
+
+    /// Index count the draw path would actually issue for a primitive with the
+    /// camera at `eye`.
+    ///
+    /// This calls the same `geometry_for` the render pass calls, so a test
+    /// against it fails if selection is computed but not bound. A test that
+    /// only asked "is LOD enabled?" would pass against wiring that draws the
+    /// full-detail buffer every frame, which is the bug this whole feature was
+    /// added to fix.
+    pub fn selected_index_count(&self, primitive_index: usize, eye: Vec3) -> Option<u32> {
+        let prim = self.primitives.get(primitive_index)?;
+        Some(prim.geometry_for(eye).2)
     }
 
     pub fn upload_scene(&mut self, gpu: &GpuContext, scene: &CpuScene) {
@@ -649,6 +735,54 @@ impl ForwardRenderer {
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             });
 
+            // Quadric decimation, not vertex clustering: clustering's first
+            // level at cell ratio 0.02 is a no-op on anything but a dense
+            // photogrammetry mesh (every vertex lands in its own cell), so a
+            // chain built with it would draw the same triangle count at every
+            // distance and the whole system would look wired but do nothing.
+            // QEM's ratio is a triangle budget, so level 0 halves regardless
+            // of how dense the input is.
+            let (lod_levels, lod_min_distances) = if self.lod_enabled {
+                let chain = crate::scene::lod::build_lod_chain_with(
+                    prim,
+                    &self.lod_switch_distances,
+                    crate::scene::lod::Simplifier::Quadric,
+                );
+                let mut levels = Vec::with_capacity(chain.len());
+                let mut distances = Vec::with_capacity(chain.len());
+                for (level, lod) in chain.iter().enumerate() {
+                    // A level that decimated to nothing ends the chain: a
+                    // zero-length buffer is invalid in wgpu, and there is no
+                    // sensible thing to draw past the point where the mesh has
+                    // no triangles left. The primitive then simply stops
+                    // getting coarser beyond that distance.
+                    if lod.primitive.indices.is_empty() || lod.primitive.vertices.is_empty() {
+                        break;
+                    }
+                    levels.push(LodLevel {
+                        vertex_buffer: device.create_buffer_init(
+                            &wgpu::util::BufferInitDescriptor {
+                                label: Some(&format!("vertices_{i}_lod_{level}")),
+                                contents: bytemuck::cast_slice(&lod.primitive.vertices),
+                                usage: wgpu::BufferUsages::VERTEX,
+                            },
+                        ),
+                        index_buffer: device.create_buffer_init(
+                            &wgpu::util::BufferInitDescriptor {
+                                label: Some(&format!("indices_{i}_lod_{level}")),
+                                contents: bytemuck::cast_slice(&lod.primitive.indices),
+                                usage: wgpu::BufferUsages::INDEX,
+                            },
+                        ),
+                        index_count: lod.primitive.indices.len() as u32,
+                    });
+                    distances.push(lod.min_distance);
+                }
+                (levels, distances)
+            } else {
+                (Vec::new(), Vec::new())
+            };
+
             self.primitives.push(GpuPrimitive {
                 vertex_buffer,
                 index_buffer,
@@ -696,6 +830,8 @@ impl ForwardRenderer {
                 world_center: primitive_world_center(prim),
                 aabb_min: prim_bounds.0,
                 aabb_max: prim_bounds.1,
+                lod_levels,
+                lod_min_distances,
             });
         }
     }
@@ -847,6 +983,17 @@ impl ForwardRenderer {
                 occlusion_query_set: None,
             });
             pass.set_pipeline(&self.shadow_pipeline);
+            // Shadow casters draw at FULL detail regardless of LOD.
+            //
+            // Two reasons. First, camera distance is the wrong metric here at
+            // all: the cascade renders from the light, and a primitive far
+            // from the camera can be the one occluder filling a near cascade.
+            // Second, a popping shadow silhouette is far more visible than a
+            // popping mesh silhouette - the mesh pops at a size where it is a
+            // handful of pixels, while its shadow can land right next to the
+            // viewer at full size. If the shadow pass ever needs its own LOD,
+            // it needs its own distance metric (per cascade, from the light),
+            // not a share of this one.
             for prim in self.primitives.iter().filter(|p| p.casts_shadow) {
                 pass.set_bind_group(0, &prim.shadow_bind_group, &[]);
                 pass.set_vertex_buffer(0, prim.vertex_buffer.slice(..));
@@ -895,12 +1042,17 @@ impl ForwardRenderer {
                 } else {
                     &self.pipeline
                 };
+                // Selection sits beside the frustum test on purpose: both are
+                // per-primitive, per-frame decisions about what this draw
+                // costs, and splitting them apart is how one of them ends up
+                // computed and then ignored.
+                let (vertex_buffer, index_buffer, index_count) = prim.geometry_for(eye);
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(0, &prim.bind_group, &[]);
-                pass.set_vertex_buffer(0, prim.vertex_buffer.slice(..));
+                pass.set_vertex_buffer(0, vertex_buffer.slice(..));
                 pass.set_vertex_buffer(1, prim.instance_buffer.slice(..));
-                pass.set_index_buffer(prim.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..prim.index_count, 0, 0..prim.instance_count);
+                pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..index_count, 0, 0..prim.instance_count);
             }
 
             // Sky fills every pixel geometry left untouched.
@@ -925,12 +1077,13 @@ impl ForwardRenderer {
                 } else {
                     &self.pipeline_blend
                 };
+                let (vertex_buffer, index_buffer, index_count) = prim.geometry_for(eye);
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(0, &prim.bind_group, &[]);
-                pass.set_vertex_buffer(0, prim.vertex_buffer.slice(..));
+                pass.set_vertex_buffer(0, vertex_buffer.slice(..));
                 pass.set_vertex_buffer(1, prim.instance_buffer.slice(..));
-                pass.set_index_buffer(prim.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..prim.index_count, 0, 0..prim.instance_count);
+                pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..index_count, 0, 0..prim.instance_count);
             }
         }
 
