@@ -7,7 +7,8 @@
 @group(0) @binding(2) var bloom_tex: texture_2d<f32>;
 @group(0) @binding(4) var ao_tex: texture_2d<f32>;
 struct TonemapUniforms {
-    // x: bloom strength, y: SSAO strength, z: exposure multiplier
+    // x: bloom strength, y: SSAO strength, z: exposure multiplier,
+    // w: 1.0 when this shader must gamma-encode its own output
     params: vec4<f32>,
 };
 @group(0) @binding(3) var<uniform> tonemap_uniforms: TonemapUniforms;
@@ -37,6 +38,16 @@ fn aces(x: vec3<f32>) -> vec3<f32> {
     return clamp((x * (a * x + b)) / (x * (c * x + d) + e), vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
+// The exact IEC 61966-2-1 transfer function, matching what an sRGB target's
+// hardware encode does - NOT a pow(x, 1/2.2) approximation, which is visibly
+// wrong in the darks and would make the web build differ from native.
+fn linear_to_srgb(c: vec3<f32>) -> vec3<f32> {
+    let cutoff = c < vec3<f32>(0.0031308);
+    let low = c * 12.92;
+    let high = 1.055 * pow(max(c, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - 0.055;
+    return select(high, low, cutoff);
+}
+
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let hdr = textureSample(hdr_tex, hdr_sampler, in.uv).rgb;
@@ -44,5 +55,14 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let ao_raw = textureSample(ao_tex, hdr_sampler, in.uv).r;
     let ao = mix(1.0, ao_raw, tonemap_uniforms.params.y);
     let exposure = tonemap_uniforms.params.z;
-    return vec4<f32>(aces((hdr * ao + bloom * tonemap_uniforms.params.x) * exposure), 1.0);
+    let mapped = aces((hdr * ao + bloom * tonemap_uniforms.params.x) * exposure);
+
+    // An sRGB target encodes in hardware and gets linear values. WebGPU
+    // canvases expose no sRGB surface format, so on web the encode has to
+    // happen here or the image displays uncorrected - the "slightly dark web
+    // demo" recorded in docs/webgpu-srgb-audit.md.
+    if (tonemap_uniforms.params.w > 0.5) {
+        return vec4<f32>(linear_to_srgb(mapped), 1.0);
+    }
+    return vec4<f32>(mapped, 1.0);
 }

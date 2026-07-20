@@ -856,7 +856,29 @@ impl ForwardRenderer {
         height: u32,
         camera: &OrbitCamera,
     ) -> anyhow::Result<Vec<u8>> {
-        let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+        self.render_to_pixels_with_format(
+            gpu,
+            width,
+            height,
+            camera,
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+        )
+    }
+
+    /// As [`Self::render_to_pixels`], but with an explicit target format.
+    ///
+    /// Exists so tests can exercise a NON-sRGB target, which is what browsers
+    /// hand out: WebGPU canvases expose no sRGB surface format. The tonemap
+    /// pass has to gamma-encode itself there, and that path is otherwise
+    /// unreachable from a headless test - every readback target is sRGB.
+    pub fn render_to_pixels_with_format(
+        &mut self,
+        gpu: &GpuContext,
+        width: u32,
+        height: u32,
+        camera: &OrbitCamera,
+        format: wgpu::TextureFormat,
+    ) -> anyhow::Result<Vec<u8>> {
         let mut tonemap = TonemapPass::new(gpu, format);
 
         let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {

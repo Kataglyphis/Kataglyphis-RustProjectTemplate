@@ -8,6 +8,15 @@ pub struct TonemapPass {
     sampler: wgpu::Sampler,
     uniform_buffer: wgpu::Buffer,
     bind_group: Option<wgpu::BindGroup>,
+    /// Whether the shader must gamma-encode its output itself.
+    ///
+    /// An sRGB target encodes in hardware, so the shader emits linear and the
+    /// flag is false. WebGPU canvases expose no sRGB surface format - the
+    /// browser hands back something like `Bgra8Unorm` - and writing linear
+    /// values to a non-sRGB target displays them uncorrected, which is why the
+    /// web demo rendered noticeably dark. There the shader has to apply the
+    /// transfer function itself.
+    encode_srgb: bool,
 }
 
 impl TonemapPass {
@@ -124,6 +133,7 @@ impl TonemapPass {
             sampler,
             uniform_buffer,
             bind_group: None,
+            encode_srgb: !output_format.is_srgb(),
         }
     }
 
@@ -138,7 +148,15 @@ impl TonemapPass {
         queue.write_buffer(
             &self.uniform_buffer,
             0,
-            bytemuck::bytes_of(&[bloom_strength, ssao_strength, exposure_ev.exp2(), 0.0]),
+            bytemuck::bytes_of(&[
+                bloom_strength,
+                ssao_strength,
+                exposure_ev.exp2(),
+                // params.w: see `encode_srgb`. Decided by the output format at
+                // pipeline creation, not per frame, but it rides along here
+                // because the uniform already exists and its w was unused.
+                if self.encode_srgb { 1.0 } else { 0.0 },
+            ]),
         );
     }
 

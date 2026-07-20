@@ -548,3 +548,64 @@ fn resize_handles_zero_dimensions() {
     gpu.resize(800, 600);
     gpu.reconfigure();
 }
+
+/// The web sRGB fix, asserted rather than assumed.
+///
+/// Native swapchains expose an sRGB format and the hardware gamma-encodes the
+/// tonemap output. WebGPU canvases do not: the browser hands back something
+/// like `Bgra8Unorm`, and writing linear values there displays them
+/// uncorrected - the "slightly dark web demo" that
+/// docs/webgpu-srgb-audit.md carried as the single known deviation.
+///
+/// With the shader-side encode in place, both targets must end up holding
+/// approximately the SAME sRGB-encoded bytes. Without it the non-sRGB buffer
+/// is dramatically darker: linear 0.05 stores as byte ~13 instead of ~63.
+#[test]
+fn non_srgb_target_is_gamma_encoded_like_an_srgb_one() {
+    let Ok(gpu) = GpuContext::new_headless() else {
+        eprintln!("SKIP: no GPU adapter available in this environment");
+        return;
+    };
+
+    let scene = load_gltf(cube_path()).expect("cube.gltf must load");
+    let (width, height) = (128, 128);
+    let mut renderer = ForwardRenderer::new(&gpu, width, height);
+    renderer.upload_scene(&gpu, &scene);
+    let camera = OrbitCamera::default();
+
+    let srgb = renderer
+        .render_to_pixels_with_format(
+            &gpu,
+            width,
+            height,
+            &camera,
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+        )
+        .expect("sRGB render must succeed");
+    let unorm = renderer
+        .render_to_pixels_with_format(&gpu, width, height, &camera, wgpu::TextureFormat::Rgba8Unorm)
+        .expect("non-sRGB render must succeed");
+
+    assert_eq!(srgb.len(), unorm.len());
+
+    let mean = |px: &[u8]| px.iter().map(|&b| b as f64).sum::<f64>() / px.len() as f64;
+    let mean_srgb = mean(&srgb);
+    let mean_unorm = mean(&unorm);
+
+    // Hardware encode and the shader's transfer function are the same curve,
+    // so the two differ only by rounding. A tolerance of 2 levels is far
+    // tighter than the gap the bug produced (tens of levels) while leaving
+    // room for per-driver rounding of the hardware path.
+    assert!(
+        (mean_srgb - mean_unorm).abs() < 2.0,
+        "non-sRGB target should be gamma-encoded to match the sRGB one; \
+         mean was {mean_srgb:.2} (sRGB) vs {mean_unorm:.2} (non-sRGB). \
+         A much darker non-sRGB mean means the shader-side encode is not running."
+    );
+
+    // Guard against the assertion above being satisfied by a black frame.
+    assert!(
+        mean_srgb > 20.0,
+        "reference render looks blank (mean {mean_srgb:.2}); the comparison above would prove nothing"
+    );
+}
