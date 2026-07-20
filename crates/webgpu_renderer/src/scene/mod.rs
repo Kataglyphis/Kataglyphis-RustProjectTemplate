@@ -185,7 +185,10 @@ impl Default for CpuMaterial {
 pub enum CpuLightKind {
     Point,
     /// Cosines of the inner/outer cone angles.
-    Spot { cos_inner: f32, cos_outer: f32 },
+    Spot {
+        cos_inner: f32,
+        cos_outer: f32,
+    },
     Directional,
 }
 

@@ -152,13 +152,11 @@ impl CaptureSession {
         ensure_gst_initialized()?;
 
         let source = match config.source {
-            CameraSource::Test => {
-                gst::ElementFactory::make("videotestsrc")
-                    .property_from_str("pattern", "smpte")
-                    .property("is-live", true)
-                    .build()
-                    .context("failed to create videotestsrc")?
-            }
+            CameraSource::Test => gst::ElementFactory::make("videotestsrc")
+                .property_from_str("pattern", "smpte")
+                .property("is-live", true)
+                .build()
+                .context("failed to create videotestsrc")?,
             CameraSource::Auto | CameraSource::Device(_) => {
                 let factory = webcam_source_factory()?;
                 log::info!("using webcam source element `{factory}`");
@@ -169,9 +167,7 @@ impl CaptureSession {
                     if matches!(factory, "mfvideosrc" | "ksvideosrc") {
                         builder = builder.property("device-index", index as i32);
                     } else {
-                        log::warn!(
-                            "source `{factory}` has no device-index; using default device"
-                        );
+                        log::warn!("source `{factory}` has no device-index; using default device");
                     }
                 }
                 builder

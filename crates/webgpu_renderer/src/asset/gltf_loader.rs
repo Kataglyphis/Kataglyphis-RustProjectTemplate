@@ -10,9 +10,9 @@ use anyhow::Context as _;
 use glam::{Mat4, Vec2, Vec3};
 
 use crate::scene::{
-    AlphaMode, ChannelValues, CpuAnimation, CpuAnimationChannel, CpuLight, CpuLightKind,
-    CpuCamera, CpuMaterial, CpuNode, CpuPrimitive, CpuSampler, CpuScene, CpuSkin, CpuTexture,
-    CpuTextureRef, CpuWrap, Vertex,
+    AlphaMode, ChannelValues, CpuAnimation, CpuAnimationChannel, CpuCamera, CpuLight, CpuLightKind,
+    CpuMaterial, CpuNode, CpuPrimitive, CpuSampler, CpuScene, CpuSkin, CpuTexture, CpuTextureRef,
+    CpuWrap, Vertex,
 };
 
 pub fn load_gltf(path: impl AsRef<Path>) -> anyhow::Result<CpuScene> {
@@ -88,10 +88,7 @@ fn build_scene(
                     ChannelValues::Translation(iter.map(glam::Vec3::from_array).collect())
                 }
                 ReadOutputs::Rotations(rotations) => ChannelValues::Rotation(
-                    rotations
-                        .into_f32()
-                        .map(glam::Quat::from_array)
-                        .collect(),
+                    rotations.into_f32().map(glam::Quat::from_array).collect(),
                 ),
                 ReadOutputs::Scales(iter) => {
                     ChannelValues::Scale(iter.map(glam::Vec3::from_array).collect())
@@ -507,9 +504,7 @@ pub(crate) fn compute_tangents(vertices: &mut [Vertex], indices: &[u32]) {
         }
     }
 
-    for ((vertex, tangent), bitangent) in
-        vertices.iter_mut().zip(tan_accum).zip(bitan_accum)
-    {
+    for ((vertex, tangent), bitangent) in vertices.iter_mut().zip(tan_accum).zip(bitan_accum) {
         let n = Vec3::from_array(vertex.normal);
         // Gram-Schmidt against the normal; fall back to any perpendicular
         // axis for degenerate UVs.
@@ -523,7 +518,11 @@ pub(crate) fn compute_tangents(vertices: &mut [Vertex], indices: &[u32]) {
         // Handedness: negative when the UV chart is mirrored relative to the
         // geometric bitangent. Default to +1 for degenerate accumulation
         // rather than 0, which would zero the shader's bitangent entirely.
-        let w = if n.cross(t).dot(bitangent) < 0.0 { -1.0 } else { 1.0 };
+        let w = if n.cross(t).dot(bitangent) < 0.0 {
+            -1.0
+        } else {
+            1.0
+        };
         vertex.tangent = [t.x, t.y, t.z, w];
     }
 }
@@ -597,12 +596,10 @@ mod tests {
         // so the tangent still points along +X, but the chart is now
         // left-handed and the handedness sign MUST flip to -1. The previous
         // implementation hard-coded +1 and would fail this.
-        let (mut normal, idx) =
-            quad_with_uvs([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
+        let (mut normal, idx) = quad_with_uvs([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
         compute_tangents(&mut normal, &idx);
 
-        let (mut mirrored, idx) =
-            quad_with_uvs([[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]]);
+        let (mut mirrored, idx) = quad_with_uvs([[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]]);
         compute_tangents(&mut mirrored, &idx);
 
         for v in &normal {
@@ -617,4 +614,3 @@ mod tests {
         }
     }
 }
-

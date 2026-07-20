@@ -13,8 +13,8 @@ use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
 
 use kataglyphis_webgpu_renderer::{
-    load_gltf, ForwardRenderer, GpuContext, OrbitCamera, OrbitController, Overlay,
-    OverlayControls, TonemapPass,
+    load_gltf, ForwardRenderer, GpuContext, OrbitCamera, OrbitController, Overlay, OverlayControls,
+    TonemapPass,
 };
 
 struct Viewer {
@@ -141,13 +141,7 @@ impl Viewer {
                     }
                     index += 1;
                 };
-                match image::save_buffer(
-                    &path,
-                    &pixels,
-                    width,
-                    height,
-                    image::ColorType::Rgba8,
-                ) {
+                match image::save_buffer(&path, &pixels, width, height, image::ColorType::Rgba8) {
                     Ok(()) => log::info!("Saved {}", path.display()),
                     Err(err) => log::error!("Failed to save screenshot: {err}"),
                 }
@@ -223,8 +217,7 @@ impl Viewer {
         gpu.queue.submit(Some(encoder.finish()));
         if changed {
             let dir = controls.light_direction();
-            renderer.light_dir_ambient =
-                glam::Vec4::new(dir.x, dir.y, dir.z, controls.ambient);
+            renderer.light_dir_ambient = glam::Vec4::new(dir.x, dir.y, dir.z, controls.ambient);
             renderer.light_color_intensity.w = controls.intensity;
             renderer.bloom_strength = controls.bloom;
             renderer.ssao_strength = controls.ssao;
@@ -296,14 +289,12 @@ impl ApplicationHandler for Viewer {
                 event_loop.exit()
             }
             WindowEvent::KeyboardInput { event, .. }
-                if event.state.is_pressed()
-                    && event.logical_key == Key::Character("s".into()) =>
+                if event.state.is_pressed() && event.logical_key == Key::Character("s".into()) =>
             {
                 self.save_screenshot();
             }
             WindowEvent::KeyboardInput { event, .. }
-                if event.state.is_pressed()
-                    && event.logical_key == Key::Character("r".into()) =>
+                if event.state.is_pressed() && event.logical_key == Key::Character("r".into()) =>
             {
                 self.reload_shaders();
             }
@@ -322,9 +313,12 @@ impl ApplicationHandler for Viewer {
 fn main() -> anyhow::Result<()> {
     env_logger::init();
 
-    let model_path = std::env::args().nth(1).map(PathBuf::from).unwrap_or_else(|| {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf")
-    });
+    let model_path = std::env::args()
+        .nth(1)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf")
+        });
 
     let event_loop = EventLoop::new()?;
     let mut viewer = Viewer::new(model_path);

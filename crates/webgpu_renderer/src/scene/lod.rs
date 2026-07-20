@@ -258,7 +258,11 @@ mod tests {
             simplified.vertices.len()
         );
         assert!(!simplified.indices.is_empty(), "mesh collapsed entirely");
-        assert_eq!(simplified.indices.len() % 3, 0, "indices must stay triangles");
+        assert_eq!(
+            simplified.indices.len() % 3,
+            0,
+            "indices must stay triangles"
+        );
         // Every index must address a surviving vertex.
         let max_index = *simplified.indices.iter().max().unwrap() as usize;
         assert!(max_index < simplified.vertices.len());
@@ -328,7 +332,11 @@ mod tests {
 
         // A cell ratio large enough to swallow the whole mesh.
         let simplified = simplify_primitive(&prim, 10.0);
-        assert_eq!(simplified.vertices.len(), 1, "the whole mesh should collapse to one vertex");
+        assert_eq!(
+            simplified.vertices.len(),
+            1,
+            "the whole mesh should collapse to one vertex"
+        );
 
         let merged = Vec3::from_array(simplified.vertices[0].position);
         let expected = Vec3::new(0.5, 0.5, 0.0);
@@ -425,6 +433,9 @@ mod tests {
             mean < cell,
             "mean displacement {mean} exceeds one cell ({cell}); merged vertices are leaving their cells"
         );
-        assert!(mean > 0.0, "nothing moved at all - the mesh was not simplified");
+        assert!(
+            mean > 0.0,
+            "nothing moved at all - the mesh was not simplified"
+        );
     }
 }

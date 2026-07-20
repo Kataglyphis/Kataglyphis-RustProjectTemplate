@@ -60,11 +60,7 @@ impl OrbitController {
                 let current = (position.x, position.y);
                 let moved = if self.dragging {
                     if let Some((lx, ly)) = self.last_cursor {
-                        self.apply_drag(
-                            camera,
-                            (current.0 - lx) as f32,
-                            (current.1 - ly) as f32,
-                        );
+                        self.apply_drag(camera, (current.0 - lx) as f32, (current.1 - ly) as f32);
                         true
                     } else {
                         false
@@ -112,7 +108,11 @@ impl OrbitController {
                 // Replace rather than push if the platform re-reports an id:
                 // a duplicate entry would make a one-finger gesture look like
                 // a pinch against itself, distance 0.
-                if let Some(slot) = self.touches.iter_mut().find(|(existing, _)| *existing == id) {
+                if let Some(slot) = self
+                    .touches
+                    .iter_mut()
+                    .find(|(existing, _)| *existing == id)
+                {
                     slot.1 = position;
                 } else {
                     self.touches.push((id, position));
@@ -124,7 +124,11 @@ impl OrbitController {
                 false
             }
             TouchPhase::Moved => {
-                let Some(index) = self.touches.iter().position(|(existing, _)| *existing == id) else {
+                let Some(index) = self
+                    .touches
+                    .iter()
+                    .position(|(existing, _)| *existing == id)
+                else {
                     // A move for a finger we never saw start. Ignoring it is
                     // deliberate: synthesising a start here would treat the
                     // finger's absolute position as a drag delta and spin the
@@ -150,7 +154,9 @@ impl OrbitController {
                             // on a phone and a large tablet - an absolute pixel
                             // delta would zoom far more per centimetre of
                             // finger travel on a high-DPI screen.
-                            Some(previous_distance) if previous_distance > 1.0 && distance > 1.0 => {
+                            Some(previous_distance)
+                                if previous_distance > 1.0 && distance > 1.0 =>
+                            {
                                 self.apply_pinch(camera, previous_distance as f32, distance as f32);
                                 true
                             }
@@ -192,8 +198,17 @@ impl OrbitController {
     /// Scales the radius by the inverse ratio of finger separation, which
     /// makes the gesture reversible - pinching out and back in returns to the
     /// starting radius, where an additive step would not.
-    pub fn apply_pinch(&self, camera: &mut OrbitCamera, previous_distance: f32, current_distance: f32) {
-        if !(previous_distance > 0.0) || !(current_distance > 0.0) {
+    pub fn apply_pinch(
+        &self,
+        camera: &mut OrbitCamera,
+        previous_distance: f32,
+        current_distance: f32,
+    ) {
+        if previous_distance.is_nan()
+            || previous_distance <= 0.0
+            || current_distance.is_nan()
+            || current_distance <= 0.0
+        {
             return;
         }
         camera.radius = (camera.radius * (previous_distance / current_distance)).clamp(0.2, 500.0);
@@ -210,7 +225,6 @@ fn touch_distance(a: (f64, f64), b: (f64, f64)) -> f64 {
 mod tests {
     use super::*;
 
-
     #[test]
     fn one_finger_drag_orbits() {
         let mut controller = OrbitController::default();
@@ -220,8 +234,14 @@ mod tests {
         controller.handle_touch(1, TouchPhase::Started, (100.0, 100.0), &mut camera);
         let moved = controller.handle_touch(1, TouchPhase::Moved, (140.0, 100.0), &mut camera);
 
-        assert!(moved, "a one-finger move must report that the camera changed");
-        assert!(camera.yaw_deg > start_yaw, "dragging right should increase yaw");
+        assert!(
+            moved,
+            "a one-finger move must report that the camera changed"
+        );
+        assert!(
+            camera.yaw_deg > start_yaw,
+            "dragging right should increase yaw"
+        );
         assert!(!controller.auto_orbit, "touching must stop the idle spin");
     }
 
@@ -239,15 +259,23 @@ mod tests {
 
         controller.handle_touch(2, TouchPhase::Started, (700.0, 500.0), &mut camera);
 
-        assert_eq!(camera.yaw_deg, yaw_before, "a finger landing must not rotate the camera");
-        assert_eq!(camera.radius, radius_before, "a finger landing must not zoom the camera");
+        assert_eq!(
+            camera.yaw_deg, yaw_before,
+            "a finger landing must not rotate the camera"
+        );
+        assert_eq!(
+            camera.radius, radius_before,
+            "a finger landing must not zoom the camera"
+        );
     }
 
     #[test]
     fn pinching_apart_zooms_in_and_together_zooms_out() {
         let mut controller = OrbitController::default();
-        let mut camera = OrbitCamera::default();
-        camera.radius = 10.0;
+        let mut camera = OrbitCamera {
+            radius: 10.0,
+            ..OrbitCamera::default()
+        };
 
         controller.handle_touch(1, TouchPhase::Started, (100.0, 300.0), &mut camera);
         controller.handle_touch(2, TouchPhase::Started, (200.0, 300.0), &mut camera);
@@ -257,12 +285,18 @@ mod tests {
 
         // Fingers apart: 100px -> 300px.
         controller.handle_touch(2, TouchPhase::Moved, (400.0, 300.0), &mut camera);
-        assert!(camera.radius < baseline, "spreading fingers must zoom in (smaller radius)");
+        assert!(
+            camera.radius < baseline,
+            "spreading fingers must zoom in (smaller radius)"
+        );
 
         // And back together.
         let after_spread = camera.radius;
         controller.handle_touch(2, TouchPhase::Moved, (200.0, 300.0), &mut camera);
-        assert!(camera.radius > after_spread, "pinching in must zoom out (larger radius)");
+        assert!(
+            camera.radius > after_spread,
+            "pinching in must zoom out (larger radius)"
+        );
     }
 
     #[test]
@@ -270,8 +304,10 @@ mod tests {
         // Ratio-based scaling, not additive steps: out and back must return to
         // where it started, or repeated gestures drift the camera away.
         let mut controller = OrbitController::default();
-        let mut camera = OrbitCamera::default();
-        camera.radius = 10.0;
+        let mut camera = OrbitCamera {
+            radius: 10.0,
+            ..OrbitCamera::default()
+        };
 
         controller.handle_touch(1, TouchPhase::Started, (100.0, 300.0), &mut camera);
         controller.handle_touch(2, TouchPhase::Started, (200.0, 300.0), &mut camera);
@@ -291,8 +327,10 @@ mod tests {
     #[test]
     fn lifting_one_finger_of_two_does_not_jump() {
         let mut controller = OrbitController::default();
-        let mut camera = OrbitCamera::default();
-        camera.radius = 10.0;
+        let mut camera = OrbitCamera {
+            radius: 10.0,
+            ..OrbitCamera::default()
+        };
 
         controller.handle_touch(1, TouchPhase::Started, (100.0, 300.0), &mut camera);
         controller.handle_touch(2, TouchPhase::Started, (300.0, 300.0), &mut camera);
@@ -306,9 +344,15 @@ mod tests {
         // position, not from the departed finger's.
         controller.handle_touch(1, TouchPhase::Moved, (110.0, 300.0), &mut camera);
 
-        assert_eq!(camera.radius, radius_after_lift, "lifting a finger must not zoom");
+        assert_eq!(
+            camera.radius, radius_after_lift,
+            "lifting a finger must not zoom"
+        );
         let yaw_delta = (camera.yaw_deg - yaw_after_lift).abs();
-        assert!(yaw_delta < 5.0, "one finger moving 10px should not swing yaw by {yaw_delta} degrees");
+        assert!(
+            yaw_delta < 5.0,
+            "one finger moving 10px should not swing yaw by {yaw_delta} degrees"
+        );
     }
 
     #[test]
@@ -321,7 +365,10 @@ mod tests {
         let moved = controller.handle_touch(9, TouchPhase::Moved, (800.0, 600.0), &mut camera);
 
         assert!(!moved);
-        assert_eq!(camera.yaw_deg, yaw, "an unknown finger must not move the camera");
+        assert_eq!(
+            camera.yaw_deg, yaw,
+            "an unknown finger must not move the camera"
+        );
     }
 
     #[test]

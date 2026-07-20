@@ -13,9 +13,9 @@ use crate::render::ibl::{BrdfLut, EquirectImage, IblEnvironment, IblFallback};
 use crate::render::ssao::SsaoPass;
 use crate::render::tonemap::TonemapPass;
 use crate::scene::camera::OrbitCamera;
-use crate::scene::{InstanceRaw, 
+use crate::scene::{
     AlphaMode, ChannelValues, CpuAnimation, CpuLight, CpuLightKind, CpuNode, CpuSampler, CpuScene,
-    CpuSkin, CpuTexture, CpuWrap, Vertex,
+    CpuSkin, CpuTexture, CpuWrap, InstanceRaw, Vertex,
 };
 
 /// Upper bound on joints per skin (storage buffer is sized to the skin).
@@ -453,12 +453,11 @@ impl ForwardRenderer {
                     count: None,
                 }],
             });
-        let sky_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("sky_pipeline_layout"),
-                bind_group_layouts: &[&sky_bind_group_layout],
-                push_constant_ranges: &[],
-            });
+        let sky_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("sky_pipeline_layout"),
+            bind_group_layouts: &[&sky_bind_group_layout],
+            push_constant_ranges: &[],
+        });
         let sky_pipeline = create_sky_pipeline(device, &sky_shader, &sky_pipeline_layout);
         let sky_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("sky_uniforms"),
@@ -640,8 +639,11 @@ impl ForwardRenderer {
         };
 
         if transforms.is_empty() {
-            gpu.queue
-                .write_buffer(&primitive.instance_buffer, 0, bytemuck::bytes_of(&InstanceRaw::IDENTITY));
+            gpu.queue.write_buffer(
+                &primitive.instance_buffer,
+                0,
+                bytemuck::bytes_of(&InstanceRaw::IDENTITY),
+            );
             primitive.instance_count = 1;
             return;
         }
@@ -657,11 +659,13 @@ impl ForwardRenderer {
         if (bytes.len() as u64) <= primitive.instance_buffer.size() {
             gpu.queue.write_buffer(&primitive.instance_buffer, 0, bytes);
         } else {
-            primitive.instance_buffer = gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("instances"),
-                contents: bytes,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            });
+            primitive.instance_buffer =
+                gpu.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("instances"),
+                        contents: bytes,
+                        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    });
         }
         primitive.instance_count = raw.len() as u32;
     }
@@ -861,7 +865,10 @@ impl ForwardRenderer {
             let material = &prim.material;
             let slots = [
                 (&material.base_color_texture, &self.white_texture_view),
-                (&material.metallic_roughness_texture, &self.white_texture_view),
+                (
+                    &material.metallic_roughness_texture,
+                    &self.white_texture_view,
+                ),
                 (&material.normal_texture, &self.flat_normal_view),
                 (&material.emissive_texture, &self.white_texture_view),
                 (&material.occlusion_texture, &self.white_texture_view),
@@ -1091,10 +1098,21 @@ impl ForwardRenderer {
                 .output()
                 .expect("ssao output exists after rebuild")
                 .clone();
-            tonemap.set_input(gpu, &self.hdr_view, &bloom_out, &ao_out, self.histogram.exposure_buffer());
+            tonemap.set_input(
+                gpu,
+                &self.hdr_view,
+                &bloom_out,
+                &ao_out,
+                self.histogram.exposure_buffer(),
+            );
             self.hdr_rebound_needed = false;
         }
-        tonemap.set_params(&gpu.queue, self.bloom_strength, self.ssao_strength, self.exposure_ev);
+        tonemap.set_params(
+            &gpu.queue,
+            self.bloom_strength,
+            self.ssao_strength,
+            self.exposure_ev,
+        );
         // Manual mode still routes through the reduction, which copies the
         // slider value into the same buffer the tonemap reads - one source of
         // truth, and switching modes cannot strand a stale value.
@@ -1701,8 +1719,7 @@ impl ForwardRenderer {
         let eye = center + light_dir * (radius * 2.0);
         let view = Mat4::look_at_rh(eye, center, up);
         // glam's orthographic_rh uses 0..1 depth, matching WebGPU clip space.
-        let projection =
-            Mat4::orthographic_rh(-radius, radius, -radius, radius, 0.1, radius * 4.0);
+        let projection = Mat4::orthographic_rh(-radius, radius, -radius, radius, 0.1, radius * 4.0);
         projection * view
     }
 }
@@ -1818,43 +1835,43 @@ fn create_forward_pipeline_set(
 ) -> ForwardPipelineSet {
     let make = |cull_mode: Option<wgpu::Face>, blend: bool, label: &str| {
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(label),
-                layout: Some(pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[Vertex::LAYOUT, InstanceRaw::LAYOUT],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: HDR_FORMAT,
-                        blend: Some(if blend {
-                            wgpu::BlendState::ALPHA_BLENDING
-                        } else {
-                            wgpu::BlendState::REPLACE
-                        }),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    cull_mode,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: DEPTH_FORMAT,
-                    depth_write_enabled: !blend,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-                cache: None,
-            })
+            label: Some(label),
+            layout: Some(pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: shader,
+                entry_point: Some("vs_main"),
+                buffers: &[Vertex::LAYOUT, InstanceRaw::LAYOUT],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: HDR_FORMAT,
+                    blend: Some(if blend {
+                        wgpu::BlendState::ALPHA_BLENDING
+                    } else {
+                        wgpu::BlendState::REPLACE
+                    }),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                cull_mode,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: !blend,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        })
     };
     (
         make(Some(wgpu::Face::Back), false, "forward_pipeline"),
@@ -1870,34 +1887,34 @@ fn create_shadow_pipeline(
     layout: &wgpu::PipelineLayout,
 ) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("shadow_pipeline"),
-            layout: Some(layout),
-            vertex: wgpu::VertexState {
-                module: shader,
-                entry_point: Some("vs_shadow"),
-                buffers: &[Vertex::LAYOUT, InstanceRaw::LAYOUT],
-                compilation_options: Default::default(),
+        label: Some("shadow_pipeline"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_shadow"),
+            buffers: &[Vertex::LAYOUT, InstanceRaw::LAYOUT],
+            compilation_options: Default::default(),
+        },
+        fragment: None,
+        primitive: wgpu::PrimitiveState {
+            cull_mode: Some(wgpu::Face::Back),
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: true,
+            depth_compare: wgpu::CompareFunction::Less,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState {
+                constant: 2,
+                slope_scale: 2.0,
+                clamp: 0.0,
             },
-            fragment: None,
-            primitive: wgpu::PrimitiveState {
-                cull_mode: Some(wgpu::Face::Back),
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState {
-                    constant: 2,
-                    slope_scale: 2.0,
-                    clamp: 0.0,
-                },
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        })
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    })
 }
 
 fn create_sky_pipeline(
@@ -1906,36 +1923,36 @@ fn create_sky_pipeline(
     layout: &wgpu::PipelineLayout,
 ) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("sky_pipeline"),
-            layout: Some(layout),
-            vertex: wgpu::VertexState {
-                module: sky_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: sky_shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: HDR_FORMAT,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::LessEqual,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        })
+        label: Some("sky_pipeline"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: sky_shader,
+            entry_point: Some("vs_main"),
+            buffers: &[],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: sky_shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: HDR_FORMAT,
+                blend: Some(wgpu::BlendState::REPLACE),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: false,
+            depth_compare: wgpu::CompareFunction::LessEqual,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    })
 }
 
 /// View-frustum from a wgpu-convention (0..1 depth) view-projection matrix
@@ -2396,10 +2413,9 @@ mod tests {
         // Cube at the orbit target is visible.
         assert!(frustum.intersects_aabb(Vec3::splat(-0.5), Vec3::splat(0.5)));
         // A cube far off to the side is culled.
-        assert!(!frustum.intersects_aabb(
-            Vec3::new(1000.0, -0.5, -0.5),
-            Vec3::new(1001.0, 0.5, 0.5)
-        ));
+        assert!(
+            !frustum.intersects_aabb(Vec3::new(1000.0, -0.5, -0.5), Vec3::new(1001.0, 0.5, 0.5))
+        );
         // Behind the camera is culled.
         let eye = camera.eye();
         let behind = eye + (eye - Vec3::ZERO).normalize() * 10.0;

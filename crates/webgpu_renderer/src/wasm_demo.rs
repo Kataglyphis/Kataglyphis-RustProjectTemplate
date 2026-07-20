@@ -83,7 +83,9 @@ impl ApplicationHandler for DemoApp {
         let mount = document
             .get_element_by_id("demo")
             .unwrap_or_else(|| document.body().expect("no body").into());
-        mount.append_child(&canvas).expect("failed to append canvas");
+        mount
+            .append_child(&canvas)
+            .expect("failed to append canvas");
         let (initial_width, initial_height) = sync_canvas_backing_size(&canvas);
 
         // WebGPU init is async-only in browsers: fill the shared state slot

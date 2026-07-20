@@ -100,7 +100,9 @@ pub fn parse_mtl(source: &str) -> Vec<ObjMaterial> {
             continue;
         }
         let mut parts = line.split_whitespace();
-        let Some(keyword) = parts.next() else { continue };
+        let Some(keyword) = parts.next() else {
+            continue;
+        };
         let values: Vec<&str> = parts.collect();
 
         match keyword {
@@ -110,8 +112,8 @@ pub fn parse_mtl(source: &str) -> Vec<ObjMaterial> {
             }),
             "Kd" if values.len() >= 3 => {
                 if let Some(material) = materials.last_mut() {
-                    for axis in 0..3 {
-                        if let Ok(component) = values[axis].parse::<f32>() {
+                    for (axis, value) in values.iter().take(3).enumerate() {
+                        if let Ok(component) = value.parse::<f32>() {
                             material.base_color[axis] = component;
                         }
                     }
@@ -121,7 +123,9 @@ pub fn parse_mtl(source: &str) -> Vec<ObjMaterial> {
             // inverted. Treating them as interchangeable makes transparent
             // materials opaque and vice versa.
             "d" if !values.is_empty() => {
-                if let (Some(material), Ok(opacity)) = (materials.last_mut(), values[0].parse::<f32>()) {
+                if let (Some(material), Ok(opacity)) =
+                    (materials.last_mut(), values[0].parse::<f32>())
+                {
                     material.base_color[3] = opacity.clamp(0.0, 1.0);
                 }
             }
@@ -135,7 +139,9 @@ pub fn parse_mtl(source: &str) -> Vec<ObjMaterial> {
                 }
             }
             "Tr" if !values.is_empty() => {
-                if let (Some(material), Ok(transparency)) = (materials.last_mut(), values[0].parse::<f32>()) {
+                if let (Some(material), Ok(transparency)) =
+                    (materials.last_mut(), values[0].parse::<f32>())
+                {
                     material.base_color[3] = (1.0 - transparency).clamp(0.0, 1.0);
                 }
             }
@@ -163,8 +169,10 @@ pub fn parse_obj_with_materials(source: &str, materials: Vec<ObjMaterial>) -> Re
     let mut normals: Vec<[f32; 3]> = Vec::new();
     let mut uvs: Vec<[f32; 2]> = Vec::new();
 
-    let mut mesh = ObjMesh::default();
-    mesh.materials = materials;
+    let mut mesh = ObjMesh {
+        materials,
+        ..ObjMesh::default()
+    };
     let mut seen: HashMap<(i64, i64, i64), u32> = HashMap::new();
     let mut active_material: usize = 0;
     let mut run_start: u32 = 0;
@@ -186,13 +194,21 @@ pub fn parse_obj_with_materials(source: &str, materials: Vec<ObjMaterial>) -> Re
                 if values.len() < 3 {
                     bail!("line {at}: 'v' needs 3 coordinates, got {}", values.len());
                 }
-                positions.push([parse_f32(values[0], at)?, parse_f32(values[1], at)?, parse_f32(values[2], at)?]);
+                positions.push([
+                    parse_f32(values[0], at)?,
+                    parse_f32(values[1], at)?,
+                    parse_f32(values[2], at)?,
+                ]);
             }
             "vn" => {
                 if values.len() < 3 {
                     bail!("line {at}: 'vn' needs 3 components, got {}", values.len());
                 }
-                normals.push([parse_f32(values[0], at)?, parse_f32(values[1], at)?, parse_f32(values[2], at)?]);
+                normals.push([
+                    parse_f32(values[0], at)?,
+                    parse_f32(values[1], at)?,
+                    parse_f32(values[2], at)?,
+                ]);
             }
             "vt" => {
                 if values.len() < 2 {
@@ -205,7 +221,10 @@ pub fn parse_obj_with_materials(source: &str, materials: Vec<ObjMaterial>) -> Re
             }
             "f" => {
                 if values.len() < 3 {
-                    bail!("line {at}: 'f' needs at least 3 vertices, got {}", values.len());
+                    bail!(
+                        "line {at}: 'f' needs at least 3 vertices, got {}",
+                        values.len()
+                    );
                 }
                 let mut face: Vec<u32> = Vec::with_capacity(values.len());
                 for value in &values {
@@ -245,7 +264,8 @@ pub fn parse_obj_with_materials(source: &str, materials: Vec<ObjMaterial>) -> Re
                 // OBJ exporters emit; concave n-gons would need ear clipping
                 // and are not worth supporting until something needs them.
                 for i in 1..face.len() - 1 {
-                    mesh.indices.extend_from_slice(&[face[0], face[i], face[i + 1]]);
+                    mesh.indices
+                        .extend_from_slice(&[face[0], face[i], face[i + 1]]);
                 }
             }
             "usemtl" => {
@@ -254,7 +274,8 @@ pub fn parse_obj_with_materials(source: &str, materials: Vec<ObjMaterial>) -> Re
                 // run, which would become a glTF primitive drawing nothing.
                 let current = mesh.indices.len() as u32;
                 if current > run_start {
-                    mesh.submeshes.push((run_start, current - run_start, active_material));
+                    mesh.submeshes
+                        .push((run_start, current - run_start, active_material));
                     run_start = current;
                 }
                 let name = values.first().copied().unwrap_or("");
@@ -286,7 +307,8 @@ pub fn parse_obj_with_materials(source: &str, materials: Vec<ObjMaterial>) -> Re
     // Close the final run.
     let total = mesh.indices.len() as u32;
     if total > run_start {
-        mesh.submeshes.push((run_start, total - run_start, active_material));
+        mesh.submeshes
+            .push((run_start, total - run_start, active_material));
     }
 
     if mesh.positions.is_empty() {
@@ -362,7 +384,7 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
     // Index data must start on a multiple of its component size; u32 needs 4,
     // which the float arrays above already guarantee, but pad defensively so
     // a future non-float attribute cannot silently misalign it.
-    while bin.len() % 4 != 0 {
+    while !bin.len().is_multiple_of(4) {
         bin.push(0);
     }
     let indices_offset = bin.len();
@@ -382,8 +404,10 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
     let mut primitives = String::new();
     for (run, &(first_index, count, material)) in mesh.submeshes.iter().enumerate() {
         if run > 0 {
-            index_accessors.push_str(",
-    ");
+            index_accessors.push_str(
+                ",
+    ",
+            );
             primitives.push_str(", ");
         }
         index_accessors.push_str(&format!(
@@ -501,8 +525,12 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
   \"textures\": [{textures_json}],"
             )
         },
-        min0 = min[0], min1 = min[1], min2 = min[2],
-        max0 = max[0], max1 = max[1], max2 = max[2],
+        min0 = min[0],
+        min1 = min[1],
+        min2 = min[2],
+        max0 = max[0],
+        max1 = max[1],
+        max2 = max[2],
     );
 
     (json, bin)
@@ -554,7 +582,9 @@ pub fn convert_file(obj_path: &Path, gltf_path: &Path) -> Result<ObjMesh> {
     // would produce a document that loads on this machine and nowhere else -
     // and the failure would be a missing texture, not a missing file.
     for material in &mesh.materials {
-        let Some(uri) = &material.base_color_texture else { continue };
+        let Some(uri) = &material.base_color_texture else {
+            continue;
+        };
         let source_path = obj_path.with_file_name(uri);
         let destination = gltf_path.with_file_name(uri);
         if source_path == destination {

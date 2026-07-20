@@ -36,12 +36,13 @@ pub const EXPOSURE_KEY: f32 = 0.18;
 /// log2 of a tiny number is a large negative that drags the mean down and
 /// blows the exposure up.
 pub fn histogram_bin(luminance: f32) -> usize {
-    if !(luminance > 1e-6) {
+    if luminance.is_nan() || luminance <= 1e-6 {
         return 0;
     }
     let log_luminance = luminance.log2();
-    let normalized =
-        ((log_luminance - MIN_LOG_LUMINANCE) / (MAX_LOG_LUMINANCE - MIN_LOG_LUMINANCE)).clamp(0.0, 1.0);
+    let normalized = ((log_luminance - MIN_LOG_LUMINANCE)
+        / (MAX_LOG_LUMINANCE - MIN_LOG_LUMINANCE))
+        .clamp(0.0, 1.0);
     // Bins 1..HISTOGRAM_BINS-1 carry the actual range; scale into that span.
     1 + ((normalized * (HISTOGRAM_BINS - 2) as f32) as usize).min(HISTOGRAM_BINS - 2)
 }
@@ -91,7 +92,7 @@ pub fn exposure_for_luminance(average_luminance: f32) -> f32 {
     // Guard the divide: a caller that ignored average_luminance's None and
     // passed 0 would otherwise get infinity, and infinity times any colour is
     // a NaN frame.
-    if !(average_luminance > 1e-6) {
+    if average_luminance.is_nan() || average_luminance <= 1e-6 {
         return 1.0;
     }
     EXPOSURE_KEY / average_luminance
@@ -108,7 +109,12 @@ pub fn exposure_ev_for_luminance(average_luminance: f32) -> f32 {
 /// framerate independence is the point - a naive `current + (target -
 /// current) * speed` converges roughly twice as fast at 120 Hz as at 60 Hz,
 /// so a value tuned on one machine is wrong on every other.
-pub fn adapt_exposure_ev(current_ev: f32, target_ev: f32, delta_time_seconds: f32, speed: f32) -> f32 {
+pub fn adapt_exposure_ev(
+    current_ev: f32,
+    target_ev: f32,
+    delta_time_seconds: f32,
+    speed: f32,
+) -> f32 {
     if !current_ev.is_finite() {
         return target_ev;
     }
@@ -127,7 +133,11 @@ mod tests {
     fn black_and_near_black_land_in_the_reserved_bin() {
         assert_eq!(histogram_bin(0.0), 0);
         assert_eq!(histogram_bin(1e-9), 0);
-        assert_eq!(histogram_bin(-1.0), 0, "negative luminance is not a value, not a dark value");
+        assert_eq!(
+            histogram_bin(-1.0),
+            0,
+            "negative luminance is not a value, not a dark value"
+        );
         assert_eq!(histogram_bin(f32::NAN), 0, "NaN must not index a bin");
     }
 
@@ -137,7 +147,10 @@ mod tests {
         for step in 0..200 {
             let luminance = 1e-4 * 1.15f32.powi(step);
             let bin = histogram_bin(luminance);
-            assert!(bin >= previous, "bin went down from {previous} to {bin} at luminance {luminance}");
+            assert!(
+                bin >= previous,
+                "bin went down from {previous} to {bin} at luminance {luminance}"
+            );
             assert!(bin < HISTOGRAM_BINS, "bin {bin} is out of range");
             previous = bin;
         }
@@ -228,8 +241,14 @@ mod tests {
     #[test]
     fn a_dark_scene_brightens_and_a_bright_scene_darkens() {
         // Direction, stated as a property rather than a magic number.
-        assert!(exposure_ev_for_luminance(0.01) > 0.0, "a dark scene must expose up");
-        assert!(exposure_ev_for_luminance(10.0) < 0.0, "a bright scene must expose down");
+        assert!(
+            exposure_ev_for_luminance(0.01) > 0.0,
+            "a dark scene must expose up"
+        );
+        assert!(
+            exposure_ev_for_luminance(10.0) < 0.0,
+            "a bright scene must expose down"
+        );
         assert!(
             exposure_ev_for_luminance(EXPOSURE_KEY).abs() < 1e-4,
             "a scene already at middle grey needs no correction"
@@ -284,17 +303,28 @@ mod tests {
     fn adaptation_never_overshoots_or_runs_backwards() {
         // A large dt must not push past the target and oscillate.
         let overshoot = adapt_exposure_ev(0.0, 5.0, 1000.0, 10.0);
-        assert!(overshoot <= 5.0 + 1e-4 && overshoot >= 0.0, "overshot to {overshoot}");
+        assert!(
+            (0.0..=5.0 + 1e-4).contains(&overshoot),
+            "overshot to {overshoot}"
+        );
 
         // Downward adaptation is the same property in the other direction.
         let downward = adapt_exposure_ev(5.0, 0.0, 1000.0, 10.0);
-        assert!(downward >= -1e-4 && downward <= 5.0, "undershot to {downward}");
+        assert!((-1e-4..=5.0).contains(&downward), "undershot to {downward}");
     }
 
     #[test]
     fn a_stalled_frame_or_disabled_adaptation_holds_the_current_value() {
-        assert_eq!(adapt_exposure_ev(1.5, 4.0, 0.0, 3.0), 1.5, "dt 0 must not move exposure");
-        assert_eq!(adapt_exposure_ev(1.5, 4.0, 0.016, 0.0), 1.5, "speed 0 disables adaptation");
+        assert_eq!(
+            adapt_exposure_ev(1.5, 4.0, 0.0, 3.0),
+            1.5,
+            "dt 0 must not move exposure"
+        );
+        assert_eq!(
+            adapt_exposure_ev(1.5, 4.0, 0.016, 0.0),
+            1.5,
+            "speed 0 disables adaptation"
+        );
     }
 
     #[test]

@@ -57,9 +57,8 @@ impl TexturePusher {
         // The plugin DLL is already loaded in-process by the Flutter engine;
         // this bumps its refcount and resolves the symbol.
         unsafe {
-            let lib = libloading::Library::new(&target.library).with_context(|| {
-                format!("failed to open texture library `{}`", target.library)
-            })?;
+            let lib = libloading::Library::new(&target.library)
+                .with_context(|| format!("failed to open texture library `{}`", target.library))?;
             let sym: libloading::Symbol<PushFrameFn> = lib
                 .get(b"knt_push_frame\0")
                 .context("`knt_push_frame` not exported by texture library")?;
@@ -93,7 +92,11 @@ impl WebcamEngine {
         let model_path = crate::person_detection::resolve_model_path(Some(&config.model_path));
         let mut detector = PersonDetector::new(&model_path)?;
 
-        let pusher = config.texture.as_ref().map(TexturePusher::new).transpose()?;
+        let pusher = config
+            .texture
+            .as_ref()
+            .map(TexturePusher::new)
+            .transpose()?;
 
         let capture = CaptureSession::start(CaptureConfig {
             source: config.source,

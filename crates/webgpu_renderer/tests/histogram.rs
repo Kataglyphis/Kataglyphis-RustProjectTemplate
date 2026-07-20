@@ -174,7 +174,11 @@ fn the_histogram_is_cleared_between_builds() {
     }
 
     assert_eq!(totals[0], 256);
-    assert_eq!(totals, vec![256, 256, 256], "counts accumulated across builds: {totals:?}");
+    assert_eq!(
+        totals,
+        vec![256, 256, 256],
+        "counts accumulated across builds: {totals:?}"
+    );
 }
 
 /// Runs build + reduce over a known image and returns (adapted EV, target EV).
@@ -263,8 +267,14 @@ fn a_dark_scene_exposes_up_and_a_bright_scene_exposes_down() {
     let (_, dark_target) = reduce_exposure(&gpu, &vec![0.005f32; 256], 16, settings, 0.0);
     let (_, bright_target) = reduce_exposure(&gpu, &vec![20.0f32; 256], 16, settings, 0.0);
 
-    assert!(dark_target > 0.0, "a dark scene must expose up, got {dark_target}");
-    assert!(bright_target < 0.0, "a bright scene must expose down, got {bright_target}");
+    assert!(
+        dark_target > 0.0,
+        "a dark scene must expose up, got {dark_target}"
+    );
+    assert!(
+        bright_target < 0.0,
+        "a bright scene must expose down, got {bright_target}"
+    );
 }
 
 #[test]
@@ -286,7 +296,10 @@ fn adaptation_moves_toward_the_target_without_jumping_to_it() {
     };
     let (adapted, target) = reduce_exposure(&gpu, &vec![0.005f32; 256], 16, settings, 0.0);
 
-    assert!(target > 1.0, "test needs a target well away from the start, got {target}");
+    assert!(
+        target > 1.0,
+        "test needs a target well away from the start, got {target}"
+    );
     assert!(adapted > 0.0, "exposure moved the wrong way: {adapted}");
     assert!(
         adapted < target * 0.5,
@@ -337,6 +350,12 @@ fn manual_mode_writes_the_slider_value_through() {
     };
     let (adapted, target) = reduce_exposure(&gpu, &vec![0.005f32; 256], 16, settings, 4.0);
 
-    assert!((adapted + 2.5).abs() < 1e-4, "manual EV did not reach the buffer: {adapted}");
-    assert!((target + 2.5).abs() < 1e-4, "manual EV must overwrite the target too: {target}");
+    assert!(
+        (adapted + 2.5).abs() < 1e-4,
+        "manual EV did not reach the buffer: {adapted}"
+    );
+    assert!(
+        (target + 2.5).abs() < 1e-4,
+        "manual EV must overwrite the target too: {target}"
+    );
 }

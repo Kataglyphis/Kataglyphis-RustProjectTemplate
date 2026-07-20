@@ -212,7 +212,9 @@ fn alpha_modes_blend_and_mask() {
         .map(|p| p.material.alpha_mode)
         .collect();
     assert!(modes.contains(&AlphaMode::Blend));
-    assert!(modes.iter().any(|m| matches!(m, AlphaMode::Mask(c) if (c - 0.5).abs() < 1e-6)));
+    assert!(modes
+        .iter()
+        .any(|m| matches!(m, AlphaMode::Mask(c) if (c - 0.5).abs() < 1e-6)));
 
     let (width, height) = (256, 256);
     let mut renderer = ForwardRenderer::new(&gpu, width, height);
@@ -583,7 +585,13 @@ fn non_srgb_target_is_gamma_encoded_like_an_srgb_one() {
         )
         .expect("sRGB render must succeed");
     let unorm = renderer
-        .render_to_pixels_with_format(&gpu, width, height, &camera, wgpu::TextureFormat::Rgba8Unorm)
+        .render_to_pixels_with_format(
+            &gpu,
+            width,
+            height,
+            &camera,
+            wgpu::TextureFormat::Rgba8Unorm,
+        )
         .expect("non-sRGB render must succeed");
 
     assert_eq!(srgb.len(), unorm.len());
@@ -737,13 +745,20 @@ fn instances_appear_at_their_own_transforms() {
 
     let mut renderer = ForwardRenderer::new(&gpu, width, height);
     renderer.upload_scene(&gpu, &scene);
-    assert_eq!(renderer.instance_count(0), 1, "primitives start with one identity instance");
+    assert_eq!(
+        renderer.instance_count(0),
+        1,
+        "primitives start with one identity instance"
+    );
 
     let single = renderer
         .render_to_pixels(&gpu, width, height, &camera)
         .expect("render");
     let single_covered = covered(&single);
-    assert!(single_covered > 100, "the reference cube barely rendered ({single_covered} px)");
+    assert!(
+        single_covered > 100,
+        "the reference cube barely rendered ({single_covered} px)"
+    );
 
     // Three copies, spread far enough apart not to overlap on screen.
     renderer.set_instances(
@@ -788,7 +803,11 @@ fn clearing_instances_restores_a_single_copy_rather_than_none() {
     // Zero instances would make the primitive vanish, which is
     // indistinguishable from a culling or upload bug when looking at a frame.
     renderer.set_instances(&gpu, 0, &[]);
-    assert_eq!(renderer.instance_count(0), 1, "an empty slice must restore one identity instance");
+    assert_eq!(
+        renderer.instance_count(0),
+        1,
+        "an empty slice must restore one identity instance"
+    );
 
     let pixels = renderer
         .render_to_pixels(&gpu, width, height, &camera)
@@ -797,7 +816,10 @@ fn clearing_instances_restores_a_single_copy_rather_than_none() {
         .chunks_exact(4)
         .filter(|p| p[0] as i32 > p[2] as i32 + 20)
         .count();
-    assert!(lit > 100, "the cube disappeared after clearing instances ({lit} px)");
+    assert!(
+        lit > 100,
+        "the cube disappeared after clearing instances ({lit} px)"
+    );
 }
 
 #[test]

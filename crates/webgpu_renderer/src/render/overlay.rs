@@ -58,9 +58,7 @@ impl Overlay {
         self.state
             .handle_platform_output(window, output.platform_output);
 
-        let clipped = self
-            .ctx
-            .tessellate(output.shapes, screen.pixels_per_point);
+        let clipped = self.ctx.tessellate(output.shapes, screen.pixels_per_point);
 
         for (id, image_delta) in &output.textures_delta.set {
             self.renderer

@@ -39,7 +39,11 @@ fn temp_dir(name: &str) -> std::path::PathBuf {
 fn parses_positions_normals_uvs_and_triangulates() {
     let mesh = parse_obj(CUBE_OBJ).expect("the cube must parse");
 
-    assert_eq!(mesh.triangle_count(), 2, "two faces should produce two triangles");
+    assert_eq!(
+        mesh.triangle_count(),
+        2,
+        "two faces should produce two triangles"
+    );
     // Four distinct position/uv/normal triples, all sharing one normal.
     assert_eq!(mesh.positions.len(), 4);
     assert_eq!(mesh.normals.len(), 4);
@@ -75,19 +79,41 @@ f 1 2 3 4
 ";
     let mesh = parse_obj(quad).expect("parse");
     assert_eq!(mesh.triangle_count(), 2, "a quad must become two triangles");
-    assert_eq!(mesh.positions.len(), 4, "fan triangulation must not duplicate vertices");
+    assert_eq!(
+        mesh.positions.len(),
+        4,
+        "fan triangulation must not duplicate vertices"
+    );
 }
 
 #[test]
 fn malformed_input_is_rejected_rather_than_guessed_at() {
     // Each of these could plausibly be "fixed up" silently, and each would
     // produce an asset that differs from the source without anyone noticing.
-    assert!(parse_obj("v 1.0 2.0\nf 1 1 1\n").is_err(), "a 2-component vertex must be rejected");
-    assert!(parse_obj("v 0 0 0\nf 1 2 3\n").is_err(), "an out-of-range index must be rejected");
-    assert!(parse_obj("v 0 0 0\nf -1 -2 -3\n").is_err(), "relative indices are unsupported, not ignored");
-    assert!(parse_obj("v 0 0 0\nf 0 0 0\n").is_err(), "index 0 is invalid in OBJ");
-    assert!(parse_obj("# nothing here\n").is_err(), "an empty OBJ must not produce an empty mesh silently");
-    assert!(parse_obj("curv 0 1 2\n").is_err(), "an unsupported directive must not be skipped quietly");
+    assert!(
+        parse_obj("v 1.0 2.0\nf 1 1 1\n").is_err(),
+        "a 2-component vertex must be rejected"
+    );
+    assert!(
+        parse_obj("v 0 0 0\nf 1 2 3\n").is_err(),
+        "an out-of-range index must be rejected"
+    );
+    assert!(
+        parse_obj("v 0 0 0\nf -1 -2 -3\n").is_err(),
+        "relative indices are unsupported, not ignored"
+    );
+    assert!(
+        parse_obj("v 0 0 0\nf 0 0 0\n").is_err(),
+        "index 0 is invalid in OBJ"
+    );
+    assert!(
+        parse_obj("# nothing here\n").is_err(),
+        "an empty OBJ must not produce an empty mesh silently"
+    );
+    assert!(
+        parse_obj("curv 0 1 2\n").is_err(),
+        "an unsupported directive must not be skipped quietly"
+    );
 }
 
 #[test]
@@ -143,7 +169,11 @@ fn the_declared_buffer_length_matches_the_bytes_written() {
         .and_then(|value| value.parse::<usize>().ok())
         .expect("the buffer must declare a byteLength");
 
-    assert_eq!(declared, bin.len(), "declared buffer length disagrees with the data");
+    assert_eq!(
+        declared,
+        bin.len(),
+        "declared buffer length disagrees with the data"
+    );
 }
 
 #[test]
@@ -204,11 +234,17 @@ fn mtl_diffuse_and_opacity_become_base_color() {
 
     assert_eq!(materials[0].name, "red");
     assert!((materials[0].base_color[0] - 0.9).abs() < 1e-6);
-    assert!((materials[0].base_color[3] - 1.0).abs() < 1e-6, "d 1 is fully opaque");
+    assert!(
+        (materials[0].base_color[3] - 1.0).abs() < 1e-6,
+        "d 1 is fully opaque"
+    );
 
     assert_eq!(materials[1].name, "blue");
     assert!((materials[1].base_color[2] - 0.85).abs() < 1e-6);
-    assert!((materials[1].base_color[3] - 0.4).abs() < 1e-6, "d 0.4 is the alpha");
+    assert!(
+        (materials[1].base_color[3] - 0.4).abs() < 1e-6,
+        "d 0.4 is the alpha"
+    );
 }
 
 #[test]
@@ -234,10 +270,18 @@ fn each_usemtl_run_becomes_its_own_primitive() {
     let gltf_path = dir.join("pair.gltf");
 
     let mesh = convert_file(&obj_path, &gltf_path).expect("conversion must succeed");
-    assert_eq!(mesh.submeshes.len(), 2, "two usemtl runs should produce two submeshes");
+    assert_eq!(
+        mesh.submeshes.len(),
+        2,
+        "two usemtl runs should produce two submeshes"
+    );
 
     let scene = load_gltf(&gltf_path).expect("the converted glTF must load");
-    assert_eq!(scene.primitives.len(), 2, "each material run should load as its own primitive");
+    assert_eq!(
+        scene.primitives.len(),
+        2,
+        "each material run should load as its own primitive"
+    );
 
     // The colours must survive, and land on the right half.
     let red = scene
@@ -272,11 +316,19 @@ fn material_runs_share_one_vertex_buffer() {
     let gltf_path = dir.join("pair.gltf");
 
     let mesh = convert_file(&obj_path, &gltf_path).expect("convert");
-    assert_eq!(mesh.positions.len(), 4, "the quad's four corners must not be duplicated");
+    assert_eq!(
+        mesh.positions.len(),
+        4,
+        "the quad's four corners must not be duplicated"
+    );
 
     let scene = load_gltf(&gltf_path).expect("load");
     let total_indices: usize = scene.primitives.iter().map(|p| p.indices.len()).sum();
-    assert_eq!(total_indices, mesh.indices.len(), "index data changed across the split");
+    assert_eq!(
+        total_indices,
+        mesh.indices.len(),
+        "index data changed across the split"
+    );
 }
 
 #[test]
@@ -292,8 +344,14 @@ fn an_obj_without_materials_still_gets_a_usable_default() {
     let scene = load_gltf(&gltf_path).expect("load");
 
     let material = &scene.primitives[0].material;
-    assert!(material.metallic_factor < 0.01, "converted assets must not be metallic by default");
-    assert!(material.base_color[0] > 0.9, "an untextured OBJ should convert to an untinted material");
+    assert!(
+        material.metallic_factor < 0.01,
+        "converted assets must not be metallic by default"
+    );
+    assert!(
+        material.base_color[0] > 0.9,
+        "an untextured OBJ should convert to an untinted material"
+    );
 }
 
 #[test]
@@ -356,7 +414,11 @@ fn map_kd_takes_the_filename_not_the_first_option() {
 fn a_textured_obj_converts_to_a_gltf_with_a_loadable_texture() {
     let dir = temp_dir("textured");
     write_test_png(&dir.join("paint.png"));
-    std::fs::write(dir.join("textured.mtl"), "newmtl painted\nKd 1 1 1\nmap_Kd paint.png\n").expect("mtl");
+    std::fs::write(
+        dir.join("textured.mtl"),
+        "newmtl painted\nKd 1 1 1\nmap_Kd paint.png\n",
+    )
+    .expect("mtl");
     let obj_path = dir.join("textured.obj");
     std::fs::write(&obj_path, TEXTURED_OBJ).expect("obj");
 
@@ -408,7 +470,10 @@ usemtl a\nf 1/1/1 2/2/1 3/3/1\nusemtl b\nf 1/1/1 3/3/1 4/4/1\n",
     // repeatedly and upload duplicate GPU textures.
     let json = std::fs::read_to_string(&gltf_path).expect("read gltf");
     let image_count = json.matches(r#""uri": "shared.png""#).count();
-    assert_eq!(image_count, 1, "the shared texture should appear once, got {image_count}");
+    assert_eq!(
+        image_count, 1,
+        "the shared texture should appear once, got {image_count}"
+    );
 
     let scene = load_gltf(&gltf_path).expect("load");
     assert_eq!(scene.primitives.len(), 2);
@@ -425,14 +490,21 @@ fn a_missing_texture_does_not_abort_the_conversion() {
     // OBJ files routinely reference maps that were never shipped with them.
     // Geometry and base colours are still worth converting.
     let dir = temp_dir("missing_texture");
-    std::fs::write(dir.join("textured.mtl"), "newmtl painted\nKd 0.2 0.4 0.6\nmap_Kd absent.png\n").expect("mtl");
+    std::fs::write(
+        dir.join("textured.mtl"),
+        "newmtl painted\nKd 0.2 0.4 0.6\nmap_Kd absent.png\n",
+    )
+    .expect("mtl");
     let obj_path = dir.join("textured.obj");
     std::fs::write(&obj_path, TEXTURED_OBJ).expect("obj");
     let gltf_path = dir.join("textured.gltf");
 
     let mesh = convert_file(&obj_path, &gltf_path).expect("conversion must still succeed");
     assert_eq!(mesh.triangle_count(), 1);
-    assert!((mesh.materials[0].base_color[2] - 0.6).abs() < 1e-6, "base colour must survive");
+    assert!(
+        (mesh.materials[0].base_color[2] - 0.6).abs() < 1e-6,
+        "base colour must survive"
+    );
 }
 
 #[test]
@@ -446,7 +518,13 @@ fn an_untextured_obj_emits_no_texture_arrays() {
     convert_file(&obj_path, &gltf_path).expect("convert");
 
     let json = std::fs::read_to_string(&gltf_path).expect("read");
-    assert!(!json.contains("\"images\""), "no images array should be emitted");
-    assert!(!json.contains("\"textures\""), "no textures array should be emitted");
+    assert!(
+        !json.contains("\"images\""),
+        "no images array should be emitted"
+    );
+    assert!(
+        !json.contains("\"textures\""),
+        "no textures array should be emitted"
+    );
     load_gltf(&gltf_path).expect("an untextured conversion must still load");
 }

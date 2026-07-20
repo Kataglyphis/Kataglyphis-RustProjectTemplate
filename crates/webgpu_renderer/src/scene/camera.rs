@@ -49,7 +49,12 @@ impl OrbitCamera {
 
     /// Projection with wgpu/WebGPU clip space (depth 0..1).
     pub fn projection(&self, aspect: f32) -> Mat4 {
-        Mat4::perspective_rh(self.fov_y_deg.to_radians(), aspect.max(1e-6), self.near, self.far)
+        Mat4::perspective_rh(
+            self.fov_y_deg.to_radians(),
+            aspect.max(1e-6),
+            self.near,
+            self.far,
+        )
     }
 
     pub fn view_projection(&self, aspect: f32) -> Mat4 {

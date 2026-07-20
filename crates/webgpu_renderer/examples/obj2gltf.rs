@@ -14,7 +14,10 @@ fn main() {
         eprintln!("usage: obj2gltf <in.obj> <out.gltf>");
         std::process::exit(2);
     };
-    match kataglyphis_webgpu_renderer::asset::obj_to_gltf::convert_file(Path::new(obj), Path::new(gltf)) {
+    match kataglyphis_webgpu_renderer::asset::obj_to_gltf::convert_file(
+        Path::new(obj),
+        Path::new(gltf),
+    ) {
         Ok(mesh) => eprintln!(
             "wrote {gltf}: {} positions, {} indices",
             mesh.positions.len(),

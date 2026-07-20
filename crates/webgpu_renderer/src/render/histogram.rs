@@ -161,7 +161,9 @@ impl HistogramPass {
         let exposure_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("exposure_state"),
             size: 8,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -242,7 +244,11 @@ impl HistogramPass {
             });
             pass.set_pipeline(&self.clear_pipeline);
             pass.set_bind_group(0, bind_group, &[]);
-            pass.dispatch_workgroups(HISTOGRAM_BINS.div_ceil(CLEAR_WORKGROUP as usize) as u32, 1, 1);
+            pass.dispatch_workgroups(
+                HISTOGRAM_BINS.div_ceil(CLEAR_WORKGROUP as usize) as u32,
+                1,
+                1,
+            );
         }
 
         {
@@ -255,7 +261,11 @@ impl HistogramPass {
             // Round UP: a truncating division leaves the right and bottom
             // edges of the image unsampled, which biases exposure toward
             // whatever is in the middle of the frame.
-            pass.dispatch_workgroups(width.div_ceil(BUILD_WORKGROUP), height.div_ceil(BUILD_WORKGROUP), 1);
+            pass.dispatch_workgroups(
+                width.div_ceil(BUILD_WORKGROUP),
+                height.div_ceil(BUILD_WORKGROUP),
+                1,
+            );
         }
     }
 
@@ -267,7 +277,11 @@ impl HistogramPass {
             bytemuck::bytes_of(&[
                 settings.delta_time_seconds,
                 settings.speed,
-                if settings.auto_enabled { 1.0f32 } else { 0.0f32 },
+                if settings.auto_enabled {
+                    1.0f32
+                } else {
+                    0.0f32
+                },
                 settings.manual_ev,
             ]),
         );
@@ -304,7 +318,13 @@ impl HistogramPass {
     /// [`Self::read_back`]: it stalls the queue and must not be on the frame
     /// path.
     pub fn encode_exposure_readback(&self, encoder: &mut wgpu::CommandEncoder) {
-        encoder.copy_buffer_to_buffer(&self.exposure_buffer, 0, &self.exposure_readback_buffer, 0, 8);
+        encoder.copy_buffer_to_buffer(
+            &self.exposure_buffer,
+            0,
+            &self.exposure_readback_buffer,
+            0,
+            8,
+        );
     }
 
     /// Returns (adapted EV, target EV) from the last copied exposure state.
