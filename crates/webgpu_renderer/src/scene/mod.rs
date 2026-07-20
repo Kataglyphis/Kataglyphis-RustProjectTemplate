@@ -34,6 +34,34 @@ impl Vertex {
     };
 }
 
+/// A per-instance transform, uploaded as four vec4 columns.
+///
+/// mat4 has no vertex-attribute format, so it travels as four Float32x4 at
+/// consecutive locations and is reassembled in the shader.
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct InstanceRaw {
+    pub model: [[f32; 4]; 4],
+}
+
+impl InstanceRaw {
+    pub const LAYOUT: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
+        array_stride: std::mem::size_of::<InstanceRaw>() as wgpu::BufferAddress,
+        // The whole point: advance once per INSTANCE, not per vertex.
+        step_mode: wgpu::VertexStepMode::Instance,
+        attributes: &wgpu::vertex_attr_array![6 => Float32x4, 7 => Float32x4, 8 => Float32x4, 9 => Float32x4],
+    };
+
+    pub const IDENTITY: Self = Self {
+        model: [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ],
+    };
+}
+
 /// Texture filtering/wrapping requested by the glTF sampler.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 pub struct CpuSampler {

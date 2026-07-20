@@ -59,7 +59,18 @@ struct VsIn {
     @location(3) tangent: vec4<f32>,
     @location(4) joints: vec4<f32>,
     @location(5) weights: vec4<f32>,
+    // Per-instance transform, four columns of a mat4. Every draw binds an
+    // instance buffer - unbatched primitives get a single identity instance -
+    // so there is one code path rather than two pipelines to keep in step.
+    @location(6) instance0: vec4<f32>,
+    @location(7) instance1: vec4<f32>,
+    @location(8) instance2: vec4<f32>,
+    @location(9) instance3: vec4<f32>,
 };
+
+fn instance_matrix(in: VsIn) -> mat4x4<f32> {
+    return mat4x4<f32>(in.instance0, in.instance1, in.instance2, in.instance3);
+}
 
 // Joint matrices for skinned primitives (identity-filled when unskinned).
 @group(0) @binding(13) var<storage, read> joint_matrices: array<mat4x4<f32>>;
@@ -91,7 +102,10 @@ struct VsOut {
 @vertex
 fn vs_main(in: VsIn) -> VsOut {
     var out: VsOut;
-    let model = skin_matrix(in);
+    // Instance transform applies in world space, AFTER the model matrix, so
+    // an instanced primitive keeps its own authored transform and is then
+    // placed by the instance.
+    let model = instance_matrix(in) * skin_matrix(in);
     let world_pos = model * vec4<f32>(in.position, 1.0);
     out.clip_position = uniforms.view_proj * world_pos;
     // Skinned normals use the skinning matrix (uniform scale assumed);
@@ -99,7 +113,10 @@ fn vs_main(in: VsIn) -> VsOut {
     if (in.weights.x + in.weights.y + in.weights.z + in.weights.w > 0.0001) {
         out.world_normal = normalize((model * vec4<f32>(in.normal, 0.0)).xyz);
     } else {
-        out.world_normal = normalize((uniforms.normal_matrix * vec4<f32>(in.normal, 0.0)).xyz);
+        // The instance matrix must rotate the normal too, or instanced copies
+        // keep the un-instanced orientation's lighting.
+        out.world_normal =
+            normalize((instance_matrix(in) * uniforms.normal_matrix * vec4<f32>(in.normal, 0.0)).xyz);
     }
     out.world_tangent = vec4<f32>(
         normalize((model * vec4<f32>(in.tangent.xyz, 0.0)).xyz),
@@ -115,7 +132,9 @@ fn vs_main(in: VsIn) -> VsOut {
 // Depth-only variant for the shadow pass (no fragment stage).
 @vertex
 fn vs_shadow(in: VsIn) -> @builtin(position) vec4<f32> {
-    let world = skin_matrix(in) * vec4<f32>(in.position, 1.0);
+    // Instanced casters must shadow from their instance position, not the
+    // authored one - otherwise every copy casts the original's shadow.
+    let world = instance_matrix(in) * skin_matrix(in) * vec4<f32>(in.position, 1.0);
     let cascade = i32(uniforms.cascade_splits.w);
     if (cascade == 1) {
         return uniforms.light_space_1 * world;

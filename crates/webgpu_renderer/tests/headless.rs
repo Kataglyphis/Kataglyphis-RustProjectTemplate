@@ -704,3 +704,125 @@ fn manual_exposure_still_controls_brightness() {
         "manual exposure stopped affecting the image: EV -3 gave {dark}, EV +2 gave {bright}"
     );
 }
+
+/// GPU instancing, through the real frame path.
+///
+/// The failure mode this guards is not a crash: an instance transform that
+/// never reaches the shader draws every copy on top of the original, which
+/// looks exactly like a scene with one object. Counting covered pixels is
+/// what distinguishes "three instances" from "three draws of the same place".
+#[test]
+fn instances_appear_at_their_own_transforms() {
+    let Ok(gpu) = GpuContext::new_headless() else {
+        eprintln!("SKIP: no GPU adapter available in this environment");
+        return;
+    };
+
+    let scene = load_gltf(cube_path()).expect("cube.gltf must load");
+    let (width, height) = (192, 192);
+    let camera = OrbitCamera {
+        radius: 14.0,
+        ..OrbitCamera::default()
+    };
+
+    // Counts pixels that are not sky. The cube is lit and red-dominant; the
+    // procedural sky is blue-dominant, so "red exceeds blue" separates them
+    // without depending on exact shading.
+    let covered = |pixels: &[u8]| -> usize {
+        pixels
+            .chunks_exact(4)
+            .filter(|p| p[0] as i32 > p[2] as i32 + 20)
+            .count()
+    };
+
+    let mut renderer = ForwardRenderer::new(&gpu, width, height);
+    renderer.upload_scene(&gpu, &scene);
+    assert_eq!(renderer.instance_count(0), 1, "primitives start with one identity instance");
+
+    let single = renderer
+        .render_to_pixels(&gpu, width, height, &camera)
+        .expect("render");
+    let single_covered = covered(&single);
+    assert!(single_covered > 100, "the reference cube barely rendered ({single_covered} px)");
+
+    // Three copies, spread far enough apart not to overlap on screen.
+    renderer.set_instances(
+        &gpu,
+        0,
+        &[
+            glam::Mat4::from_translation(glam::Vec3::new(-4.0, 0.0, 0.0)),
+            glam::Mat4::IDENTITY,
+            glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 0.0)),
+        ],
+    );
+    assert_eq!(renderer.instance_count(0), 3);
+
+    let instanced = renderer
+        .render_to_pixels(&gpu, width, height, &camera)
+        .expect("render");
+    let instanced_covered = covered(&instanced);
+
+    assert!(
+        instanced_covered > single_covered * 2,
+        "three separated instances should cover far more than one cube: {instanced_covered} vs {single_covered}"
+    );
+}
+
+#[test]
+fn clearing_instances_restores_a_single_copy_rather_than_none() {
+    let Ok(gpu) = GpuContext::new_headless() else {
+        eprintln!("SKIP: no GPU adapter available in this environment");
+        return;
+    };
+
+    let scene = load_gltf(cube_path()).expect("cube.gltf must load");
+    let (width, height) = (128, 128);
+    let camera = OrbitCamera::default();
+
+    let mut renderer = ForwardRenderer::new(&gpu, width, height);
+    renderer.upload_scene(&gpu, &scene);
+
+    renderer.set_instances(&gpu, 0, &[glam::Mat4::IDENTITY, glam::Mat4::IDENTITY]);
+    assert_eq!(renderer.instance_count(0), 2);
+
+    // Zero instances would make the primitive vanish, which is
+    // indistinguishable from a culling or upload bug when looking at a frame.
+    renderer.set_instances(&gpu, 0, &[]);
+    assert_eq!(renderer.instance_count(0), 1, "an empty slice must restore one identity instance");
+
+    let pixels = renderer
+        .render_to_pixels(&gpu, width, height, &camera)
+        .expect("render");
+    let lit = pixels
+        .chunks_exact(4)
+        .filter(|p| p[0] as i32 > p[2] as i32 + 20)
+        .count();
+    assert!(lit > 100, "the cube disappeared after clearing instances ({lit} px)");
+}
+
+#[test]
+fn growing_the_instance_count_reallocates_correctly() {
+    let Ok(gpu) = GpuContext::new_headless() else {
+        eprintln!("SKIP: no GPU adapter available in this environment");
+        return;
+    };
+
+    let scene = load_gltf(cube_path()).expect("cube.gltf must load");
+    let mut renderer = ForwardRenderer::new(&gpu, 96, 96);
+    renderer.upload_scene(&gpu, &scene);
+
+    // Starting buffer holds exactly one instance, so this exercises the grow
+    // path; writing past a too-small buffer is a validation error, and
+    // reusing the old one silently draws the wrong count.
+    for count in [1usize, 4, 2, 16] {
+        let transforms: Vec<glam::Mat4> = (0..count)
+            .map(|i| glam::Mat4::from_translation(glam::Vec3::new(i as f32, 0.0, 0.0)))
+            .collect();
+        renderer.set_instances(&gpu, 0, &transforms);
+        assert_eq!(renderer.instance_count(0), count as u32);
+
+        renderer
+            .render_to_pixels(&gpu, 96, 96, &OrbitCamera::default())
+            .expect("render must succeed at every instance count");
+    }
+}

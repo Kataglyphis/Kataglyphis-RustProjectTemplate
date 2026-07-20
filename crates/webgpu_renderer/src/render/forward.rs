@@ -11,7 +11,7 @@ use crate::render::bloom::BloomPass;
 use crate::render::ssao::SsaoPass;
 use crate::render::tonemap::TonemapPass;
 use crate::scene::camera::OrbitCamera;
-use crate::scene::{
+use crate::scene::{InstanceRaw, 
     AlphaMode, ChannelValues, CpuAnimation, CpuLight, CpuLightKind, CpuNode, CpuSampler, CpuScene,
     CpuSkin, CpuTexture, CpuWrap, Vertex,
 };
@@ -68,6 +68,10 @@ struct GpuPrimitive {
     /// Uniforms-only group for the shadow pass: the full group samples the
     /// shadow map, which the shadow pass writes — an exclusive-usage conflict.
     shadow_bind_group: wgpu::BindGroup,
+    /// Per-instance transforms. Always at least one (identity), so every draw
+    /// binds slot 1 and there is no un-instanced code path to diverge.
+    instance_buffer: wgpu::Buffer,
+    instance_count: u32,
     model: Mat4,
     base_color: [f32; 4],
     material_factors: [f32; 4],
@@ -460,6 +464,54 @@ impl ForwardRenderer {
     }
 
     /// Uploads a CPU scene, replacing any previously uploaded one.
+    /// Replaces the instance transforms of one primitive.
+    ///
+    /// Passing an empty slice restores the single identity instance rather
+    /// than drawing nothing: a primitive with zero instances silently
+    /// disappears, which is indistinguishable from a culling or upload bug
+    /// when you are looking at the frame.
+    ///
+    /// Reallocates when the count grows; a same-size update just writes.
+    pub fn set_instances(&mut self, gpu: &GpuContext, primitive_index: usize, transforms: &[Mat4]) {
+        let Some(primitive) = self.primitives.get_mut(primitive_index) else {
+            return;
+        };
+
+        if transforms.is_empty() {
+            gpu.queue
+                .write_buffer(&primitive.instance_buffer, 0, bytemuck::bytes_of(&InstanceRaw::IDENTITY));
+            primitive.instance_count = 1;
+            return;
+        }
+
+        let raw: Vec<InstanceRaw> = transforms
+            .iter()
+            .map(|m| InstanceRaw {
+                model: m.to_cols_array_2d(),
+            })
+            .collect();
+        let bytes = bytemuck::cast_slice(&raw);
+
+        if (bytes.len() as u64) <= primitive.instance_buffer.size() {
+            gpu.queue.write_buffer(&primitive.instance_buffer, 0, bytes);
+        } else {
+            primitive.instance_buffer = gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("instances"),
+                contents: bytes,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            });
+        }
+        primitive.instance_count = raw.len() as u32;
+    }
+
+    /// Instance count of a primitive, for tests and diagnostics.
+    pub fn instance_count(&self, primitive_index: usize) -> u32 {
+        self.primitives
+            .get(primitive_index)
+            .map(|p| p.instance_count)
+            .unwrap_or(0)
+    }
+
     pub fn upload_scene(&mut self, gpu: &GpuContext, scene: &CpuScene) {
         let device = &gpu.device;
         self.primitives.clear();
@@ -591,6 +643,12 @@ impl ForwardRenderer {
                 ],
             });
 
+            let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(&format!("instances_{i}")),
+                contents: bytemuck::bytes_of(&InstanceRaw::IDENTITY),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            });
+
             self.primitives.push(GpuPrimitive {
                 vertex_buffer,
                 index_buffer,
@@ -598,6 +656,8 @@ impl ForwardRenderer {
                 uniform_buffer,
                 bind_group,
                 shadow_bind_group,
+                instance_buffer,
+                instance_count: 1,
                 model: prim.transform,
                 base_color: material.base_color,
                 material_factors: [
@@ -790,8 +850,9 @@ impl ForwardRenderer {
             for prim in self.primitives.iter().filter(|p| p.casts_shadow) {
                 pass.set_bind_group(0, &prim.shadow_bind_group, &[]);
                 pass.set_vertex_buffer(0, prim.vertex_buffer.slice(..));
+                pass.set_vertex_buffer(1, prim.instance_buffer.slice(..));
                 pass.set_index_buffer(prim.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..prim.index_count, 0, 0..1);
+                pass.draw_indexed(0..prim.index_count, 0, 0..prim.instance_count);
             }
         }
         {
@@ -837,8 +898,9 @@ impl ForwardRenderer {
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(0, &prim.bind_group, &[]);
                 pass.set_vertex_buffer(0, prim.vertex_buffer.slice(..));
+                pass.set_vertex_buffer(1, prim.instance_buffer.slice(..));
                 pass.set_index_buffer(prim.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..prim.index_count, 0, 0..1);
+                pass.draw_indexed(0..prim.index_count, 0, 0..prim.instance_count);
             }
 
             // Sky fills every pixel geometry left untouched.
@@ -866,8 +928,9 @@ impl ForwardRenderer {
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(0, &prim.bind_group, &[]);
                 pass.set_vertex_buffer(0, prim.vertex_buffer.slice(..));
+                pass.set_vertex_buffer(1, prim.instance_buffer.slice(..));
                 pass.set_index_buffer(prim.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..prim.index_count, 0, 0..1);
+                pass.draw_indexed(0..prim.index_count, 0, 0..prim.instance_count);
             }
         }
 
@@ -1243,7 +1306,7 @@ fn create_forward_pipeline_set(
                 vertex: wgpu::VertexState {
                     module: shader,
                     entry_point: Some("vs_main"),
-                    buffers: &[Vertex::LAYOUT],
+                    buffers: &[Vertex::LAYOUT, InstanceRaw::LAYOUT],
                     compilation_options: Default::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
@@ -1295,7 +1358,7 @@ fn create_shadow_pipeline(
             vertex: wgpu::VertexState {
                 module: shader,
                 entry_point: Some("vs_shadow"),
-                buffers: &[Vertex::LAYOUT],
+                buffers: &[Vertex::LAYOUT, InstanceRaw::LAYOUT],
                 compilation_options: Default::default(),
             },
             fragment: None,
