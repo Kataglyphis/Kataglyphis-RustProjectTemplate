@@ -1,6 +1,7 @@
 //! Fullscreen ACES tonemap pass: HDR (Rgba16Float) input -> display target.
 
 use crate::context::GpuContext;
+use crate::render::gpu_timing::PassScope;
 
 pub struct TonemapPass {
     pipeline: wgpu::RenderPipeline,
@@ -213,7 +214,12 @@ impl TonemapPass {
         }));
     }
 
-    pub fn render(&self, encoder: &mut wgpu::CommandEncoder, output_view: &wgpu::TextureView) {
+    pub fn render(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        output_view: &wgpu::TextureView,
+        scope: PassScope<'_>,
+    ) {
         let Some(bind_group) = self.bind_group.as_ref() else {
             log::error!("TonemapPass::render called before set_input");
             return;
@@ -230,7 +236,7 @@ impl TonemapPass {
                 depth_slice: None,
             })],
             depth_stencil_attachment: None,
-            timestamp_writes: None,
+            timestamp_writes: scope.render_writes(0, 1),
             occlusion_query_set: None,
         });
         pass.set_pipeline(&self.pipeline);

@@ -8,6 +8,7 @@ use wgpu::util::DeviceExt as _;
 
 use crate::context::GpuContext;
 use crate::render::bloom::BloomPass;
+use crate::render::gpu_timing::{GpuTiming, TimedPass};
 use crate::render::ssao::SsaoPass;
 use crate::render::tonemap::TonemapPass;
 use crate::scene::camera::OrbitCamera;
@@ -230,6 +231,8 @@ pub struct ForwardRenderer {
     /// test keeps the meaning it was written with. Set it (and
     /// `lod_switch_distances`) BEFORE `upload_scene`.
     pub lod_enabled: bool,
+    /// Per-pass GPU timestamps. Inert until [`Self::enable_gpu_timing`].
+    gpu_timing: GpuTiming,
     /// Camera distances at which successive levels take over, ascending.
     ///
     /// Two levels by default: the geometry roughly halves at each, so the
@@ -490,6 +493,7 @@ impl ForwardRenderer {
             cascade_matrices: [Mat4::IDENTITY; CASCADE_COUNT],
             cascade_splits: [10.0, 30.0, CASCADE_COUNT as f32, 0.0],
             primitives: Vec::new(),
+            gpu_timing: GpuTiming::unavailable(),
             lod_enabled: false,
             lod_switch_distances: vec![8.0, 24.0],
             scene_bounds: None,
@@ -596,6 +600,42 @@ impl ForwardRenderer {
     pub fn selected_index_count(&self, primitive_index: usize, eye: Vec3) -> Option<u32> {
         let prim = self.primitives.get(primitive_index)?;
         Some(prim.geometry_for(eye).2)
+    }
+
+    /// Starts collecting per-pass GPU timings; returns whether it took effect.
+    ///
+    /// Off by default, and a method rather than a `pub` flag because switching
+    /// it on allocates a query set and readback buffers, which needs the
+    /// device. `false` means the adapter has no `TIMESTAMP_QUERY` (every
+    /// browser today, and some native drivers) - the caller gets no timings and
+    /// the frame renders exactly as before.
+    ///
+    /// Off by default for the same reason as `lod_enabled`: it is not free.
+    /// Every timed pass gains two timestamp writes, and the frame gains a query
+    /// resolve plus a buffer copy. Small, but it is a diagnostic, and a golden
+    /// or perf test must measure the shipping path unless it asked not to.
+    pub fn enable_gpu_timing(&mut self, gpu: &GpuContext) -> bool {
+        self.gpu_timing = GpuTiming::new(&gpu.device, &gpu.queue);
+        self.gpu_timing.is_available()
+    }
+
+    /// Stops collecting timings and releases the query resources.
+    pub fn disable_gpu_timing(&mut self) {
+        self.gpu_timing = GpuTiming::unavailable();
+    }
+
+    /// Averaged per-pass GPU durations in milliseconds, in record order.
+    ///
+    /// Empty until timing is enabled AND the first readback has landed (a few
+    /// frames in, by design - see [`crate::render::gpu_timing`]). A pass absent
+    /// from the list has not reported yet; that is not the same as zero.
+    pub fn gpu_timings_ms(&self) -> Vec<(&'static str, f32)> {
+        self.gpu_timing.timings_ms()
+    }
+
+    /// True while per-pass GPU timings are being collected.
+    pub fn gpu_timing_available(&self) -> bool {
+        self.gpu_timing.is_available()
     }
 
     pub fn upload_scene(&mut self, gpu: &GpuContext, scene: &CpuScene) {
@@ -954,11 +994,17 @@ impl ForwardRenderer {
             "forward frame graph is invalid"
         );
 
+        // Claimed before any pass asks for a scope: begin_frame decides which
+        // ring slot this frame writes into, and every scope handed out below
+        // must agree on that answer.
+        self.gpu_timing.begin_frame();
+
         let mut encoder = gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("forward_encoder"),
             });
+        let shadow_scope = self.gpu_timing.scope(TimedPass::ShadowCascades);
         for cascade in 0..CASCADE_COUNT {
             // vs_shadow selects its matrix from cascade_splits.w.
             let mut splits = self.cascade_splits;
@@ -979,7 +1025,7 @@ impl ForwardRenderer {
                     }),
                     stencil_ops: None,
                 }),
-                timestamp_writes: None,
+                timestamp_writes: shadow_scope.render_writes(cascade, CASCADE_COUNT),
                 occlusion_query_set: None,
             });
             pass.set_pipeline(&self.shadow_pipeline);
@@ -1028,7 +1074,10 @@ impl ForwardRenderer {
                     }),
                     stencil_ops: None,
                 }),
-                timestamp_writes: None,
+                timestamp_writes: self
+                    .gpu_timing
+                    .scope(TimedPass::Forward)
+                    .render_writes(0, 1),
                 occlusion_query_set: None,
             });
 
@@ -1087,16 +1136,34 @@ impl ForwardRenderer {
             }
         }
 
-        self.bloom.encode(&mut encoder);
-        self.ssao.encode(&mut encoder);
+        self.bloom
+            .encode(&mut encoder, self.gpu_timing.scope(TimedPass::Bloom));
+        self.ssao
+            .encode(&mut encoder, self.gpu_timing.scope(TimedPass::Ssao));
         // Histogram and reduction run against THIS frame's HDR target, before
         // the tonemap reads the exposure they produce. Measuring the frame it
         // is about to expose costs one extra pass over the HDR image and
         // avoids the frame-of-lag a previous-frame measurement would add.
-        self.histogram.encode(&mut encoder, width, height);
-        self.histogram.encode_reduce(&mut encoder);
-        tonemap.render(&mut encoder, output_view);
+        self.histogram.encode(
+            &mut encoder,
+            width,
+            height,
+            self.gpu_timing.scope(TimedPass::Histogram),
+        );
+        self.histogram.encode_reduce(
+            &mut encoder,
+            self.gpu_timing.scope(TimedPass::ExposureReduce),
+        );
+        tonemap.render(
+            &mut encoder,
+            output_view,
+            self.gpu_timing.scope(TimedPass::Tonemap),
+        );
+        // Resolve rides the frame's own encoder: a second submit purely to
+        // copy 112 bytes would serialise against the frame it is measuring.
+        self.gpu_timing.resolve(&mut encoder);
         gpu.queue.submit(Some(encoder.finish()));
+        self.gpu_timing.end_frame(&gpu.device);
     }
 
     /// Headless helper: renders one tonemapped frame into a fresh RGBA8

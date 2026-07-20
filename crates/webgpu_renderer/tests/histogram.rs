@@ -11,6 +11,7 @@
 
 use kataglyphis_webgpu_renderer::context::GpuContext;
 use kataglyphis_webgpu_renderer::render::auto_exposure::{histogram_bin, HISTOGRAM_BINS};
+use kataglyphis_webgpu_renderer::render::gpu_timing::PassScope;
 use kataglyphis_webgpu_renderer::render::histogram::HistogramPass;
 
 /// Builds an Rgba32Float texture whose pixels have the given luminances.
@@ -70,7 +71,12 @@ fn build_histogram(gpu: &GpuContext, luminances: &[f32], width: u32) -> Vec<u32>
     let mut encoder = gpu
         .device
         .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-    pass.encode(&mut encoder, width, luminances.len() as u32 / width);
+    pass.encode(
+        &mut encoder,
+        width,
+        luminances.len() as u32 / width,
+        PassScope::disabled(),
+    );
     pass.encode_readback(&mut encoder);
     gpu.queue.submit(Some(encoder.finish()));
 
@@ -161,7 +167,7 @@ fn the_histogram_is_cleared_between_builds() {
         let mut encoder = gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-        pass.encode(&mut encoder, width, 256 / width);
+        pass.encode(&mut encoder, width, 256 / width, PassScope::disabled());
         pass.encode_readback(&mut encoder);
         gpu.queue.submit(Some(encoder.finish()));
         totals.push(pass.read_back(&gpu).iter().sum::<u32>());
@@ -188,8 +194,13 @@ fn reduce_exposure(
     let mut encoder = gpu
         .device
         .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-    pass.encode(&mut encoder, width, luminances.len() as u32 / width);
-    pass.encode_reduce(&mut encoder);
+    pass.encode(
+        &mut encoder,
+        width,
+        luminances.len() as u32 / width,
+        PassScope::disabled(),
+    );
+    pass.encode_reduce(&mut encoder, PassScope::disabled());
     pass.encode_exposure_readback(&mut encoder);
     gpu.queue.submit(Some(encoder.finish()));
 

@@ -4,6 +4,7 @@
 
 use crate::context::GpuContext;
 use crate::render::forward::HDR_FORMAT;
+use crate::render::gpu_timing::PassScope;
 
 pub struct BloomPass {
     brightpass: wgpu::RenderPipeline,
@@ -160,7 +161,7 @@ impl BloomPass {
         self.texture_a.as_ref()
     }
 
-    pub fn encode(&self, encoder: &mut wgpu::CommandEncoder) {
+    pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, scope: PassScope<'_>) {
         let (Some(a), Some(b), Some(bg_bright), Some(bg_h), Some(bg_v)) = (
             self.texture_a.as_ref(),
             self.texture_b.as_ref(),
@@ -175,7 +176,8 @@ impl BloomPass {
             (&self.blur_h, bg_h, b),
             (&self.blur_v, bg_v, a),
         ];
-        for (pipeline, bind_group, target) in steps {
+        let step_count = steps.len();
+        for (step, (pipeline, bind_group, target)) in steps.into_iter().enumerate() {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("bloom_pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -188,7 +190,7 @@ impl BloomPass {
                     depth_slice: None,
                 })],
                 depth_stencil_attachment: None,
-                timestamp_writes: None,
+                timestamp_writes: scope.render_writes(step, step_count),
                 occlusion_query_set: None,
             });
             pass.set_pipeline(pipeline);

@@ -7,6 +7,7 @@
 
 use crate::context::GpuContext;
 use crate::render::auto_exposure::HISTOGRAM_BINS;
+use crate::render::gpu_timing::PassScope;
 
 /// Workgroup size of `cs_build_histogram`; must match the shader.
 const BUILD_WORKGROUP: u32 = 16;
@@ -223,7 +224,13 @@ impl HistogramPass {
     ///
     /// Both passes go into one encoder in order; wgpu inserts the barrier
     /// between them, so the build cannot observe a partially cleared buffer.
-    pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, width: u32, height: u32) {
+    pub fn encode(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        width: u32,
+        height: u32,
+        scope: PassScope<'_>,
+    ) {
         let Some(bind_group) = self.bind_group.as_ref() else {
             return;
         };
@@ -231,7 +238,7 @@ impl HistogramPass {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("histogram_clear"),
-                timestamp_writes: None,
+                timestamp_writes: scope.compute_writes(0, 2),
             });
             pass.set_pipeline(&self.clear_pipeline);
             pass.set_bind_group(0, bind_group, &[]);
@@ -241,7 +248,7 @@ impl HistogramPass {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("histogram_build"),
-                timestamp_writes: None,
+                timestamp_writes: scope.compute_writes(1, 2),
             });
             pass.set_pipeline(&self.build_pipeline);
             pass.set_bind_group(0, bind_group, &[]);
@@ -268,13 +275,13 @@ impl HistogramPass {
 
     /// Reduces the histogram to an adapted exposure, in the same encoder and
     /// after [`Self::encode`] so the barrier between them is wgpu's problem.
-    pub fn encode_reduce(&self, encoder: &mut wgpu::CommandEncoder) {
+    pub fn encode_reduce(&self, encoder: &mut wgpu::CommandEncoder, scope: PassScope<'_>) {
         let Some(bind_group) = self.bind_group.as_ref() else {
             return;
         };
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("exposure_reduce"),
-            timestamp_writes: None,
+            timestamp_writes: scope.compute_writes(0, 1),
         });
         pass.set_pipeline(&self.reduce_pipeline);
         pass.set_bind_group(0, bind_group, &[]);

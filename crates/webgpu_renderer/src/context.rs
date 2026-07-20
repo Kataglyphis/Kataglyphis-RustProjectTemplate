@@ -16,6 +16,10 @@ pub struct GpuContext {
     pub queue: wgpu::Queue,
     /// TEXTURE_COMPRESSION_BC was available and enabled on this device.
     pub supports_bc: bool,
+    /// TIMESTAMP_QUERY was available and enabled on this device. Browsers gate
+    /// it behind a flag and most do not expose it, so per-pass GPU timings are
+    /// a desktop-only diagnostic in practice.
+    pub supports_timestamps: bool,
     /// Present target; `None` for headless (render-to-texture) contexts.
     pub surface: Option<wgpu::Surface<'static>>,
     pub surface_config: Option<wgpu::SurfaceConfiguration>,
@@ -44,7 +48,7 @@ impl GpuContext {
             .await
             .context("No suitable GPU adapter found")?;
 
-        let (device, queue, supports_bc) = request_device(&adapter).await?;
+        let (device, queue, supports_bc, supports_timestamps) = request_device(&adapter).await?;
 
         let caps = surface.get_capabilities(&adapter);
         let format = caps
@@ -76,6 +80,7 @@ impl GpuContext {
             device,
             queue,
             supports_bc,
+            supports_timestamps,
             surface: Some(surface),
             surface_config: Some(surface_config),
         })
@@ -96,11 +101,12 @@ impl GpuContext {
             })
             .await
             .context("No GPU adapter found (headless)")?;
-        let (device, queue, supports_bc) = request_device(&adapter).await?;
+        let (device, queue, supports_bc, supports_timestamps) = request_device(&adapter).await?;
         Ok(Self {
             device,
             queue,
             supports_bc,
+            supports_timestamps,
             surface: None,
             surface_config: None,
         })
@@ -135,17 +141,24 @@ impl GpuContext {
 
 async fn request_device(
     adapter: &wgpu::Adapter,
-) -> anyhow::Result<(wgpu::Device, wgpu::Queue, bool)> {
+) -> anyhow::Result<(wgpu::Device, wgpu::Queue, bool, bool)> {
+    // Optional features are requested only where the adapter reports them:
+    // naming one the adapter lacks fails the whole device request, which would
+    // take the renderer down on every browser rather than degrading.
+    //
     // Block-compressed textures where the adapter offers them (desktop);
     // browsers/mobile usually do not, and the loader falls back.
     let supports_bc = adapter
         .features()
         .contains(wgpu::Features::TEXTURE_COMPRESSION_BC);
-    let required_features = if supports_bc {
-        wgpu::Features::TEXTURE_COMPRESSION_BC
-    } else {
-        wgpu::Features::empty()
-    };
+    let supports_timestamps = adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY);
+    let mut required_features = wgpu::Features::empty();
+    if supports_bc {
+        required_features |= wgpu::Features::TEXTURE_COMPRESSION_BC;
+    }
+    if supports_timestamps {
+        required_features |= wgpu::Features::TIMESTAMP_QUERY;
+    }
     adapter
         .request_device(&wgpu::DeviceDescriptor {
             label: Some("webgpu_renderer_device"),
@@ -156,6 +169,6 @@ async fn request_device(
             experimental_features: wgpu::ExperimentalFeatures::default(),
         })
         .await
-        .map(|(device, queue)| (device, queue, supports_bc))
+        .map(|(device, queue)| (device, queue, supports_bc, supports_timestamps))
         .context("Failed to create device")
 }

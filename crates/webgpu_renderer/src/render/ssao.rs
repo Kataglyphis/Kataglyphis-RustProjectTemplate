@@ -2,6 +2,7 @@
 //! is multiplied into the HDR image by the tonemap pass.
 
 use crate::context::GpuContext;
+use crate::render::gpu_timing::PassScope;
 
 const AO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 
@@ -201,7 +202,7 @@ impl SsaoPass {
         self.blurred.as_ref()
     }
 
-    pub fn encode(&self, encoder: &mut wgpu::CommandEncoder) {
+    pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, scope: PassScope<'_>) {
         let (Some(raw), Some(blurred), Some(bg_ssao), Some(bg_blur)) = (
             self.raw.as_ref(),
             self.blurred.as_ref(),
@@ -214,7 +215,8 @@ impl SsaoPass {
             (&self.ssao_pipeline, bg_ssao, raw),
             (&self.blur_pipeline, bg_blur, blurred),
         ];
-        for (pipeline, bind_group, target) in steps {
+        let step_count = steps.len();
+        for (step, (pipeline, bind_group, target)) in steps.into_iter().enumerate() {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("ssao_pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -227,7 +229,7 @@ impl SsaoPass {
                     depth_slice: None,
                 })],
                 depth_stencil_attachment: None,
-                timestamp_writes: None,
+                timestamp_writes: scope.render_writes(step, step_count),
                 occlusion_query_set: None,
             });
             pass.set_pipeline(pipeline);
