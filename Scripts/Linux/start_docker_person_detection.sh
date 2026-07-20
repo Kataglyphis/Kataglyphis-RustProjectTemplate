@@ -19,7 +19,7 @@ docker run --rm -it \
     -v /tmp/.X11-unix:/tmp/.X11-unix \
     -v $(pwd):/workspace \
     -w /workspace \
-    ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest \
+    ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross \
     bash -lc '
     set -e
     git config --global --add safe.directory /workspace || true
