@@ -23,5 +23,8 @@ pub use render::overlay::{Overlay, OverlayControls};
 pub use render::tonemap::TonemapPass;
 pub use scene::camera::OrbitCamera;
 pub use scene::controller::OrbitController;
-pub use scene::lod::{build_lod_chain, select_lod, simplify_primitive, Lod};
+pub use scene::lod::{
+    build_lod_chain, build_lod_chain_with, select_lod, simplify_primitive, Lod, Simplifier,
+};
+pub use scene::qem::simplify_primitive_qem;
 pub use scene::{CpuMaterial, CpuPrimitive, CpuScene, CpuTexture};

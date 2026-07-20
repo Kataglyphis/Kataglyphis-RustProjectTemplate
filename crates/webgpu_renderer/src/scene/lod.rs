@@ -122,14 +122,51 @@ pub fn simplify_primitive(prim: &CpuPrimitive, cell_ratio: f32) -> CpuPrimitive 
 /// camera distance at which each successive level takes over; each level
 /// simplifies twice as aggressively as the previous one.
 pub fn build_lod_chain(prim: &CpuPrimitive, switch_distances: &[f32]) -> Vec<Lod> {
+    build_lod_chain_with(prim, switch_distances, Simplifier::VertexClustering)
+}
+
+/// Which simplifier a chain is built with.
+///
+/// The two take different ratio meanings, which is why this is an enum rather
+/// than a function pointer: clustering's ratio is a GRID CELL SIZE (bigger
+/// cell, fewer vertices) while QEM's is a TRIANGLE BUDGET (smaller fraction,
+/// fewer triangles). They move in opposite directions and are not
+/// interchangeable numbers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Simplifier {
+    /// Grid quantization. O(n), and cannot represent a feature smaller than
+    /// its cell - see the spike measurement in `qem.rs`.
+    VertexClustering,
+    /// Quadric error metrics. Keeps silhouettes and creases at the same
+    /// triangle budget; costs a heap and a pass over the one-ring per collapse.
+    Quadric,
+}
+
+/// Builds an LOD chain with an explicit simplifier.
+///
+/// Each level is twice as aggressive as the one before it, under whichever
+/// ratio convention the simplifier uses.
+pub fn build_lod_chain_with(
+    prim: &CpuPrimitive,
+    switch_distances: &[f32],
+    simplifier: Simplifier,
+) -> Vec<Lod> {
     let mut chain = Vec::with_capacity(switch_distances.len());
-    let mut ratio = 0.02;
+    // Clustering grows its cell; QEM shrinks its budget. Same "twice as
+    // aggressive per level", opposite directions.
+    let mut cluster_ratio = 0.02;
+    let mut keep_fraction = 0.5;
     for &distance in switch_distances {
+        let primitive = match simplifier {
+            Simplifier::VertexClustering => simplify_primitive(prim, cluster_ratio),
+            Simplifier::Quadric => crate::scene::qem::simplify_primitive_qem(prim, keep_fraction),
+        };
         chain.push(Lod {
-            primitive: simplify_primitive(prim, ratio),
+            primitive,
             min_distance: distance,
         });
-        ratio *= 2.0;
+        cluster_ratio *= 2.0;
+        keep_fraction *= 0.5;
     }
     chain
 }

@@ -389,3 +389,54 @@ fn degenerate_inputs_do_not_panic() {
     with_slivers.indices.extend_from_slice(&[0, 0, 1, 2, 2, 2]);
     assert_well_formed(&simplify_primitive_qem(&with_slivers, 0.5));
 }
+
+/// The chain builder must actually route to the chosen simplifier.
+///
+/// Worth its own test because the wiring is inert-failure-prone: if
+/// `build_lod_chain_with` ignored its `Simplifier` argument, every existing
+/// test would still pass and QEM would silently never run in production.
+#[test]
+fn the_chain_builder_routes_to_the_requested_simplifier() {
+    use kataglyphis_webgpu_renderer::{build_lod_chain_with, Simplifier};
+
+    let prim = spiked_grid(17, 2.0);
+    let distances = [10.0, 20.0];
+
+    let clustered = build_lod_chain_with(&prim, &distances, Simplifier::VertexClustering);
+    let quadric = build_lod_chain_with(&prim, &distances, Simplifier::Quadric);
+
+    assert_eq!(clustered.len(), 2);
+    assert_eq!(quadric.len(), 2);
+
+    // Same switch distances either way - only the geometry should differ.
+    for (c, q) in clustered.iter().zip(quadric.iter()) {
+        assert_eq!(c.min_distance, q.min_distance);
+    }
+
+    // Every QEM level keeps the spike; clustering loses it at these ratios.
+    // This is the same measurement as the headline test, applied through the
+    // public chain API rather than to the simplifier directly.
+    for lod in &quadric {
+        assert!(
+            peak_height(&lod.primitive) > 1.9,
+            "QEM chain level lost the spike: peak {}",
+            peak_height(&lod.primitive)
+        );
+        assert_well_formed(&lod.primitive);
+    }
+
+    // Routing is proven by the geometry differing, NOT by QEM winning here:
+    // the chain's first level uses a 0.02 cell, which barely simplifies at
+    // all, so clustering still holds the spike at that level. Triangle count
+    // is the signal that separates them.
+    eprintln!(
+        "level0 tris: clustering {} qem {}",
+        triangle_count(&clustered[0].primitive),
+        triangle_count(&quadric[0].primitive)
+    );
+    assert_ne!(
+        triangle_count(&clustered[0].primitive),
+        triangle_count(&quadric[0].primitive),
+        "the two simplifiers produced the same triangle count - is the argument wired up?"
+    );
+}
