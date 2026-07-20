@@ -203,6 +203,11 @@ pub struct ForwardRenderer {
     shadow_layer_views: Vec<wgpu::TextureView>,
     cascade_matrices: [Mat4; CASCADE_COUNT],
     cascade_splits: [f32; 4],
+    /// Caster draws submitted / considered across all cascades in the last
+    /// frame. Summed over cascades, so one mesh under three cascades
+    /// considers 3 - same convention as the C++ engine's counters.
+    shadow_casters_drawn: u32,
+    shadow_casters_considered: u32,
     primitives: Vec<GpuPrimitive>,
     scene_bounds: Option<(Vec3, Vec3)>,
     depth: wgpu::TextureView,
@@ -538,6 +543,8 @@ impl ForwardRenderer {
             shadow_view,
             shadow_layer_views,
             cascade_matrices: [Mat4::IDENTITY; CASCADE_COUNT],
+            shadow_casters_drawn: 0,
+            shadow_casters_considered: 0,
             cascade_splits: [10.0, 30.0, CASCADE_COUNT as f32, 0.0],
             primitives: Vec::new(),
             gpu_timing: GpuTiming::unavailable(),
@@ -676,6 +683,13 @@ impl ForwardRenderer {
     /// Empty until timing is enabled AND the first readback has landed (a few
     /// frames in, by design - see [`crate::render::gpu_timing`]). A pass absent
     /// from the list has not reported yet; that is not the same as zero.
+    /// Shadow caster draws submitted / considered in the last frame, summed
+    /// over cascades. `drawn < considered` is the observable proof that
+    /// per-cascade culling actually engaged.
+    pub fn shadow_caster_stats(&self) -> (u32, u32) {
+        (self.shadow_casters_drawn, self.shadow_casters_considered)
+    }
+
     pub fn gpu_timings_ms(&self) -> Vec<(&'static str, f32)> {
         self.gpu_timing.timings_ms()
     }
@@ -1125,7 +1139,18 @@ impl ForwardRenderer {
                 label: Some("forward_encoder"),
             });
         let shadow_scope = self.gpu_timing.scope(TimedPass::ShadowCascades);
+        // Locals rather than the fields: the draw loop immutably borrows
+        // self.primitives, so the fields are written once, after the loop.
+        let mut casters_drawn = 0u32;
+        let mut casters_considered = 0u32;
         for cascade in 0..CASCADE_COUNT {
+            // Cull casters against THIS cascade's light frustum - never the
+            // camera's, which would delete shadows cast by geometry beside or
+            // behind the viewer. Measured motivation: the comparison harness
+            // put this pass at 0.119 ms against the C++ engine's 0.067 ms on
+            // identical geometry, and per-cascade culling is the difference
+            // between the two shadow paths.
+            let light_frustum = Frustum::from_view_proj(&self.cascade_matrices[cascade]);
             // vs_shadow selects its matrix from cascade_splits.w.
             let mut splits = self.cascade_splits;
             splits[3] = cascade as f32;
@@ -1161,6 +1186,11 @@ impl ForwardRenderer {
             // it needs its own distance metric (per cascade, from the light),
             // not a share of this one.
             for prim in self.primitives.iter().filter(|p| p.casts_shadow) {
+                casters_considered += 1;
+                if !light_frustum.intersects_aabb_as_caster(prim.aabb_min, prim.aabb_max) {
+                    continue;
+                }
+                casters_drawn += 1;
                 pass.set_bind_group(0, &prim.shadow_bind_group, &[]);
                 pass.set_vertex_buffer(0, prim.vertex_buffer.slice(..));
                 pass.set_vertex_buffer(1, prim.instance_buffer.slice(..));
@@ -1168,6 +1198,8 @@ impl ForwardRenderer {
                 pass.draw_indexed(0..prim.index_count, 0, 0..prim.instance_count);
             }
         }
+        self.shadow_casters_drawn = casters_drawn;
+        self.shadow_casters_considered = casters_considered;
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("forward_pass"),
@@ -1892,7 +1924,24 @@ impl Frustum {
     /// Positive-vertex test: the AABB is outside when its most favorable
     /// corner is behind any plane.
     pub(crate) fn intersects_aabb(&self, min: Vec3, max: Vec3) -> bool {
-        for plane in &self.planes {
+        self.test_planes(min, max, &self.planes)
+    }
+
+    /// Visibility test for SHADOW CASTERS: identical, except the near plane
+    /// is ignored - a correctness requirement, not an optimisation. A
+    /// cascade's ortho box is fitted to the camera slice it covers; geometry
+    /// between the light and that box lies outside the near plane but still
+    /// casts into it along the box's own depth axis. Culling it produces the
+    /// missing-shadow-from-tall-geometry bug the C++ engine documents in
+    /// scene/Frustum.ixx. Side and far planes are safe: a caster outside them
+    /// in the light's XY casts its shadow outside the map too.
+    pub(crate) fn intersects_aabb_as_caster(&self, min: Vec3, max: Vec3) -> bool {
+        let [left, right, bottom, top, _near, far] = &self.planes;
+        self.test_planes(min, max, &[*left, *right, *bottom, *top, *far])
+    }
+
+    fn test_planes(&self, min: Vec3, max: Vec3, planes: &[glam::Vec4]) -> bool {
+        for plane in planes {
             let p = Vec3::new(
                 if plane.x >= 0.0 { max.x } else { min.x },
                 if plane.y >= 0.0 { max.y } else { min.y },
@@ -2265,6 +2314,36 @@ fn create_hdr_texture(device: &wgpu::Device, width: u32, height: u32) -> wgpu::T
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn caster_test_ignores_the_near_plane_and_nothing_else() {
+        // Ortho box [-1,1]^3: something BEHIND the near plane (z just above
+        // 1 in view space, i.e. between the light and the box) must survive
+        // the caster test - its shadow still falls into the box - while the
+        // full test rejects it. Anything outside a SIDE plane must fail both.
+        let light = Mat4::orthographic_rh(-1.0, 1.0, -1.0, 1.0, 0.0, 2.0)
+            * Mat4::look_at_rh(Vec3::new(0.0, 0.0, 1.0), Vec3::ZERO, Vec3::Y);
+
+        let behind_near = (Vec3::new(-0.1, -0.1, 1.4), Vec3::new(0.1, 0.1, 1.6));
+        let frustum = Frustum::from_view_proj(&light);
+        assert!(
+            !frustum.intersects_aabb(behind_near.0, behind_near.1),
+            "the full test must reject a box behind the near plane"
+        );
+        assert!(
+            frustum.intersects_aabb_as_caster(behind_near.0, behind_near.1),
+            "a caster between the light and the box still shadows into it"
+        );
+
+        let beside = (Vec3::new(5.0, -0.1, 0.0), Vec3::new(5.2, 0.1, 0.2));
+        assert!(
+            !frustum.intersects_aabb_as_caster(beside.0, beside.1),
+            "outside a side plane, the shadow lands outside the map too"
+        );
+
+        let inside = (Vec3::splat(-0.2), Vec3::splat(0.2));
+        assert!(frustum.intersects_aabb_as_caster(inside.0, inside.1));
+    }
     use super::*;
     use crate::scene::camera::OrbitCamera;
 

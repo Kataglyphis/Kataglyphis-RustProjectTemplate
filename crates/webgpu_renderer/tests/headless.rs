@@ -826,3 +826,75 @@ fn growing_the_instance_count_reallocates_correctly() {
             .expect("render must succeed at every instance count");
     }
 }
+
+/// Per-cascade shadow-caster culling engages without eating any shadow.
+///
+/// Two assertions that only mean something together: the shadow image test
+/// above must still pass (culling deleted nothing the camera can see), and
+/// the caster counters must show drawn < considered once a caster sits far
+/// outside every cascade (culling actually engaged - without this, an inert
+/// cull test would pass forever).
+#[test]
+fn caster_culling_engages_and_shadows_survive() {
+    let Ok(gpu) = GpuContext::new_headless() else {
+        eprintln!("SKIP: no GPU adapter available in this environment");
+        return;
+    };
+
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf");
+    let mut scene = load_gltf(path).expect("cube_on_plane.gltf must load");
+
+    // A third primitive far outside every cascade's fitted box: clone the
+    // cube and push it 500 units away. Cascades fit the camera slice, which
+    // ends well before that.
+    let mut far_cube = scene.primitives[0].clone();
+    far_cube.transform = glam::Mat4::from_translation(glam::Vec3::new(500.0, 0.0, 500.0));
+    scene.primitives.push(far_cube);
+
+    let (width, height) = (256, 256);
+    let mut renderer = ForwardRenderer::new(&gpu, width, height);
+    renderer.upload_scene(&gpu, &scene);
+    renderer.light_dir_ambient = glam::Vec4::new(-1.0, 0.7, -0.3, 0.15);
+
+    let camera = OrbitCamera {
+        radius: 6.0,
+        pitch_deg: 55.0,
+        ..OrbitCamera::default()
+    };
+    let pixels = renderer
+        .render_to_pixels(&gpu, width, height, &camera)
+        .expect("headless render must succeed");
+
+    let (drawn, considered) = renderer.shadow_caster_stats();
+    assert!(considered > 0, "no casters considered - did the pass run?");
+    assert!(
+        drawn < considered,
+        "culling never engaged: drawn {drawn} == considered {considered} \
+         with a caster 500 units outside every cascade"
+    );
+
+    // Same structural check as shadow_darkens_plane_under_cube: both lit and
+    // shadowed plane populations still exist, so culling did not delete the
+    // visible shadow.
+    let mut lit_plane = 0usize;
+    let mut shadowed_plane = 0usize;
+    for p in pixels.chunks_exact(4) {
+        let (r, g, b) = (p[0] as i32, p[1] as i32, p[2] as i32);
+        let neutral = (r - g).abs() < 24 && (g - b).abs() < 24 && (r - b).abs() < 24;
+        if !neutral {
+            continue;
+        }
+        let luma = (r + g + b) / 3;
+        if luma > 110 {
+            lit_plane += 1;
+        } else if luma > 8 {
+            shadowed_plane += 1;
+        }
+    }
+    assert!(lit_plane > 500, "lit plane vanished: {lit_plane}");
+    assert!(
+        shadowed_plane > 50,
+        "the cube's shadow vanished - culling ate a visible caster ({shadowed_plane} shadowed px)"
+    );
+}
