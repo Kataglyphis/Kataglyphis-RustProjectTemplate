@@ -308,3 +308,145 @@ fn a_usemtl_naming_an_undeclared_material_is_visible_not_silent() {
         mesh.materials.iter().map(|m| &m.name).collect::<Vec<_>>()
     );
 }
+
+const TEXTURED_OBJ: &str = "\
+mtllib textured.mtl
+v 0.0 0.0 0.0
+v 1.0 0.0 0.0
+v 1.0 1.0 0.0
+vt 0.0 0.0
+vt 1.0 0.0
+vt 1.0 1.0
+vn 0.0 0.0 1.0
+usemtl painted
+f 1/1/1 2/2/1 3/3/1
+";
+
+/// Writes a 2x2 PNG with a distinctive corner so the round trip can prove the
+/// image data survived, not merely that a file was referenced.
+fn write_test_png(path: &std::path::Path) {
+    use image::{ImageBuffer, Rgba};
+    let mut buffer: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::new(2, 2);
+    buffer.put_pixel(0, 0, Rgba([255, 0, 0, 255]));
+    buffer.put_pixel(1, 0, Rgba([0, 255, 0, 255]));
+    buffer.put_pixel(0, 1, Rgba([0, 0, 255, 255]));
+    buffer.put_pixel(1, 1, Rgba([255, 255, 0, 255]));
+    buffer.save(path).expect("write png");
+}
+
+#[test]
+fn map_kd_takes_the_filename_not_the_first_option() {
+    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::parse_mtl;
+
+    // MTL allows options before the path. Taking the first token turns any
+    // option-carrying map into a texture named "-s", which fails to load with
+    // a message about a file nobody wrote.
+    let plain = parse_mtl("newmtl a\nmap_Kd wood.png\n");
+    assert_eq!(plain[0].base_color_texture.as_deref(), Some("wood.png"));
+
+    let with_options = parse_mtl("newmtl a\nmap_Kd -s 1 1 1 -o 0 0 0 wood.png\n");
+    assert_eq!(
+        with_options[0].base_color_texture.as_deref(),
+        Some("wood.png"),
+        "the filename must be taken from the end, past the options"
+    );
+}
+
+#[test]
+fn a_textured_obj_converts_to_a_gltf_with_a_loadable_texture() {
+    let dir = temp_dir("textured");
+    write_test_png(&dir.join("paint.png"));
+    std::fs::write(dir.join("textured.mtl"), "newmtl painted\nKd 1 1 1\nmap_Kd paint.png\n").expect("mtl");
+    let obj_path = dir.join("textured.obj");
+    std::fs::write(&obj_path, TEXTURED_OBJ).expect("obj");
+
+    let out = temp_dir("textured_out");
+    let gltf_path = out.join("textured.gltf");
+    convert_file(&obj_path, &gltf_path).expect("conversion must succeed");
+
+    // The texture must have been copied next to the output, or the document
+    // only loads on the machine that produced it.
+    assert!(
+        out.join("paint.png").exists(),
+        "the referenced texture was not copied next to the glTF"
+    );
+
+    let scene = load_gltf(&gltf_path).expect("the converted glTF must load");
+    let material = &scene.primitives[0].material;
+    let texture = material
+        .base_color_texture
+        .as_ref()
+        .expect("the material must carry a base colour texture");
+
+    assert_eq!((texture.texture.width, texture.texture.height), (2, 2));
+    assert!(texture.srgb, "base colour is authored in sRGB");
+    // Top-left red, proving pixel data survived rather than just a reference.
+    assert_eq!(&texture.texture.rgba8[0..4], &[255, 0, 0, 255]);
+}
+
+#[test]
+fn materials_sharing_a_map_emit_one_image() {
+    let dir = temp_dir("shared_texture");
+    write_test_png(&dir.join("shared.png"));
+    std::fs::write(
+        dir.join("shared.mtl"),
+        "newmtl a\nKd 1 0 0\nmap_Kd shared.png\n\nnewmtl b\nKd 0 0 1\nmap_Kd shared.png\n",
+    )
+    .expect("mtl");
+    let obj_path = dir.join("shared.obj");
+    std::fs::write(
+        &obj_path,
+        "mtllib shared.mtl\nv 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nvt 0 0\nvt 1 0\nvt 1 1\nvt 0 1\nvn 0 0 1\n\
+usemtl a\nf 1/1/1 2/2/1 3/3/1\nusemtl b\nf 1/1/1 3/3/1 4/4/1\n",
+    )
+    .expect("obj");
+
+    let gltf_path = dir.join("shared.gltf");
+    convert_file(&obj_path, &gltf_path).expect("convert");
+
+    // Emitting one image per material makes the loader decode the same file
+    // repeatedly and upload duplicate GPU textures.
+    let json = std::fs::read_to_string(&gltf_path).expect("read gltf");
+    let image_count = json.matches(r#""uri": "shared.png""#).count();
+    assert_eq!(image_count, 1, "the shared texture should appear once, got {image_count}");
+
+    let scene = load_gltf(&gltf_path).expect("load");
+    assert_eq!(scene.primitives.len(), 2);
+    for primitive in &scene.primitives {
+        assert!(
+            primitive.material.base_color_texture.is_some(),
+            "both materials should reference the shared texture"
+        );
+    }
+}
+
+#[test]
+fn a_missing_texture_does_not_abort_the_conversion() {
+    // OBJ files routinely reference maps that were never shipped with them.
+    // Geometry and base colours are still worth converting.
+    let dir = temp_dir("missing_texture");
+    std::fs::write(dir.join("textured.mtl"), "newmtl painted\nKd 0.2 0.4 0.6\nmap_Kd absent.png\n").expect("mtl");
+    let obj_path = dir.join("textured.obj");
+    std::fs::write(&obj_path, TEXTURED_OBJ).expect("obj");
+    let gltf_path = dir.join("textured.gltf");
+
+    let mesh = convert_file(&obj_path, &gltf_path).expect("conversion must still succeed");
+    assert_eq!(mesh.triangle_count(), 1);
+    assert!((mesh.materials[0].base_color[2] - 0.6).abs() < 1e-6, "base colour must survive");
+}
+
+#[test]
+fn an_untextured_obj_emits_no_texture_arrays() {
+    // Empty images/samplers/textures arrays are legal but noisy, and an empty
+    // samplers array with a texture referencing sampler 0 would be invalid.
+    let dir = temp_dir("untextured");
+    let obj_path = dir.join("cube.obj");
+    std::fs::write(&obj_path, CUBE_OBJ).expect("obj");
+    let gltf_path = dir.join("cube.gltf");
+    convert_file(&obj_path, &gltf_path).expect("convert");
+
+    let json = std::fs::read_to_string(&gltf_path).expect("read");
+    assert!(!json.contains("\"images\""), "no images array should be emitted");
+    assert!(!json.contains("\"textures\""), "no textures array should be emitted");
+    load_gltf(&gltf_path).expect("an untextured conversion must still load");
+}

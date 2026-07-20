@@ -28,6 +28,8 @@ pub struct ObjMaterial {
     pub name: String,
     /// `Kd` plus `d`/`Tr` as alpha.
     pub base_color: [f32; 4],
+    /// `map_Kd`, as written in the .mtl (relative to it).
+    pub base_color_texture: Option<String>,
 }
 
 impl Default for ObjMaterial {
@@ -38,6 +40,7 @@ impl Default for ObjMaterial {
             // converts to something a loader treats as untinted rather than
             // black.
             base_color: [1.0, 1.0, 1.0, 1.0],
+            base_color_texture: None,
         }
     }
 }
@@ -120,6 +123,15 @@ pub fn parse_mtl(source: &str) -> Vec<ObjMaterial> {
             "d" if !values.is_empty() => {
                 if let (Some(material), Ok(opacity)) = (materials.last_mut(), values[0].parse::<f32>()) {
                     material.base_color[3] = opacity.clamp(0.0, 1.0);
+                }
+            }
+            "map_Kd" if !values.is_empty() => {
+                if let Some(material) = materials.last_mut() {
+                    // MTL allows options before the filename
+                    // (`map_Kd -s 1 1 1 wood.png`), so the path is the LAST
+                    // token, not the first. Taking values[0] silently turns
+                    // any option-carrying map into a texture named "-s".
+                    material.base_color_texture = values.last().map(|name| name.to_string());
                 }
             }
             "Tr" if !values.is_empty() => {
@@ -386,6 +398,36 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
         ));
     }
 
+    // Deduplicate textures: several materials commonly share one map, and
+    // emitting an image per material makes the loader decode the same file
+    // repeatedly and upload duplicate GPU textures.
+    let mut image_uris: Vec<String> = Vec::new();
+    for material in &mesh.materials {
+        if let Some(uri) = &material.base_color_texture {
+            if !image_uris.iter().any(|existing| existing == uri) {
+                image_uris.push(uri.clone());
+            }
+        }
+    }
+
+    let images_json = image_uris
+        .iter()
+        .map(|uri| format!(r#"{{ "uri": "{uri}" }}"#))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let textures_json = (0..image_uris.len())
+        .map(|index| format!(r#"{{ "source": {index}, "sampler": 0 }}"#))
+        .collect::<Vec<_>>()
+        .join(", ");
+    // REPEAT wrap (10497) matches OBJ's convention of UVs running outside
+    // 0..1 for tiling; glTF's default is also repeat, but stating it keeps
+    // the asset explicit rather than dependent on loader defaults.
+    let samplers_json = if image_uris.is_empty() {
+        String::new()
+    } else {
+        r#"{ "wrapS": 10497, "wrapT": 10497 }"#.to_string()
+    };
+
     let materials_json = mesh
         .materials
         .iter()
@@ -395,10 +437,18 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
             // closest thing to "plain diffuse", which is what Kd describes;
             // inheriting glTF's default (metallic 1) would render every
             // converted asset as a dark mirror.
+            let texture_json = match &material.base_color_texture {
+                Some(uri) => {
+                    let index = image_uris.iter().position(|existing| existing == uri).unwrap_or(0);
+                    format!(r#", "baseColorTexture": {{ "index": {index} }}"#)
+                }
+                None => String::new(),
+            };
             format!(
-                r#"{{ "name": "{}", "pbrMetallicRoughness": {{ "baseColorFactor": [{}, {}, {}, {}], "metallicFactor": 0.0, "roughnessFactor": 1.0 }}{} }}"#,
+                r#"{{ "name": "{}", "pbrMetallicRoughness": {{ "baseColorFactor": [{}, {}, {}, {}]{}, "metallicFactor": 0.0, "roughnessFactor": 1.0 }}{} }}"#,
                 material.name,
                 r, g, b, a,
+                texture_json,
                 if a < 1.0 { r#", "alphaMode": "BLEND""# } else { "" }
             )
         })
@@ -412,7 +462,7 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
   "scenes": [{{ "nodes": [0] }}],
   "nodes": [{{ "mesh": 0 }}],
   "meshes": [{{ "primitives": [{primitives}] }}],
-  "materials": [{materials_json}],
+  "materials": [{materials_json}],{texture_arrays}
   "buffers": [{{ "uri": "{bin_uri}", "byteLength": {buffer_length} }}],
   "bufferViews": [
     {{ "buffer": 0, "byteOffset": {positions_offset}, "byteLength": {positions_length}, "target": 34962 }},
@@ -441,6 +491,16 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
         index_accessors = index_accessors,
         primitives = primitives,
         materials_json = materials_json,
+        texture_arrays = if image_uris.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "
+  \"images\": [{images_json}],
+  \"samplers\": [{samplers_json}],
+  \"textures\": [{textures_json}],"
+            )
+        },
         min0 = min[0], min1 = min[1], min2 = min[2],
         max0 = max[0], max1 = max[1], max2 = max[2],
     );
@@ -488,6 +548,31 @@ pub fn convert_file(obj_path: &Path, gltf_path: &Path) -> Result<ObjMesh> {
     std::fs::write(gltf_path, json).with_context(|| format!("writing {}", gltf_path.display()))?;
     let bin_path = gltf_path.with_file_name(bin_name);
     std::fs::write(&bin_path, bin).with_context(|| format!("writing {}", bin_path.display()))?;
+
+    // Copy referenced textures next to the glTF so the output is
+    // self-contained. Emitting a URI that points back into the source tree
+    // would produce a document that loads on this machine and nowhere else -
+    // and the failure would be a missing texture, not a missing file.
+    for material in &mesh.materials {
+        let Some(uri) = &material.base_color_texture else { continue };
+        let source_path = obj_path.with_file_name(uri);
+        let destination = gltf_path.with_file_name(uri);
+        if source_path == destination {
+            continue;
+        }
+        match std::fs::copy(&source_path, &destination) {
+            Ok(_) => {}
+            Err(error) => {
+                // Warn rather than fail: the geometry and materials are still
+                // worth having, and OBJ files routinely reference textures
+                // that were never shipped alongside them.
+                log::warn!(
+                    "{}: {error}; the converted glTF references a texture that is not there",
+                    source_path.display()
+                );
+            }
+        }
+    }
 
     Ok(mesh)
 }
