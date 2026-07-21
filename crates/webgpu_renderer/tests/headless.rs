@@ -137,6 +137,107 @@ fn renders_textured_cube_headless() {
     );
 }
 
+/// Golden coverage for the morph-target GPU apply path: a weight channel that
+/// ramps 0 -> 1 must visibly lift the cube on screen. This is the render-path
+/// counterpart to the CPU `blend_morph_targets`/`sample_morph_weights` unit
+/// tests — it proves `set_animation_time` -> `apply_morph_targets` re-blends
+/// and re-uploads the vertex buffer so the rendered silhouette actually moves.
+#[test]
+fn morph_weight_lifts_the_silhouette() {
+    use glam::{Quat, Vec3};
+    use kataglyphis_webgpu_renderer::scene::{
+        ChannelValues, CpuAnimation, CpuAnimationChannel, CpuNode, Interpolation, MorphTarget,
+    };
+
+    let Ok(gpu) = GpuContext::new_headless() else {
+        eprintln!("SKIP: no GPU adapter available in this environment");
+        return;
+    };
+
+    // Bundled cube + one morph target that lifts every vertex +Y, driven by a
+    // linear weight channel on the cube's node (0 at t=0, 1 at t=1).
+    let mut scene = load_gltf(cube_path()).expect("cube.gltf must load");
+    let mut prim = scene.primitives[0].clone();
+    let vcount = prim.vertices.len();
+    prim.node_index = Some(0);
+    prim.morph_targets = vec![MorphTarget {
+        position_deltas: vec![Vec3::new(0.0, 0.6, 0.0); vcount],
+        normal_deltas: vec![Vec3::ZERO; vcount],
+    }];
+    prim.morph_weights = vec![0.0];
+    scene.primitives = vec![prim];
+    scene.nodes = vec![CpuNode {
+        parent: None,
+        translation: Vec3::ZERO,
+        rotation: Quat::IDENTITY,
+        scale: Vec3::ONE,
+    }];
+    scene.animations = vec![CpuAnimation {
+        // Duration deliberately longer than the last keyframe: sampling at
+        // t=1.0 must land at full weight, not wrap (t % duration) back to 0.
+        name: "morph".into(),
+        duration: 2.0,
+        channels: vec![CpuAnimationChannel {
+            node: 0,
+            times: vec![0.0, 1.0],
+            values: ChannelValues::MorphWeights(vec![0.0, 1.0]),
+            interpolation: Interpolation::Linear,
+        }],
+    }];
+
+    let (width, height) = (256, 256);
+    let mut renderer = ForwardRenderer::new(&gpu, width, height);
+    renderer.upload_scene(&gpu, &scene);
+    let camera = OrbitCamera::default();
+
+    // Red-dominant pixels are the (red-ish) cube; measure how many there are
+    // and their vertical centroid. Row index grows downward in the readback,
+    // so lifting the cube in world space lowers the mean row.
+    let cube_stats = |pixels: &[u8]| -> (usize, f64) {
+        let mut count = 0usize;
+        let mut sum_y = 0f64;
+        for (i, p) in pixels.chunks_exact(4).enumerate() {
+            let (r, g, b) = (p[0] as i32, p[1] as i32, p[2] as i32);
+            if r > 110 && r > g + 40 && r > b + 40 {
+                count += 1;
+                sum_y += (i as u32 / width) as f64;
+            }
+        }
+        (count, if count > 0 { sum_y / count as f64 } else { 0.0 })
+    };
+
+    renderer.set_animation_time(0.0);
+    let base = renderer
+        .render_to_pixels(&gpu, width, height, &camera)
+        .expect("render at weight 0");
+    let (lit0, cy0) = cube_stats(&base);
+
+    renderer.set_animation_time(1.0);
+    let morphed = renderer
+        .render_to_pixels(&gpu, width, height, &camera)
+        .expect("render at weight 1");
+    let (lit1, cy1) = cube_stats(&morphed);
+
+    eprintln!("morph golden: lit {lit0}->{lit1}, centroid_y {cy0:.1}->{cy1:.1}");
+
+    // The cube stays clearly visible in both poses...
+    let total = (width * height) as usize;
+    assert!(
+        lit0 > total / 40 && lit1 > total / 40,
+        "cube must be visible at both weights, got {lit0}/{lit1} lit"
+    );
+    // ...the frame actually changes (the re-blend + re-upload happened)...
+    assert!(
+        base != morphed,
+        "weight 1 must produce a different frame than weight 0"
+    );
+    // ...and the +Y morph lifts the silhouette (centroid rises, i.e. smaller row).
+    assert!(
+        cy1 + 6.0 < cy0,
+        "the +Y morph should raise the cube: centroid_y {cy0:.1} -> {cy1:.1}"
+    );
+}
+
 #[test]
 fn shadow_darkens_plane_under_cube() {
     let Ok(gpu) = GpuContext::new_headless() else {
