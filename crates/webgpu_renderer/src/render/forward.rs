@@ -391,8 +391,8 @@ impl ForwardRenderer {
         // its entry points actually use.
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("forward_pipeline_layout"),
-            bind_group_layouts: &[&bind_group_layout, &ibl_bind_group_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&bind_group_layout), Some(&ibl_bind_group_layout)],
+            immediate_size: 0,
         });
 
         // One tiny static buffer per cascade, bound at group(1) of the shadow
@@ -444,8 +444,8 @@ impl ForwardRenderer {
         let shadow_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("shadow_pipeline_layout"),
-                bind_group_layouts: &[&shadow_bind_group_layout, &cascade_index_layout],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[Some(&shadow_bind_group_layout), Some(&cascade_index_layout)],
+                immediate_size: 0,
             });
 
         let (pipeline, pipeline_double_sided, pipeline_blend, pipeline_blend_double_sided) =
@@ -473,8 +473,8 @@ impl ForwardRenderer {
             });
         let sky_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("sky_pipeline_layout"),
-            bind_group_layouts: &[&sky_bind_group_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&sky_bind_group_layout)],
+            immediate_size: 0,
         });
         let sky_pipeline = create_sky_pipeline(device, &sky_shader, &sky_pipeline_layout);
         let sky_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1281,6 +1281,7 @@ impl ForwardRenderer {
                 }),
                 timestamp_writes: shadow_scope.render_writes(cascade, CASCADE_COUNT),
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
             pass.set_pipeline(&self.shadow_pipeline);
             pass.set_bind_group(1, &self.cascade_index_bind_groups[cascade], &[]);
@@ -1345,6 +1346,7 @@ impl ForwardRenderer {
                     .scope(TimedPass::Forward)
                     .render_writes(0, 1),
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
 
             // Group 1 is per-frame, not per-draw, so it is set once here and
@@ -1608,7 +1610,7 @@ impl ForwardRenderer {
         sky_wgsl: &str,
     ) -> anyhow::Result<()> {
         let device = &gpu.device;
-        device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let error_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("forward_shader_reloaded"),
             source: wgpu::ShaderSource::Wgsl(forward_wgsl.into()),
@@ -1620,7 +1622,7 @@ impl ForwardRenderer {
         let set = create_forward_pipeline_set(device, &shader, &self.pipeline_layout);
         let shadow = create_shadow_pipeline(device, &shader, &self.shadow_pipeline_layout);
         let sky = create_sky_pipeline(device, &sky_shader, &self.sky_pipeline_layout);
-        if let Some(err) = pollster::block_on(device.pop_error_scope()) {
+        if let Some(err) = pollster::block_on(error_scope.pop()) {
             anyhow::bail!("shader reload rejected: {err}");
         }
         (
@@ -1972,13 +1974,13 @@ fn create_forward_pipeline_set(
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: DEPTH_FORMAT,
-                depth_write_enabled: !blend,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_write_enabled: Some(!blend),
+                depth_compare: Some(wgpu::CompareFunction::Less),
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         })
     };
@@ -2011,8 +2013,8 @@ fn create_shadow_pipeline(
         },
         depth_stencil: Some(wgpu::DepthStencilState {
             format: DEPTH_FORMAT,
-            depth_write_enabled: true,
-            depth_compare: wgpu::CompareFunction::Less,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Less),
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState {
                 constant: 2,
@@ -2021,7 +2023,7 @@ fn create_shadow_pipeline(
             },
         }),
         multisample: wgpu::MultisampleState::default(),
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     })
 }
@@ -2053,13 +2055,13 @@ fn create_sky_pipeline(
         primitive: wgpu::PrimitiveState::default(),
         depth_stencil: Some(wgpu::DepthStencilState {
             format: DEPTH_FORMAT,
-            depth_write_enabled: false,
-            depth_compare: wgpu::CompareFunction::LessEqual,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::LessEqual),
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
         }),
         multisample: wgpu::MultisampleState::default(),
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     })
 }
@@ -2308,7 +2310,7 @@ fn create_sampler(device: &wgpu::Device, desc: &CpuSampler) -> wgpu::Sampler {
         address_mode_v: wrap(desc.wrap_v),
         mag_filter: filter(desc.mag_nearest),
         min_filter: filter(desc.min_nearest),
-        mipmap_filter: filter(desc.mip_nearest),
+        mipmap_filter: if desc.mip_nearest { wgpu::MipmapFilterMode::Nearest } else { wgpu::MipmapFilterMode::Linear },
         ..Default::default()
     })
 }

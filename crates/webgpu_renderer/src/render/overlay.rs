@@ -46,7 +46,7 @@ impl Overlay {
         view: &wgpu::TextureView,
         width: u32,
         height: u32,
-        run_ui: impl FnMut(&egui::Context),
+        mut run_ui: impl FnMut(&egui::Context),
     ) {
         let screen = egui_wgpu::ScreenDescriptor {
             size_in_pixels: [width, height],
@@ -54,7 +54,11 @@ impl Overlay {
         };
 
         let raw_input = self.state.take_egui_input(window);
-        let output = self.ctx.run(raw_input, run_ui);
+        // egui 0.35 replaced Context::run with begin_pass/end_pass; the closure
+        // still takes &Context, so drive it explicitly between the two.
+        self.ctx.begin_pass(raw_input);
+        run_ui(&self.ctx);
+        let output = self.ctx.end_pass();
         self.state
             .handle_platform_output(window, output.platform_output);
 
@@ -83,6 +87,7 @@ impl Overlay {
                     depth_stencil_attachment: None,
                     timestamp_writes: None,
                     occlusion_query_set: None,
+                    multiview_mask: None,
                 })
                 .forget_lifetime();
             self.renderer.render(&mut pass, &clipped, &screen);
