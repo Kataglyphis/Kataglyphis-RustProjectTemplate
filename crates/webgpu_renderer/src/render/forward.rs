@@ -2218,6 +2218,14 @@ impl Frustum {
 }
 
 fn primitive_world_aabb(prim: &crate::scene::CpuPrimitive) -> (Vec3, Vec3) {
+    // Morphed primitives go through the pose-covering local bounds and are then
+    // transformed as a box, which stays conservative under rotation. Everything
+    // else keeps the exact per-vertex transform - a tighter box, and the path
+    // every non-morph primitive used before morph targets existed.
+    if !prim.morph_targets.is_empty() {
+        let (lo, hi) = primitive_local_aabb(prim);
+        return transform_aabb(prim.transform, lo, hi);
+    }
     let mut min = Vec3::splat(f32::INFINITY);
     let mut max = Vec3::splat(f32::NEG_INFINITY);
     for vertex in &prim.vertices {
@@ -2374,13 +2382,29 @@ fn sample_morph_weights(
     }
 }
 
+/// Local-space bounds that cover every pose the primitive can reach.
+///
+/// Morph targets move vertices away from the neutral pose, so bounds taken from
+/// `vertices` alone would be too small and frustum culling would drop a morphed
+/// primitive while it is still on screen. For weights in [0,1] the reachable
+/// extremes of a vertex are its position plus the sum of the negative deltas
+/// (lower corner) and plus the sum of the positive deltas (upper corner), so
+/// this is exact over that weight range and conservative outside it. Primitives
+/// without morph targets are unaffected.
 fn primitive_local_aabb(prim: &crate::scene::CpuPrimitive) -> (Vec3, Vec3) {
     let mut min = Vec3::splat(f32::INFINITY);
     let mut max = Vec3::splat(f32::NEG_INFINITY);
-    for vertex in &prim.vertices {
+    for (i, vertex) in prim.vertices.iter().enumerate() {
         let p = Vec3::from_array(vertex.position);
-        min = min.min(p);
-        max = max.max(p);
+        let (mut lo, mut hi) = (p, p);
+        for target in &prim.morph_targets {
+            if let Some(d) = target.position_deltas.get(i) {
+                lo += d.min(Vec3::ZERO);
+                hi += d.max(Vec3::ZERO);
+            }
+        }
+        min = min.min(lo);
+        max = max.max(hi);
     }
     if min.x > max.x {
         (Vec3::ZERO, Vec3::ZERO)
@@ -2775,6 +2799,36 @@ mod tests {
         assert!(start.dot(q0).abs() > 0.999, "t=0 should match q0");
         assert!(end.dot(q1).abs() > 0.999, "t=1 should match q1");
         assert!((start.length() - 1.0).abs() < 1e-5, "result must be a unit quaternion");
+    }
+
+    #[test]
+    fn morph_targets_expand_the_culling_bounds() {
+        // cube_morph.gltf is the unit cube (positions in [-0.5, 0.5]) plus one
+        // target that lifts every vertex +1.0 in Y. Bounds taken from the
+        // neutral pose alone would stop at y = 0.5, so a fully-weighted morph
+        // would sit outside its own AABB and the frustum test could cull it
+        // while it is plainly on screen.
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/assets/cube_morph.gltf");
+        let scene = crate::load_gltf(path).expect("cube_morph.gltf must load");
+        let prim = &scene.primitives[0];
+        assert_eq!(prim.morph_targets.len(), 1, "fixture must carry a target");
+
+        let (min, max) = primitive_local_aabb(prim);
+        assert!(
+            (max.y - 1.5).abs() < 1e-5,
+            "bounds must reach the fully-morphed pose (0.5 + 1.0), got max.y={}",
+            max.y
+        );
+        // The neutral pose stays inside: the +Y target only has positive deltas,
+        // so the lower bound must NOT be dragged upward.
+        assert!(
+            (min.y + 0.5).abs() < 1e-5,
+            "unmorphed extent must be preserved, got min.y={}",
+            min.y
+        );
+        // X/Z are untouched by the target and must stay exactly the cube's.
+        assert!((max.x - 0.5).abs() < 1e-5 && (min.x + 0.5).abs() < 1e-5);
     }
 
     #[test]
