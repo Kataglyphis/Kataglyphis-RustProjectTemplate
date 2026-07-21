@@ -104,6 +104,10 @@ pub struct OverlayControls {
     pub ssao: f32,
     pub exposure_ev: f32,
     pub occlusion_culling: bool,
+    /// Last frame's (drawn, considered) opaque-primitive counts, shown next to
+    /// the occlusion toggle so the cull is observable. Set by the caller each
+    /// frame; `None` hides the readout.
+    pub occlusion_stats: Option<(u32, u32)>,
 }
 
 impl OverlayControls {
@@ -121,6 +125,7 @@ impl OverlayControls {
             ssao: 0.7,
             exposure_ev: 0.0,
             occlusion_culling: false,
+            occlusion_stats: None,
         }
     }
 
@@ -171,6 +176,14 @@ impl OverlayControls {
                 changed |= ui
                     .checkbox(&mut self.occlusion_culling, "occlusion culling")
                     .changed();
+                if self.occlusion_culling {
+                    if let Some((drawn, considered)) = self.occlusion_stats {
+                        let culled = considered.saturating_sub(drawn);
+                        ui.label(format!(
+                            "  drew {drawn}/{considered} ({culled} culled)"
+                        ));
+                    }
+                }
                 ui.separator();
                 ui.label("drag: orbit - wheel: zoom");
             });

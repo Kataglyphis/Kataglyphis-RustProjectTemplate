@@ -202,6 +202,9 @@ impl Viewer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("overlay_encoder"),
             });
+        // Feed this frame's cull counts to the panel so the toggle's effect is
+        // visible (drew N/M) rather than invisible.
+        controls.occlusion_stats = Some(renderer.occlusion_cull_stats());
         let mut changed = false;
         overlay.render(
             &gpu.device,
