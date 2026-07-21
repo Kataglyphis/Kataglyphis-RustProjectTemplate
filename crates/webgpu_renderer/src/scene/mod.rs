@@ -218,6 +218,10 @@ pub enum ChannelValues {
     Translation(Vec<Vec3>),
     Rotation(Vec<Quat>),
     Scale(Vec<Vec3>),
+    /// Morph-target weights, flattened: `num_targets` weights per keyframe
+    /// (length `num_targets * times.len()`, ×3 under CubicSpline). `num_targets`
+    /// is derived at apply time from the target primitive's morph-target count.
+    MorphWeights(Vec<f32>),
 }
 
 /// glTF keyframe interpolation mode. For `CubicSpline` the value array holds
