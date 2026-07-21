@@ -194,6 +194,35 @@ fn to_rgba8(img: gltf::image::Data) -> anyhow::Result<CpuTexture> {
             }
             out
         }
+        // 16-bit channels: down-convert rather than reject. These arrive from
+        // ordinary tools (16-bit PNG height/normal maps are a Substance and
+        // Blender default), and refusing them failed the WHOLE file over one
+        // texture - the model would not open at all. Taking the high byte is
+        // exactly the >>8 requantisation, and the renderer's textures are 8-bit
+        // anyway, so nothing downstream can use the extra precision.
+        Format::R16 | Format::R16G16 | Format::R16G16B16 | Format::R16G16B16A16 => {
+            let channels = match img.format {
+                Format::R16 => 1,
+                Format::R16G16 => 2,
+                Format::R16G16B16 => 3,
+                _ => 4,
+            };
+            let mut out = Vec::with_capacity(pixel_count * 4);
+            for texel in img.pixels.chunks_exact(channels * 2) {
+                // Little-endian u16 -> u8 by keeping the high byte.
+                let ch = |i: usize| texel[i * 2 + 1];
+                match channels {
+                    1 => {
+                        let v = ch(0);
+                        out.extend_from_slice(&[v, v, v, 255]);
+                    }
+                    2 => out.extend_from_slice(&[ch(0), ch(1), 0, 255]),
+                    3 => out.extend_from_slice(&[ch(0), ch(1), ch(2), 255]),
+                    _ => out.extend_from_slice(&[ch(0), ch(1), ch(2), ch(3)]),
+                }
+            }
+            out
+        }
         other => anyhow::bail!("Unsupported glTF image format: {other:?}"),
     };
 
@@ -706,6 +735,34 @@ pub(crate) fn generate_tangents_mikktspace(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn sixteen_bit_images_down_convert_instead_of_failing_the_whole_file() {
+        // A 16-bit PNG (a Substance/Blender default for height and normal maps)
+        // used to abort the ENTIRE glTF load over one texture, so the model
+        // would not open at all. 2x1 R16G16B16A16, little-endian.
+        let texel = |r: u16, g: u16, b: u16, a: u16| {
+            let mut v = Vec::new();
+            for c in [r, g, b, a] {
+                v.extend_from_slice(&c.to_le_bytes());
+            }
+            v
+        };
+        let mut pixels = texel(0xFFFF, 0x0000, 0x8000, 0xFFFF);
+        pixels.extend(texel(0x0000, 0xFF00, 0x0000, 0x1234));
+
+        let data = gltf::image::Data {
+            pixels,
+            format: gltf::image::Format::R16G16B16A16,
+            width: 2,
+            height: 1,
+        };
+        let tex = to_rgba8(data).expect("16-bit image must convert, not bail");
+        assert_eq!(tex.rgba8.len(), 2 * 4, "must be tightly packed RGBA8");
+        // High byte survives: 0xFFFF -> 0xFF, 0x8000 -> 0x80, 0x1234 -> 0x12.
+        assert_eq!(&tex.rgba8[0..4], &[0xFF, 0x00, 0x80, 0xFF]);
+        assert_eq!(&tex.rgba8[4..8], &[0x00, 0xFF, 0x00, 0x12]);
+    }
     use super::*;
 
     #[test]
