@@ -174,16 +174,19 @@ impl Viewer {
             renderer.set_animation_time(self.started.elapsed().as_secs_f32());
         }
 
+        // wgpu 29: get_current_texture returns a CurrentSurfaceTexture enum
+        // instead of Result<_, SurfaceError>.
         let frame = match surface.get_current_texture() {
-            Ok(frame) => frame,
-            Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
+            wgpu::CurrentSurfaceTexture::Success(frame)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 // Never abort on Outdated/Lost: reconfigure and retry next frame.
                 gpu.reconfigure();
                 window.request_redraw();
                 return;
             }
-            Err(err) => {
-                log::error!("Surface error: {err:?}");
+            other => {
+                log::error!("Surface acquire failed: {other:?}");
                 return;
             }
         };
