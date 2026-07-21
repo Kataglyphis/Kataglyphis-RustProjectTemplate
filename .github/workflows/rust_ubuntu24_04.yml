@@ -142,10 +142,17 @@ jobs:
             --platform ${{ env.PLATFORM }} \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
+            -e CARGO_HOME=/tmp/cargo-home \
             ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross \
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
+            # The image ships CARGO_HOME=/usr/local/cargo owned by root; the
+            # container runs as uid 1001, and cargo-tarpaulin needs to WRITE the
+            # registry cache (the read-only test step never did), so it died with
+            # "Permission denied" creating .../registry/cache. Point CARGO_HOME at
+            # a writable /tmp dir - same root cause and fix as the C++ CARGO_HOME
+            # fallback.
             bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_coverage.sh
             '
 
