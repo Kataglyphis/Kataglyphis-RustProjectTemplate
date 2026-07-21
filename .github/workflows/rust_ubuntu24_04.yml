@@ -259,10 +259,15 @@ jobs:
             --platform ${{ env.PLATFORM }} \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
+            -e CARGO_HOME=/tmp/cargo-home \
             ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross \
             bash -lc '
             set -e
             git config --global --add safe.directory /workspace || true
+            # Same root-owned-CARGO_HOME fix as the coverage/bench/release steps:
+            # the image ships CARGO_HOME=/usr/local/cargo owned by root while the
+            # container runs as uid 1001, and cargo doc must WRITE the registry
+            # cache, so it died with "Permission denied" creating .../registry/cache.
             bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_build_doc.sh
             '
 
