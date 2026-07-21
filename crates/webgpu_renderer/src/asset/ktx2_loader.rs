@@ -63,3 +63,45 @@ pub fn load_ktx2(bytes: &[u8]) -> anyhow::Result<CpuTexture> {
         compressed: Some(CompressedTexture { format, mips }),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn map_format_accepts_bcn_and_rejects_others() {
+        assert_eq!(
+            map_format(VK_FORMAT_BC1_RGBA_SRGB_BLOCK),
+            Some(CompressedFormat::Bc1RgbaUnorm)
+        );
+        assert_eq!(map_format(VK_FORMAT_BC3_UNORM_BLOCK), Some(CompressedFormat::Bc3RgbaUnorm));
+        assert_eq!(map_format(VK_FORMAT_BC5_UNORM_BLOCK), Some(CompressedFormat::Bc5RgUnorm));
+        assert_eq!(map_format(VK_FORMAT_BC7_SRGB_BLOCK), Some(CompressedFormat::Bc7RgbaUnorm));
+        // An uncompressed format (VK_FORMAT_R8G8B8A8_UNORM = 37) is not a BCn
+        // passthrough target.
+        assert_eq!(map_format(37), None);
+        assert_eq!(map_format(0), None);
+    }
+
+    #[test]
+    fn loads_a_valid_bc1_container() {
+        let bytes = include_bytes!("../../tests/assets/red_bc1.ktx2");
+        let tex = load_ktx2(bytes).expect("red_bc1.ktx2 should load");
+        assert!(tex.width >= 1 && tex.height >= 1, "dimensions must be positive");
+        assert!(tex.rgba8.is_empty(), "a compressed texture carries no rgba8");
+        let compressed = tex.compressed.expect("BC1 file must produce a compressed payload");
+        assert_eq!(compressed.format, CompressedFormat::Bc1RgbaUnorm);
+        assert!(!compressed.mips.is_empty(), "must have at least one mip level");
+        assert!(
+            !compressed.mips[0].is_empty(),
+            "the base mip must carry block data"
+        );
+    }
+
+    #[test]
+    fn rejects_non_ktx2_bytes_without_panicking() {
+        // Garbage in -> a graceful Err, never a panic.
+        assert!(load_ktx2(b"not a ktx2 file at all").is_err());
+        assert!(load_ktx2(&[]).is_err());
+    }
+}
