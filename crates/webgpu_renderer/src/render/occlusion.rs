@@ -77,6 +77,12 @@ struct Slot {
     map_state: Option<Arc<AtomicU8>>,
     /// Queries actually recorded into this slot (this frame's primitive count).
     count: u32,
+    /// The scene generation this slot was recorded under. A readback whose
+    /// generation no longer matches the current one is from a scene that has
+    /// since been replaced, so its samples are drained but must not update
+    /// visibility - else a new, smaller scene inherits the old scene's
+    /// per-index culling for a frame or two.
+    generation: u64,
 }
 
 /// Per-primitive occlusion detection over the forward depth buffer.
@@ -99,6 +105,10 @@ pub struct OcclusionQueries {
     samples: Vec<u64>,
     /// `samples[i] > 0`, cached so callers get a `&[bool]` without recomputing.
     visibility: Vec<bool>,
+    /// Bumped by [`Self::reset`] on a scene change. Stamped onto each slot at
+    /// record time and checked at readback so results from a replaced scene are
+    /// discarded rather than applied to the new one.
+    generation: u64,
 }
 
 impl OcclusionQueries {
@@ -198,6 +208,7 @@ impl OcclusionQueries {
             recording: false,
             samples: Vec::new(),
             visibility: Vec::new(),
+            generation: 0,
         }
     }
 
@@ -308,6 +319,7 @@ impl OcclusionQueries {
                 },
             );
             self.slots[self.current].map_state = Some(state);
+            self.slots[self.current].generation = self.generation;
             self.current = (self.current + 1) % SLOT_COUNT;
             self.recording = false;
         }
@@ -326,8 +338,14 @@ impl OcclusionQueries {
                     let samples = read_samples(&self.slots[index].readback, count);
                     self.slots[index].readback.unmap();
                     self.slots[index].map_state = None;
-                    self.visibility = samples.iter().map(|&s| s > 0).collect();
-                    self.samples = samples;
+                    // A stale generation means the scene was replaced after this
+                    // slot recorded; drain the buffer (done above) but keep the
+                    // reset's empty visibility so the new scene is not culled by
+                    // the old scene's samples.
+                    if self.slots[index].generation == self.generation {
+                        self.visibility = samples.iter().map(|&s| s > 0).collect();
+                        self.samples = samples;
+                    }
                 }
                 MAP_FAILED => {
                     self.slots[index].map_state = None;
@@ -358,6 +376,19 @@ impl OcclusionQueries {
     /// costs a draw, a wrongly-culled one pops out of existence.
     pub fn visible(&self, i: usize) -> bool {
         self.visibility.get(i).copied().unwrap_or(true)
+    }
+
+    /// Forgets all readback state, to be called when the scene changes. The
+    /// per-index visibility is only meaningful for the primitive list it was
+    /// measured against; carrying it into a different (e.g. smaller) scene would
+    /// cull an unrelated primitive that happens to share the index of a
+    /// previously occluded one. Clearing makes `visible` default to true again
+    /// (draw everything) until fresh queries land, and the bumped generation
+    /// discards any readback still in flight from the old scene.
+    pub fn reset(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
+        self.visibility.clear();
+        self.samples.clear();
     }
 
     /// Index of a slot with no outstanding map, preferring `current` so the
@@ -425,6 +456,7 @@ fn create_slots(device: &wgpu::Device, capacity: u32) -> Vec<Slot> {
             }),
             map_state: None,
             count: 0,
+            generation: 0,
         })
         .collect()
 }

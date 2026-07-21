@@ -232,3 +232,68 @@ fn two_visible_cubes_are_both_drawn_with_culling_on() {
     let (drawn, considered) = renderer.occlusion_cull_stats();
     assert_eq!((drawn, considered), (2, 2), "both visible cubes must draw");
 }
+
+#[test]
+fn loading_a_new_scene_does_not_inherit_the_old_scene_visibility() {
+    // Per-index occlusion visibility is only meaningful for the primitive list
+    // it was measured against. If it survives a scene change, a new scene whose
+    // primitive shares the index of a previously occluded one gets wrongly
+    // culled. Reproduce: occlude index 1 in scene A, then load a scene B of two
+    // fully visible cubes and render ONE frame - the frame where stale
+    // visibility would still bite, before scene B's own queries land.
+    let Ok(gpu) = GpuContext::new_headless() else {
+        eprintln!("SKIP: no GPU adapter available in this environment");
+        return;
+    };
+
+    // Scene A: index 1 ends up occluded behind index 0.
+    let occluder = cube_with_transform(
+        Mat4::from_translation(Vec3::new(0.0, 0.0, 2.0)) * Mat4::from_scale(Vec3::splat(4.0)),
+    );
+    let hidden = cube_with_transform(Mat4::from_translation(Vec3::new(0.0, 0.0, -3.0)));
+    let scene_a = CpuScene {
+        primitives: vec![occluder, hidden],
+        ..Default::default()
+    };
+
+    let mut renderer = ForwardRenderer::new(&gpu, 256, 256);
+    renderer.upload_scene(&gpu, &scene_a);
+    renderer.occlusion_queries_enabled = true;
+    let camera = looking_down_neg_z();
+    render_until_readback_lands(&mut renderer, &gpu, &camera);
+    renderer
+        .render_to_pixels(&gpu, 256, 256, &camera)
+        .expect("render");
+    // Precondition: scene A really did cull its hidden primitive, so there is
+    // stale `false` visibility at index 1 to (wrongly) carry over.
+    assert_eq!(
+        renderer.occlusion_cull_stats().0,
+        1,
+        "scene A must occlusion-cull its hidden cube, or this test proves nothing"
+    );
+
+    // Scene B: two side-by-side cubes, both fully visible, neither occluding the
+    // other. Index 1 here is a DIFFERENT, visible primitive.
+    let scene_b = CpuScene {
+        primitives: vec![
+            cube_with_transform(Mat4::from_translation(Vec3::new(-3.0, 0.0, 0.0))),
+            cube_with_transform(Mat4::from_translation(Vec3::new(3.0, 0.0, 0.0))),
+        ],
+        ..Default::default()
+    };
+    renderer.upload_scene(&gpu, &scene_b);
+
+    // The very next frame: scene B's own queries have not landed yet, so this is
+    // exactly when leftover visibility would cull index 1. With the reset in
+    // upload_scene it defaults back to visible and both cubes draw.
+    renderer
+        .render_to_pixels(&gpu, 256, 256, &camera)
+        .expect("render");
+    let (drawn, considered) = renderer.occlusion_cull_stats();
+    assert_eq!(
+        (drawn, considered),
+        (2, 2),
+        "a freshly loaded scene must not inherit the old scene's culling (got \
+         {drawn}/{considered})"
+    );
+}

@@ -874,6 +874,10 @@ impl ForwardRenderer {
     pub fn upload_scene(&mut self, gpu: &GpuContext, scene: &CpuScene) {
         let device = &gpu.device;
         self.primitives.clear();
+        // Per-index occlusion visibility is only valid for the primitive list it
+        // was measured against; a new scene must not inherit it (a smaller scene
+        // would see stale culls at shared indices).
+        self.occlusion.reset();
         self.scene_bounds = compute_world_bounds(scene);
         let (packed, count) = pack_punctual_lights(&scene.lights);
         self.punctual_lights = packed;
