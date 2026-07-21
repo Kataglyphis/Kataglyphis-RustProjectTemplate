@@ -65,6 +65,33 @@ fn gltf_loader_applies_emissive_strength() {
 }
 
 #[test]
+fn gltf_loader_reads_morph_target_and_default_weight() {
+    // cube_morph.gltf carries one POSITION morph target (every vertex +Y) and a
+    // mesh-level default weight of 1.0. The loader must parse the deltas AND
+    // apply the mesh default weight (not leave it at zero).
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_morph.gltf");
+    let scene = load_gltf(path).expect("cube_morph.gltf must load");
+    let prim = &scene.primitives[0];
+    assert_eq!(prim.morph_targets.len(), 1, "one morph target expected");
+    assert_eq!(
+        prim.morph_targets[0].position_deltas.len(),
+        24,
+        "delta count must match the cube's vertices"
+    );
+    // Every delta is (0, 1, 0).
+    for d in &prim.morph_targets[0].position_deltas {
+        assert!(d.x.abs() < 1e-6 && (d.y - 1.0).abs() < 1e-6 && d.z.abs() < 1e-6);
+    }
+    // The mesh default weight must be honored.
+    assert_eq!(
+        prim.morph_weights,
+        vec![1.0],
+        "mesh default weight [1.0] must be applied at load"
+    );
+}
+
+#[test]
 fn renders_cube_headless() {
     let Ok(gpu) = GpuContext::new_headless() else {
         eprintln!("SKIP: no GPU adapter available in this environment");

@@ -298,6 +298,16 @@ fn visit_node(
             if let Some(mut cpu) = load_primitive(&primitive, world, buffers, textures)? {
                 cpu.node_index = Some(node.index());
                 cpu.skin_index = node.skin().map(|s| s.index());
+                // Default morph weights: node-level overrides mesh-level (glTF
+                // spec), applied before any animation channel drives them. Kept
+                // only when the count matches this primitive's target count.
+                if !cpu.morph_targets.is_empty() {
+                    if let Some(weights) = node.weights().or_else(|| mesh.weights()) {
+                        if weights.len() == cpu.morph_weights.len() {
+                            cpu.morph_weights = weights.to_vec();
+                        }
+                    }
+                }
                 scene.primitives.push(cpu);
             }
         }
@@ -401,8 +411,9 @@ fn load_primitive(
         (vertices, indices)
     };
 
-    // Morph targets: per-target POSITION/NORMAL deltas. Weights default to zero
-    // (the base mesh); a WEIGHTS animation channel / mesh defaults drive them later.
+    // Morph targets: per-target POSITION/NORMAL deltas. Weights start at zero
+    // here; mesh/node default weights are applied by the caller (which has the
+    // mesh/node), and a WEIGHTS animation channel can drive them per frame.
     let morph_targets: Vec<crate::scene::MorphTarget> = reader
         .read_morph_targets()
         .map(|(pos, norm, _tan)| crate::scene::MorphTarget {
