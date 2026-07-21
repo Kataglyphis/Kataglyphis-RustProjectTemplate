@@ -2417,6 +2417,11 @@ fn aabb_contains_point(min: Vec3, max: Vec3, p: Vec3) -> bool {
 
 /// Bounds covering every instance of `pre`.
 ///
+/// See `docs/renderer-bounds-invariant.md` for the rule these helpers exist to
+/// uphold, the full list of consumers that read bounds, and why each over-cover
+/// argument is a proof rather than a fudge factor. Eight bugs in this renderer
+/// were the same bug; that document is the checklist for not writing a ninth.
+///
 /// The shader builds its world position as `instance_matrix * skin_matrix * v`,
 /// so instance transforms apply ON TOP of the posed box. With bounds left at the
 /// un-instanced position the frustum test culls the whole primitive - every
