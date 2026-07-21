@@ -164,6 +164,7 @@ jobs:
             --platform ${{ env.PLATFORM }} \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
+            -e CARGO_HOME=/tmp/cargo-home \
             ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross \
             bash -lc '
             set -e
@@ -177,6 +178,7 @@ jobs:
             --platform ${{ env.PLATFORM }} \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
+            -e CARGO_HOME=/tmp/cargo-home \
             ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross \
             bash -lc '
             set -e
