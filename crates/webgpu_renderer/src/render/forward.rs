@@ -1467,7 +1467,22 @@ impl ForwardRenderer {
                 // or right after a scene change. The occlusion pass still
                 // queries EVERY primitive, so a skipped one is re-evaluated and
                 // reappears the frame its occluder moves away.
-                if self.occlusion_queries_enabled && !self.occlusion.visible(i) {
+                // Never skip a primitive the camera is INSIDE. Its proxy box
+                // surrounds the eye, so the box's front faces are near-plane
+                // clipped and only back faces rasterise; those sit behind the
+                // primitive's own surface and fail LessEqual, so the query reports
+                // zero, the skip empties that surface from the depth buffer, the
+                // box passes next frame and the object strobes at frame rate.
+                //
+                // Cheap insurance rather than a fix for an observed failure: with
+                // the current closed, back-face-culled fixtures nothing renders
+                // from inside at all (so depth stays empty and the box passes
+                // regardless), and I could not build a failing case from them.
+                // Interior/double-sided geometry does reach the bad path.
+                if self.occlusion_queries_enabled
+                    && !self.occlusion.visible(i)
+                    && !aabb_contains_point(prim.aabb_min, prim.aabb_max, eye)
+                {
                     continue;
                 }
                 occ_drawn += 1;
@@ -2310,6 +2325,15 @@ impl Frustum {
     }
 }
 
+/// True when `p` lies inside the AABB expanded by the SAME margin the occlusion
+/// proxy box uses (`occlusion_bbox.wgsl`: 2% of the half-extent plus 1 cm), so
+/// this CPU test agrees with the box actually rasterised rather than a slightly
+/// different one.
+fn aabb_contains_point(min: Vec3, max: Vec3, p: Vec3) -> bool {
+    let margin = (max - min) * 0.5 * 0.02 + Vec3::splat(0.01);
+    p.cmpge(min - margin).all() && p.cmple(max + margin).all()
+}
+
 /// Bounds covering every instance of `pre`.
 ///
 /// The shader builds its world position as `instance_matrix * skin_matrix * v`,
@@ -2939,6 +2963,26 @@ mod tests {
         assert!(start.dot(q0).abs() > 0.999, "t=0 should match q0");
         assert!(end.dot(q1).abs() > 0.999, "t=1 should match q1");
         assert!((start.length() - 1.0).abs() < 1e-5, "result must be a unit quaternion");
+    }
+
+    #[test]
+    fn aabb_contains_point_matches_the_occlusion_proxy_margin() {
+        // The guard that keeps a camera-containing primitive drawn must agree
+        // with the box occlusion_bbox.wgsl actually rasterises, or it protects a
+        // slightly different volume than the one that misbehaves. That shader
+        // expands by `half * 0.02 + 0.01`.
+        let (min, max) = (Vec3::splat(-0.5), Vec3::splat(0.5));
+        let margin = 0.5 * 0.02 + 0.01; // half-extent 0.5
+
+        assert!(aabb_contains_point(min, max, Vec3::ZERO), "centre is inside");
+        // Just inside the expanded face.
+        let inside = 0.5 + margin - 1e-4;
+        assert!(aabb_contains_point(min, max, Vec3::new(inside, 0.0, 0.0)));
+        // Just outside it.
+        let outside = 0.5 + margin + 1e-3;
+        assert!(!aabb_contains_point(min, max, Vec3::new(outside, 0.0, 0.0)));
+        // Must hold on every axis, not just x.
+        assert!(!aabb_contains_point(min, max, Vec3::new(0.0, 0.0, outside)));
     }
 
     #[test]
