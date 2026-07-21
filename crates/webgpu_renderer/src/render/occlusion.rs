@@ -208,6 +208,11 @@ impl OcclusionQueries {
     /// the forward pass drew with, and `aabbs` one world AABB per primitive in
     /// primitive order. Must be recorded into the same encoder as the forward
     /// pass and before submit; call [`Self::end_frame`] after submit.
+    // Seven distinct inputs, none bundleable without an artificial wrapper:
+    // the device (buffer growth), queue (uploads), encoder (the pass), the
+    // forward depth, the camera matrix, the AABBs, and the timing scope. The
+    // timing scope pushed it one over clippy's default of seven.
+    #[allow(clippy::too_many_arguments)]
     pub fn record(
         &mut self,
         device: &wgpu::Device,
@@ -216,6 +221,7 @@ impl OcclusionQueries {
         depth_view: &wgpu::TextureView,
         view_proj: Mat4,
         aabbs: &[(Vec3, Vec3)],
+        timing: crate::render::gpu_timing::PassScope<'_>,
     ) {
         self.recording = false;
         let count = aabbs.len() as u32;
@@ -260,7 +266,7 @@ impl OcclusionQueries {
                     }),
                     stencil_ops: None,
                 }),
-                timestamp_writes: None,
+                timestamp_writes: timing.render_writes(0, 1),
                 occlusion_query_set: Some(&self.query_set),
             });
             pass.set_pipeline(&self.pipeline);

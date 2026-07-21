@@ -50,6 +50,10 @@ pub enum TimedPass {
     ShadowCascades,
     /// Opaque geometry, sky, and blended geometry in one render pass.
     Forward,
+    /// The occlusion-query bounding-box pass (one render pass, only recorded
+    /// when occlusion culling is on). Its cost is the overhead the cull must
+    /// beat: measuring it is how you tell whether culling actually pays.
+    OcclusionCull,
     /// Brightpass plus separable blur (three render passes).
     Bloom,
     /// Occlusion plus blur (two render passes).
@@ -64,9 +68,10 @@ pub enum TimedPass {
 
 impl TimedPass {
     /// Every pass, in record order. Iteration order is the reporting order.
-    pub const ALL: [TimedPass; 7] = [
+    pub const ALL: [TimedPass; 8] = [
         TimedPass::ShadowCascades,
         TimedPass::Forward,
+        TimedPass::OcclusionCull,
         TimedPass::Bloom,
         TimedPass::Ssao,
         TimedPass::Histogram,
@@ -79,6 +84,7 @@ impl TimedPass {
         match self {
             TimedPass::ShadowCascades => "ShadowCascades",
             TimedPass::Forward => "Forward",
+            TimedPass::OcclusionCull => "OcclusionCull",
             TimedPass::Bloom => "Bloom",
             TimedPass::Ssao => "Ssao",
             TimedPass::Histogram => "Histogram",
@@ -91,11 +97,12 @@ impl TimedPass {
         match self {
             TimedPass::ShadowCascades => 0,
             TimedPass::Forward => 1,
-            TimedPass::Bloom => 2,
-            TimedPass::Ssao => 3,
-            TimedPass::Histogram => 4,
-            TimedPass::ExposureReduce => 5,
-            TimedPass::Tonemap => 6,
+            TimedPass::OcclusionCull => 2,
+            TimedPass::Bloom => 3,
+            TimedPass::Ssao => 4,
+            TimedPass::Histogram => 5,
+            TimedPass::ExposureReduce => 6,
+            TimedPass::Tonemap => 7,
         }
     }
 }

@@ -1440,6 +1440,7 @@ impl ForwardRenderer {
                 &self.depth,
                 view_proj,
                 &aabbs,
+                self.gpu_timing.scope(TimedPass::OcclusionCull),
             );
         }
 

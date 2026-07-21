@@ -33,6 +33,10 @@ fn every_pass_reports_a_finite_non_negative_duration() {
         "the adapter reports TIMESTAMP_QUERY, so enabling must succeed"
     );
     renderer.upload_scene(&gpu, &load_gltf(cube_path()).expect("cube.gltf must load"));
+    // The occlusion-cull pass only records when culling is on, so enable it -
+    // otherwise TimedPass::OcclusionCull never reports and the all-passes
+    // assertion below is off by one.
+    renderer.occlusion_queries_enabled = true;
     let camera = OrbitCamera::default();
     let mut tonemap = TonemapPass::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb);
 
