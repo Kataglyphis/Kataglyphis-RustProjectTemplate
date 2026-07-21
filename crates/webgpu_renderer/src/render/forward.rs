@@ -60,6 +60,10 @@ struct Uniforms {
     base_uv_row0: [f32; 4],
     base_uv_row1: [f32; 4],
     cascade_splits: [f32; 4],
+    /// x: 1.0 when KHR_materials_unlit, else 0.0. Remaining lanes reserved for
+    /// further material flags so the next one does not have to squat in an
+    /// unrelated vector.
+    material_flags: [f32; 4],
 }
 
 /// One pre-uploaded LOD level: its own vertex and index buffer, built once.
@@ -103,6 +107,8 @@ struct GpuPrimitive {
     emissive_factor: [f32; 4],
     base_uv_transform: [[f32; 3]; 2],
     double_sided: bool,
+    /// KHR_materials_unlit: skip lighting entirely and emit the base color.
+    unlit: bool,
     alpha_blend: bool,
     casts_shadow: bool,
     world_center: Vec3,
@@ -1178,6 +1184,7 @@ impl ForwardRenderer {
                 local_aabb_min: local_bounds.0,
                 local_aabb_max: local_bounds.1,
                 double_sided: material.double_sided,
+                unlit: material.unlit,
                 alpha_blend: material.alpha_mode == AlphaMode::Blend,
                 // Transparents cast no shadow (v1); a MASK primitive whose
                 // base alpha is fully below the cutoff is invisible and must
@@ -1332,6 +1339,7 @@ impl ForwardRenderer {
                     0.0,
                 ],
                 cascade_splits: self.cascade_splits,
+                material_flags: [if prim.unlit { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
             };
             gpu.queue
                 .write_buffer(&prim.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
@@ -2664,8 +2672,29 @@ fn create_sampler(device: &wgpu::Device, desc: &CpuSampler) -> wgpu::Sampler {
         mag_filter: filter(desc.mag_nearest),
         min_filter: filter(desc.min_nearest),
         mipmap_filter: if desc.mip_nearest { wgpu::MipmapFilterMode::Nearest } else { wgpu::MipmapFilterMode::Linear },
+        anisotropy_clamp: anisotropy_for(desc),
         ..Default::default()
     })
+}
+
+/// Anisotropy for a glTF sampler.
+///
+/// The mip chain is already generated correctly, so this is the cheapest visible
+/// quality win available: without it a floor or wall seen at a grazing angle -
+/// i.e. most of any architectural or photogrammetry scene - is over-blurred by
+/// several mip levels.
+///
+/// wgpu REQUIRES min/mag/mipmap to all be Linear before anisotropy above 1, and
+/// validates it, so a sampler that asked for Nearest anywhere must stay at 1.
+/// That is not a nicety: returning 16 there is a device-lost-grade validation
+/// error, and the nearest-filtered assets are exactly the pixel-art ones whose
+/// look the author chose deliberately.
+fn anisotropy_for(desc: &CpuSampler) -> u16 {
+    if desc.mag_nearest || desc.min_nearest || desc.mip_nearest {
+        1
+    } else {
+        16
+    }
 }
 
 fn srgb_to_linear(byte: u8) -> f32 {
@@ -3031,6 +3060,26 @@ mod tests {
         );
         // And the surviving vertices must still define a real box.
         assert!(max.x > min.x, "the good vertices must still bound something");
+    }
+
+    #[test]
+    fn anisotropy_is_requested_only_when_every_filter_is_linear() {
+        // wgpu validates this: anisotropy > 1 with any Nearest filter is an
+        // error, not a hint. The all-linear default must still get the win.
+        let linear = CpuSampler::default();
+        assert_eq!(anisotropy_for(&linear), 16, "all-linear sampler should get 16x");
+
+        for (label, s) in [
+            ("mag", CpuSampler { mag_nearest: true, ..Default::default() }),
+            ("min", CpuSampler { min_nearest: true, ..Default::default() }),
+            ("mip", CpuSampler { mip_nearest: true, ..Default::default() }),
+        ] {
+            assert_eq!(
+                anisotropy_for(&s),
+                1,
+                "{label}-nearest sampler must stay at 1x or wgpu rejects it"
+            );
+        }
     }
 
     #[test]

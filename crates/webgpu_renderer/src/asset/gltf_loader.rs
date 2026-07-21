@@ -478,6 +478,7 @@ fn load_primitive(
             .map_or(1.0, |occ| occ.strength()),
         normal_scale: material.normal_texture().map_or(1.0, |nrm| nrm.scale()),
         double_sided: material.double_sided(),
+        unlit: material.unlit(),
         base_color_texture: pbr
             .base_color_texture()
             .and_then(|info| texture_ref(&info.texture(), textures, true)),

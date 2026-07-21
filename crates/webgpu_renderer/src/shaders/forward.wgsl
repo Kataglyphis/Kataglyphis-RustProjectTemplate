@@ -36,6 +36,8 @@ struct Uniforms {
     base_uv_row1: vec4<f32>,
     // x,y: cascade split distances (view depth), z: cascade count
     cascade_splits: vec4<f32>,
+    // x: 1.0 when KHR_materials_unlit, else 0.0
+    material_flags: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -379,6 +381,14 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // MASK alpha mode: emissive_factor.w carries the cutoff (0 = keep all).
     if (albedo.a < uniforms.emissive_factor.w) {
         discard;
+    }
+    // KHR_materials_unlit: emit the base color and stop. The spec defines the
+    // result as exactly base_color, with no lighting, IBL, shadowing or
+    // emissive contribution - which is the whole point of the extension, so
+    // this returns BEFORE any of that is computed rather than multiplying it
+    // out afterwards. The alpha cutoff above still applies.
+    if (uniforms.material_flags.x > 0.5) {
+        return albedo;
     }
     // glTF: metallic in B, roughness in G.
     let metallic = clamp(uniforms.material_factors.x * mr_sample.b, 0.0, 1.0);

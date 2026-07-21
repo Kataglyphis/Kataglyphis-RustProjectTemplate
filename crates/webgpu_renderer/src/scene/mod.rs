@@ -152,6 +152,9 @@ pub struct CpuMaterial {
     pub occlusion_strength: f32,
     pub normal_scale: f32,
     pub double_sided: bool,
+    /// KHR_materials_unlit: shade as flat base color, ignoring lights, IBL and
+    /// shadows entirely. Widely used by Sketchfab/mobile/AR and stylised assets.
+    pub unlit: bool,
     pub base_color_texture: Option<CpuTextureRef>,
     pub metallic_roughness_texture: Option<CpuTextureRef>,
     pub normal_texture: Option<CpuTextureRef>,
@@ -171,6 +174,7 @@ impl Default for CpuMaterial {
             occlusion_strength: 1.0,
             normal_scale: 1.0,
             double_sided: false,
+            unlit: false,
             base_color_texture: None,
             metallic_roughness_texture: None,
             normal_texture: None,

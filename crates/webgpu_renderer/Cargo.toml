@@ -20,7 +20,7 @@ winit = "0.30"
 pollster = "0.4"
 bytemuck = { version = "1.25", features = ["derive"] }
 glam = { version = "0.30", features = ["bytemuck"] }
-gltf = { version = "1", features = ["import", "KHR_lights_punctual", "KHR_texture_transform", "KHR_materials_emissive_strength"] }
+gltf = { version = "1", features = ["import", "KHR_lights_punctual", "KHR_texture_transform", "KHR_materials_emissive_strength", "KHR_materials_unlit"] }
 # MikkTSpace reference tangent generation (opt-in; the default stays Lengyel).
 # bevy_mikktspace is the pure-Rust port - unlike the `mikktspace` crate it does
 # NOT pull the stale nalgebra 0.26 (which is future-incompat on current rustc).

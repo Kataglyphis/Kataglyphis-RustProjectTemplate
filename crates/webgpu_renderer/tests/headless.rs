@@ -1063,3 +1063,69 @@ fn caster_culling_engages_and_shadows_survive() {
         "the cube's shadow vanished - culling ate a visible caster ({shadowed_plane} shadowed px)"
     );
 }
+
+#[test]
+fn gltf_loader_reads_unlit_flag() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_unlit.gltf");
+    let scene = load_gltf(path).expect("cube_unlit.gltf must load");
+    assert!(scene.primitives[0].material.unlit, "KHR_materials_unlit must be parsed");
+    // The plain cube must NOT be marked unlit, or the flag is meaningless.
+    let lit = load_gltf(cube_path()).expect("cube.gltf must load");
+    assert!(!lit.primitives[0].material.unlit);
+}
+
+/// An unlit material is defined as exactly base_color: no lighting, IBL,
+/// shadowing or emissive. So changing the light must not change a single pixel
+/// of it, while the lit control changes visibly.
+#[test]
+fn unlit_material_ignores_the_light() {
+    let Ok(gpu) = GpuContext::new_headless() else {
+        eprintln!("SKIP: no GPU adapter available in this environment");
+        return;
+    };
+    let (w, h) = (128, 128);
+    let camera = OrbitCamera::default();
+
+    let render_both_lights = |path: std::path::PathBuf| -> (Vec<u8>, Vec<u8>) {
+        let scene = load_gltf(path).expect("scene must load");
+        let mut r = ForwardRenderer::new(&gpu, w, h);
+        r.upload_scene(&gpu, &scene);
+        r.light_dir_ambient = glam::Vec4::new(1.0, 1.0, 0.5, 0.05);
+        let a = r.render_to_pixels(&gpu, w, h, &camera).expect("render a");
+        // Swing the light to the opposite side and drop ambient.
+        r.light_dir_ambient = glam::Vec4::new(-1.0, -1.0, -0.5, 0.0);
+        let b = r.render_to_pixels(&gpu, w, h, &camera).expect("render b");
+        (a, b)
+    };
+
+    // Compare ONLY the cube's own pixels: the procedural sky follows the sun,
+    // so a whole-frame comparison would measure the background, not the
+    // material. Sample a centred window the cube covers in both frames.
+    let centre_window = |px: &[u8]| -> Vec<u8> {
+        let mut out = Vec::new();
+        for y in (h / 2 - 12)..(h / 2 + 12) {
+            for x in (w / 2 - 12)..(w / 2 + 12) {
+                let i = ((y * w + x) * 4) as usize;
+                out.extend_from_slice(&px[i..i + 4]);
+            }
+        }
+        out
+    };
+
+    let unlit_path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_unlit.gltf");
+    let (ua, ub) = render_both_lights(unlit_path);
+    assert_eq!(
+        centre_window(&ua),
+        centre_window(&ub),
+        "an unlit material must be identical under any lighting"
+    );
+
+    let (la, lb) = render_both_lights(cube_path());
+    assert_ne!(
+        centre_window(&la),
+        centre_window(&lb),
+        "control: a lit material must change with the light"
+    );
+}
