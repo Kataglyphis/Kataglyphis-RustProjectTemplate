@@ -399,6 +399,21 @@ fn load_primitive(
         (vertices, indices)
     };
 
+    // Morph targets: per-target POSITION/NORMAL deltas. Weights default to zero
+    // (the base mesh); a WEIGHTS animation channel / mesh defaults drive them later.
+    let morph_targets: Vec<crate::scene::MorphTarget> = reader
+        .read_morph_targets()
+        .map(|(pos, norm, _tan)| crate::scene::MorphTarget {
+            position_deltas: pos
+                .map(|it| it.map(Vec3::from_array).collect())
+                .unwrap_or_default(),
+            normal_deltas: norm
+                .map(|it| it.map(Vec3::from_array).collect())
+                .unwrap_or_default(),
+        })
+        .collect();
+    let morph_weights = vec![0.0f32; morph_targets.len()];
+
     let material = primitive.material();
     let pbr = material.pbr_metallic_roughness();
 
@@ -461,6 +476,8 @@ fn load_primitive(
         node_index: None,
         skin_index: None,
         material: cpu_material,
+        morph_targets,
+        morph_weights,
     }))
 }
 

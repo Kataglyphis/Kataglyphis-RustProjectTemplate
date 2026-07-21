@@ -31,6 +31,8 @@ fn primitive(vertices: Vec<Vertex>, indices: Vec<u32>) -> CpuPrimitive {
         node_index: None,
         skin_index: None,
         material: CpuMaterial::default(),
+        morph_targets: Vec::new(),
+        morph_weights: Vec::new(),
     }
 }
 
