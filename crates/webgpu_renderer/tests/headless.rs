@@ -51,6 +51,20 @@ fn gltf_loader_reads_base_color_texture() {
 }
 
 #[test]
+fn gltf_loader_applies_emissive_strength() {
+    // The asset declares emissiveFactor [0.5, 0.4, 0.3] and a
+    // KHR_materials_emissive_strength of 3.0, so the loaded factor must be the
+    // product (HDR emitters exceed the [0,1] glTF factor range).
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/assets/cube_emissive_strength.gltf");
+    let scene = load_gltf(path).expect("cube_emissive_strength.gltf must load");
+    let e = scene.primitives[0].material.emissive_factor;
+    assert!((e[0] - 1.5).abs() < 1e-5, "r: {}", e[0]);
+    assert!((e[1] - 1.2).abs() < 1e-5, "g: {}", e[1]);
+    assert!((e[2] - 0.9).abs() < 1e-5, "b: {}", e[2]);
+}
+
+#[test]
 fn renders_cube_headless() {
     let Ok(gpu) = GpuContext::new_headless() else {
         eprintln!("SKIP: no GPU adapter available in this environment");
