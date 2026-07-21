@@ -1041,7 +1041,11 @@ impl ForwardRenderer {
             // distance and the whole system would look wired but do nothing.
             // QEM's ratio is a triangle budget, so level 0 halves regardless
             // of how dense the input is.
-            let (lod_levels, lod_min_distances) = if self.lod_enabled {
+            // Morphed primitives are excluded from LOD: `apply_morph_targets`
+            // re-blends only the full-res `vertex_buffer`, so a simplified LOD
+            // level would draw the un-morphed neutral pose and the object would
+            // visibly pop to its rest shape at distance. Keep them full-res.
+            let (lod_levels, lod_min_distances) = if self.lod_enabled && !has_morph {
                 let chain = crate::scene::lod::build_lod_chain_with(
                     prim,
                     &self.lod_switch_distances,

@@ -138,6 +138,48 @@ fn an_lod_frame_still_renders() {
 }
 
 #[test]
+fn morphed_primitives_are_excluded_from_lod() {
+    // A morphed primitive must keep drawing its full-res buffer at every
+    // distance even with LOD enabled: `apply_morph_targets` re-blends only the
+    // full-res vertex buffer, so a simplified LOD level would draw the
+    // un-morphed neutral pose and the object would pop to its rest shape.
+    let Ok(gpu) = GpuContext::new_headless() else {
+        eprintln!("SKIP: no GPU adapter available in this environment");
+        return;
+    };
+    let morph_path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_morph.gltf");
+    let scene = load_gltf(&morph_path).expect("cube_morph.gltf must load");
+    assert_eq!(
+        scene.primitives[0].morph_targets.len(),
+        1,
+        "the fixture must actually carry a morph target"
+    );
+
+    let mut renderer = ForwardRenderer::new(&gpu, 128, 128);
+    renderer.lod_enabled = true;
+    renderer.lod_switch_distances = vec![8.0, 24.0];
+    renderer.upload_scene(&gpu, &scene);
+
+    assert_eq!(
+        renderer.lod_level_count(0),
+        0,
+        "a morphed primitive must not build LOD levels even with LOD enabled"
+    );
+
+    let full = scene.primitives[0].indices.len() as u32;
+    for distance in [0.5f32, 12.0, 60.0, 10_000.0] {
+        assert_eq!(
+            renderer
+                .selected_index_count(0, Vec3::new(0.0, 0.0, distance))
+                .unwrap(),
+            full,
+            "a morphed primitive must draw full detail at distance {distance}"
+        );
+    }
+}
+
+#[test]
 fn quadric_level_zero_differs_from_full_detail() {
     // The trap that made the whole feature inert-by-default: clustering's
     // first level uses a cell ratio of 0.02, which on a low-poly mesh puts
