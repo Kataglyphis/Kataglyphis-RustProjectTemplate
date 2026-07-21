@@ -243,6 +243,9 @@ pub struct ForwardRenderer {
     shadow_casters_considered: u32,
     primitives: Vec<GpuPrimitive>,
     scene_bounds: Option<(Vec3, Vec3)>,
+    /// GPU textures actually created by the last `upload_scene` (shared images
+    /// are uploaded once). Exposed so tests can prove the dedup, not infer it.
+    uploaded_texture_count: usize,
     depth: wgpu::TextureView,
     hdr_view: wgpu::TextureView,
     target_size: (u32, u32),
@@ -646,6 +649,7 @@ impl ForwardRenderer {
             lod_enabled: false,
             lod_switch_distances: vec![8.0, 24.0],
             scene_bounds: None,
+            uploaded_texture_count: 0,
             depth,
             hdr_view,
             target_size: (width.max(1), height.max(1)),
@@ -739,6 +743,13 @@ impl ForwardRenderer {
             .get(primitive_index)
             .map(|p| p.instance_count)
             .unwrap_or(0)
+    }
+
+    /// GPU textures created by the most recent [`Self::upload_scene`]. Shared
+    /// images upload once, so this is < the number of material slots whenever a
+    /// scene reuses a texture.
+    pub fn uploaded_texture_count(&self) -> usize {
+        self.uploaded_texture_count
     }
 
     /// Whole-scene world bounds, exactly as cascade fitting reads them. `None`
@@ -953,6 +964,20 @@ impl ForwardRenderer {
         // nodes' world matrices to size their bounds (below).
         let upload_node_world = CpuScene::compute_world_transforms(&scene.nodes);
 
+        // One GPU texture per (image, color space), not one per primitive that
+        // references it. Without this a 200-primitive glTF sharing a single 4K
+        // atlas ran 200 CPU mip-chain builds - `generate_mips` does a per-texel
+        // powf for the sRGB-correct average - and uploaded the same pixels 200
+        // times. That is the load hitch AND the VRAM ceiling. The CPU side is
+        // already `Arc<CpuTexture>`, so the pointer is a free identity key;
+        // `srgb` joins it because the same image can legitimately be uploaded
+        // both ways (base color vs a data map).
+        let mut texture_cache: std::collections::HashMap<(usize, bool), wgpu::TextureView> =
+            std::collections::HashMap::new();
+        let mut sampler_cache: std::collections::HashMap<CpuSampler, wgpu::Sampler> =
+            std::collections::HashMap::new();
+        let mut uploaded_textures = 0usize;
+
         for (i, prim) in scene.primitives.iter().enumerate() {
             // Morphed primitives are re-blended and re-uploaded per frame, so
             // their vertex buffer needs COPY_DST. Everyone else stays upload-once.
@@ -1011,17 +1036,38 @@ impl ForwardRenderer {
             for (slot_index, (texture_ref, fallback)) in slots.iter().enumerate() {
                 match texture_ref {
                     Some(tex_ref) => {
-                        views.push(create_material_texture(
-                            gpu,
-                            &tex_ref.texture,
-                            tex_ref.srgb,
-                            Some(&format!("material_{i}_slot_{slot_index}")),
-                        ));
-                        samplers.push(create_sampler(device, &tex_ref.sampler));
+                        let key = (std::sync::Arc::as_ptr(&tex_ref.texture) as usize, tex_ref.srgb);
+                        let view = match texture_cache.get(&key) {
+                            Some(v) => v.clone(),
+                            None => {
+                                let v = create_material_texture(
+                                    gpu,
+                                    &tex_ref.texture,
+                                    tex_ref.srgb,
+                                    Some(&format!("material_{i}_slot_{slot_index}")),
+                                );
+                                uploaded_textures += 1;
+                                texture_cache.insert(key, v.clone());
+                                v
+                            }
+                        };
+                        views.push(view);
+                        samplers.push(
+                            sampler_cache
+                                .entry(tex_ref.sampler)
+                                .or_insert_with(|| create_sampler(device, &tex_ref.sampler))
+                                .clone(),
+                        );
                     }
                     None => {
                         views.push((*fallback).clone());
-                        samplers.push(create_sampler(device, &CpuSampler::default()));
+                        let d = CpuSampler::default();
+                        samplers.push(
+                            sampler_cache
+                                .entry(d)
+                                .or_insert_with(|| create_sampler(device, &d))
+                                .clone(),
+                        );
                     }
                 }
             }
@@ -1221,6 +1267,7 @@ impl ForwardRenderer {
                 morph_dirty: has_morph && prim.morph_weights.iter().any(|w| *w != 0.0),
             });
         }
+        self.uploaded_texture_count = uploaded_textures;
     }
 
     /// Renders the scene HDR->tonemap into `output_view` (surface frame or

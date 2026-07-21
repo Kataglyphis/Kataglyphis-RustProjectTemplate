@@ -64,7 +64,7 @@ impl InstanceRaw {
 }
 
 /// Texture filtering/wrapping requested by the glTF sampler.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Default)]
 pub struct CpuSampler {
     pub mag_nearest: bool,
     pub min_nearest: bool,
@@ -73,7 +73,7 @@ pub struct CpuSampler {
     pub wrap_v: CpuWrap,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Default)]
 pub enum CpuWrap {
     #[default]
     Repeat,

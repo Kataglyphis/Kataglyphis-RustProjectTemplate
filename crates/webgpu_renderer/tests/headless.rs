@@ -1129,3 +1129,48 @@ fn unlit_material_ignores_the_light() {
         "control: a lit material must change with the light"
     );
 }
+
+/// A shared image must be uploaded ONCE, not once per primitive that references
+/// it. Without dedup a 200-primitive glTF sharing one atlas ran 200 CPU
+/// mip-chain builds and uploaded the same pixels 200 times - the load hitch and
+/// the VRAM ceiling both.
+#[test]
+fn a_shared_texture_uploads_once() {
+    let Ok(gpu) = GpuContext::new_headless() else {
+        eprintln!("SKIP: no GPU adapter available in this environment");
+        return;
+    };
+
+    let scene = load_gltf(textured_cube_path()).expect("cube_textured.gltf must load");
+    assert!(
+        scene.primitives[0].material.base_color_texture.is_some(),
+        "fixture must have a texture to share"
+    );
+
+    // Two primitives referencing the SAME Arc<CpuTexture>.
+    let mut shared = scene.clone();
+    let second = shared.primitives[0].clone();
+    shared.primitives.push(second);
+
+    let mut r = ForwardRenderer::new(&gpu, 64, 64);
+    r.upload_scene(&gpu, &shared);
+    let shared_uploads = r.uploaded_texture_count();
+
+    // The single-primitive baseline uploads the same distinct images.
+    let mut r1 = ForwardRenderer::new(&gpu, 64, 64);
+    r1.upload_scene(&gpu, &scene);
+    let single_uploads = r1.uploaded_texture_count();
+
+    assert_eq!(
+        shared_uploads, single_uploads,
+        "duplicating a primitive must not upload its textures again \
+         ({shared_uploads} vs {single_uploads})"
+    );
+    assert!(single_uploads > 0, "the fixture should upload something");
+
+    // And the frame must still render correctly with the cached views.
+    let px = r
+        .render_to_pixels(&gpu, 64, 64, &OrbitCamera::default())
+        .expect("render with shared textures must succeed");
+    assert!(px.chunks_exact(4).any(|p| p[0] != px[0]), "frame is uniformly flat");
+}
