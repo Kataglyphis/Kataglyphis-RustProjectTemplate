@@ -204,6 +204,7 @@ fn morph_weight_lifts_the_silhouette() {
     prim.morph_targets = vec![MorphTarget {
         position_deltas: vec![Vec3::new(0.0, 0.6, 0.0); vcount],
         normal_deltas: vec![Vec3::ZERO; vcount],
+        tangent_deltas: vec![Vec3::ZERO; vcount],
     }];
     prim.morph_weights = vec![0.0];
     scene.primitives = vec![prim];

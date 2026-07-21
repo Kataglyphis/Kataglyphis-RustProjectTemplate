@@ -416,11 +416,16 @@ fn load_primitive(
     // mesh/node), and a WEIGHTS animation channel can drive them per frame.
     let morph_targets: Vec<crate::scene::MorphTarget> = reader
         .read_morph_targets()
-        .map(|(pos, norm, _tan)| crate::scene::MorphTarget {
+        .map(|(pos, norm, tan)| crate::scene::MorphTarget {
             position_deltas: pos
                 .map(|it| it.map(Vec3::from_array).collect())
                 .unwrap_or_default(),
             normal_deltas: norm
+                .map(|it| it.map(Vec3::from_array).collect())
+                .unwrap_or_default(),
+            // glTF morph TANGENT deltas are vec3 (direction only); the base
+            // tangent's w handedness is never morphed.
+            tangent_deltas: tan
                 .map(|it| it.map(Vec3::from_array).collect())
                 .unwrap_or_default(),
         })

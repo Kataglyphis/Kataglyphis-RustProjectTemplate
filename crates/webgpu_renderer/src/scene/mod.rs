@@ -293,12 +293,16 @@ pub struct CpuPrimitive {
 }
 
 /// One glTF morph target: per-vertex deltas added to the base attributes,
-/// scaled by the target's weight. `normal_deltas` is empty when the target
-/// morphs only positions.
+/// scaled by the target's weight. `normal_deltas`/`tangent_deltas` are empty
+/// when the target morphs only positions.
+///
+/// Tangent deltas are vec3 per the glTF spec: a morph target displaces the
+/// tangent direction only, never the `w` handedness of the base TANGENT.
 #[derive(Clone, Debug, Default)]
 pub struct MorphTarget {
     pub position_deltas: Vec<Vec3>,
     pub normal_deltas: Vec<Vec3>,
+    pub tangent_deltas: Vec<Vec3>,
 }
 
 /// Blend a base vertex buffer with its morph targets at the given weights:
@@ -326,6 +330,15 @@ pub fn blend_morph_targets(base: &[Vertex], targets: &[MorphTarget], weights: &[
                 vert.normal[2] += w * delta.z;
             }
         }
+        // Tangent xyz only - w carries the bitangent handedness and is not
+        // morphed (glTF morph TANGENT accessors are vec3).
+        for (v, delta) in target.tangent_deltas.iter().enumerate() {
+            if let Some(vert) = out.get_mut(v) {
+                vert.tangent[0] += w * delta.x;
+                vert.tangent[1] += w * delta.y;
+                vert.tangent[2] += w * delta.z;
+            }
+        }
     }
     // Re-normalize any normals we touched.
     if targets.iter().any(|t| !t.normal_deltas.is_empty()) {
@@ -334,6 +347,19 @@ pub fn blend_morph_targets(base: &[Vertex], targets: &[MorphTarget], weights: &[
             let len = n.length();
             if len > 1e-6 {
                 vert.normal = (n / len).to_array();
+            }
+        }
+    }
+    // Same for tangents, preserving the handedness in w.
+    if targets.iter().any(|t| !t.tangent_deltas.is_empty()) {
+        for vert in &mut out {
+            let t = Vec3::new(vert.tangent[0], vert.tangent[1], vert.tangent[2]);
+            let len = t.length();
+            if len > 1e-6 {
+                let n = t / len;
+                vert.tangent[0] = n.x;
+                vert.tangent[1] = n.y;
+                vert.tangent[2] = n.z;
             }
         }
     }
@@ -415,6 +441,7 @@ mod tests {
         let t = MorphTarget {
             position_deltas: vec![Vec3::new(0.0, 1.0, 0.0), Vec3::new(0.0, 2.0, 0.0)],
             normal_deltas: vec![],
+            tangent_deltas: vec![],
         };
         let out = blend_morph_targets(&base, &[t], &[0.0]);
         assert_eq!(out[0].position, base[0].position);
@@ -427,6 +454,7 @@ mod tests {
         let t = MorphTarget {
             position_deltas: vec![Vec3::new(0.0, 10.0, 0.0)],
             normal_deltas: vec![],
+            tangent_deltas: vec![],
         };
         let out = blend_morph_targets(&base, &[t], &[1.0]);
         assert!((out[0].position[1] - 10.0).abs() < 1e-5, "got {:?}", out[0].position);
@@ -438,10 +466,12 @@ mod tests {
         let t1 = MorphTarget {
             position_deltas: vec![Vec3::new(4.0, 0.0, 0.0)],
             normal_deltas: vec![],
+            tangent_deltas: vec![],
         };
         let t2 = MorphTarget {
             position_deltas: vec![Vec3::new(0.0, 8.0, 0.0)],
             normal_deltas: vec![],
+            tangent_deltas: vec![],
         };
         // 0.5*4 = 2.0 on x, 0.25*8 = 2.0 on y.
         let out = blend_morph_targets(&base, &[t1, t2], &[0.5, 0.25]);
@@ -453,12 +483,35 @@ mod tests {
     }
 
     #[test]
+    fn morph_tangents_blend_and_keep_their_handedness() {
+        // glTF morph TANGENT deltas are vec3: they rotate the tangent direction
+        // but must never touch w, which carries the bitangent handedness. A
+        // flipped w would mirror the normal-mapped lighting on that vertex.
+        let mut base = vert([0.0, 0.0, 0.0]);
+        base.tangent = [1.0, 0.0, 0.0, -1.0];
+        let t = MorphTarget {
+            position_deltas: vec![],
+            normal_deltas: vec![],
+            tangent_deltas: vec![Vec3::new(0.0, 1.0, 0.0)],
+        };
+        let out = blend_morph_targets(&[base], &[t], &[1.0]);
+        let tan = Vec3::new(out[0].tangent[0], out[0].tangent[1], out[0].tangent[2]);
+        // (1,0,0) + (0,1,0) normalized = (1/sqrt2, 1/sqrt2, 0).
+        let d = std::f32::consts::FRAC_1_SQRT_2;
+        assert!((tan.length() - 1.0).abs() < 1e-5, "tangent must be unit, got {tan:?}");
+        assert!((tan.x - d).abs() < 1e-4 && (tan.y - d).abs() < 1e-4,
+            "tangent should rotate toward +Y, got {tan:?}");
+        assert_eq!(out[0].tangent[3], -1.0, "handedness w must be preserved");
+    }
+
+    #[test]
     fn morph_normals_are_renormalized() {
         let mut base = vert([0.0, 0.0, 0.0]);
         base.normal = [1.0, 0.0, 0.0];
         let t = MorphTarget {
             position_deltas: vec![],
             normal_deltas: vec![Vec3::new(0.0, 1.0, 0.0)],
+            tangent_deltas: vec![],
         };
         let out = blend_morph_targets(&[base], &[t], &[1.0]);
         let n = Vec3::from_array(out[0].normal);
