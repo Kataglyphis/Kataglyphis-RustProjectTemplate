@@ -1574,10 +1574,20 @@ impl ForwardRenderer {
             );
         }
 
-        self.bloom
-            .encode(&mut encoder, self.gpu_timing.scope(TimedPass::Bloom));
-        self.ssao
-            .encode(&mut encoder, self.gpu_timing.scope(TimedPass::Ssao));
+        // Skip these outright at zero strength. The tonemap composites bloom as
+        // `bloom * params.x` and AO as `mix(1.0, ao_raw, params.y)`, so at zero
+        // the (now stale) texture provably contributes nothing - while the passes
+        // themselves still cost a brightpass plus a separable Gaussian, and a
+        // half-res depth pass plus a 3x3 blur, every single frame. Turning the
+        // overlay slider to 0 used to cost exactly as much as leaving it on.
+        if self.bloom_strength > 0.0 {
+            self.bloom
+                .encode(&mut encoder, self.gpu_timing.scope(TimedPass::Bloom));
+        }
+        if self.ssao_strength > 0.0 {
+            self.ssao
+                .encode(&mut encoder, self.gpu_timing.scope(TimedPass::Ssao));
+        }
         // Histogram and reduction run against THIS frame's HDR target, before
         // the tonemap reads the exposure they produce. Measuring the frame it
         // is about to expose costs one extra pass over the HDR image and
