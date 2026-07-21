@@ -10,6 +10,7 @@ use crate::context::GpuContext;
 use crate::render::bloom::BloomPass;
 use crate::render::gpu_timing::{GpuTiming, TimedPass};
 use crate::render::ibl::{BrdfLut, EquirectImage, IblEnvironment, IblFallback};
+use crate::render::occlusion::OcclusionQueries;
 use crate::render::ssao::SsaoPass;
 use crate::render::tonemap::TonemapPass;
 use crate::scene::camera::OrbitCamera;
@@ -258,6 +259,18 @@ pub struct ForwardRenderer {
     pub ibl_intensity: f32,
     /// Per-pass GPU timestamps. Inert until [`Self::enable_gpu_timing`].
     gpu_timing: GpuTiming,
+    /// Per-primitive hardware occlusion detection over the forward depth.
+    /// Resources always exist; recording only happens when the flag below is
+    /// set. See [`crate::render::occlusion`].
+    occlusion: OcclusionQueries,
+    /// Record the occlusion detection pass after the forward pass.
+    ///
+    /// Off by default, like `lod_enabled` and `enable_gpu_timing`: it adds a
+    /// depth-only pass plus a query resolve, and this increment only DETECTS
+    /// occlusion (reads back per-primitive visibility) - it does not yet skip
+    /// any draw, so the frame renders exactly as before whether it is on or
+    /// off. The visibility is exposed via [`Self::occlusion_visibility`].
+    pub occlusion_queries_enabled: bool,
     /// Camera distances at which successive levels take over, ascending.
     ///
     /// Two levels by default: the geometry roughly halves at each, so the
@@ -595,6 +608,8 @@ impl ForwardRenderer {
             cascade_splits: [10.0, 30.0, CASCADE_COUNT as f32, 0.0],
             primitives: Vec::new(),
             gpu_timing: GpuTiming::unavailable(),
+            occlusion: OcclusionQueries::new(device),
+            occlusion_queries_enabled: false,
             lod_enabled: false,
             lod_switch_distances: vec![8.0, 24.0],
             scene_bounds: None,
@@ -744,6 +759,24 @@ impl ForwardRenderer {
 
     pub fn gpu_timings_ms(&self) -> Vec<(&'static str, f32)> {
         self.gpu_timing.timings_ms()
+    }
+
+    /// Per-primitive occlusion visibility from the most recent completed
+    /// readback, index-aligned to the uploaded primitives: `true` when the
+    /// primitive's world AABB had > 0 fragments pass the depth test.
+    ///
+    /// Empty until occlusion queries are enabled AND the first readback has
+    /// landed (a frame or two after the first recorded frame - the readback is
+    /// asynchronous, exactly like the GPU timings). A primitive absent from the
+    /// slice has not been measured yet; that is not the same as "occluded".
+    pub fn occlusion_visibility(&self) -> &[bool] {
+        self.occlusion.visibility()
+    }
+
+    /// Raw occlusion sample counts behind [`Self::occlusion_visibility`], for
+    /// tests and diagnostics that want the fragment counts, not just the bool.
+    pub fn occlusion_samples(&self) -> &[u64] {
+        self.occlusion.samples()
     }
 
     /// True while per-pass GPU timings are being collected.
@@ -1354,6 +1387,29 @@ impl ForwardRenderer {
             }
         }
 
+        // Occlusion DETECTION rides the forward depth: a separate depth-only
+        // pass draws each primitive's world AABB with depth-write off, so a box
+        // fully behind other geometry counts zero fragments. It records after
+        // the forward pass (which filled the depth) and before SSAO reads that
+        // depth back - depth-write off means the two see identical depth. Same
+        // view_proj as the forward draws, so the boxes line up with the
+        // geometry. This increment only measures; nothing is skipped yet.
+        if self.occlusion_queries_enabled && !self.primitives.is_empty() {
+            let aabbs: Vec<(Vec3, Vec3)> = self
+                .primitives
+                .iter()
+                .map(|p| (p.aabb_min, p.aabb_max))
+                .collect();
+            self.occlusion.record(
+                &gpu.device,
+                &gpu.queue,
+                &mut encoder,
+                &self.depth,
+                view_proj,
+                &aabbs,
+            );
+        }
+
         self.bloom
             .encode(&mut encoder, self.gpu_timing.scope(TimedPass::Bloom));
         self.ssao
@@ -1382,6 +1438,11 @@ impl ForwardRenderer {
         self.gpu_timing.resolve(&mut encoder);
         gpu.queue.submit(Some(encoder.finish()));
         self.gpu_timing.end_frame(&gpu.device);
+        // Consume any occlusion readback that has landed. Non-blocking: results
+        // lag the frame they measured by one or more frames, which is fine -
+        // detection is advisory and a later increment reads last-known
+        // visibility. When disabled this is a cheap poll over empty slots.
+        self.occlusion.end_frame(&gpu.device);
     }
 
     /// Headless helper: renders one tonemapped frame into a fresh RGBA8

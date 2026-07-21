@@ -11,6 +11,10 @@ const SHADERS: &[(&str, &str)] = &[
     ("bloom", include_str!("../src/shaders/bloom.wgsl")),
     ("ssao", include_str!("../src/shaders/ssao.wgsl")),
     ("ibl", include_str!("../src/shaders/ibl.wgsl")),
+    (
+        "occlusion_bbox",
+        include_str!("../src/shaders/occlusion_bbox.wgsl"),
+    ),
 ];
 
 #[test]
