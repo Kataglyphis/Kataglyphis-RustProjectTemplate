@@ -13,6 +13,7 @@ yanked = "deny"
 ignore = [
   "RUSTSEC-2025-0141", # bincode: unmaintained (via burn-core)
   "RUSTSEC-2024-0436", # paste: unmaintained (via burn-ndarray, cubecl-core)
+  "RUSTSEC-2026-0192", # ttf-parser: unmaintained (transitive font-parsing dep); informational, not a vulnerability
   # quick-xml 0.39.4 (latest; no fixed release yet) via wayland-scanner, a
   # BUILD-TIME Wayland-protocol code generator. Its XML input is the trusted
   # protocol spec shipped with the toolchain, never attacker-controlled
