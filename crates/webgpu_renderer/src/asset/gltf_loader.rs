@@ -448,7 +448,15 @@ fn load_primitive(
         alpha_mode,
         metallic_factor: pbr.metallic_factor(),
         roughness_factor: pbr.roughness_factor(),
-        emissive_factor: material.emissive_factor(),
+        // KHR_materials_emissive_strength scales the emissive contribution
+        // past the [0,1] glTF factor range (for HDR emitters). Fold it into
+        // the factor so the shader path stays unchanged; default 1.0 when the
+        // extension is absent.
+        emissive_factor: {
+            let ef = material.emissive_factor();
+            let strength = material.emissive_strength().unwrap_or(1.0);
+            [ef[0] * strength, ef[1] * strength, ef[2] * strength]
+        },
         occlusion_strength: material
             .occlusion_texture()
             .map_or(1.0, |occ| occ.strength()),
