@@ -101,6 +101,28 @@ impl GpuContext {
             })
             .await
             .context("No GPU adapter found (headless)")?;
+
+        // Refuse the OpenGL backend for headless work. This renderer's shaders
+        // target WebGPU/Vulkan-class backends - the SSAO pass does a
+        // `textureLoad` from a depth texture, which naga cannot translate to
+        // GLSL ("not supported in GLSL"), so `create_render_pipeline` aborts
+        // before a single test runs. CI's image ships only llvmpipe (GL
+        // software) with no lavapipe (Vulkan software), so wgpu falls back to GL
+        // and every GPU test dies at pipeline creation. Treating GL as "no
+        // usable adapter" lets those tests skip through their
+        // `let Ok(gpu) = new_headless() else { skip }` guards, exactly as when
+        // no adapter exists at all. A real Vulkan/DX/Metal adapter - including
+        // lavapipe if it is ever added to the image - still runs them.
+        let info = adapter.get_info();
+        if info.backend == wgpu::Backend::Gl {
+            anyhow::bail!(
+                "headless adapter '{}' is the OpenGL backend, which cannot run this \
+                 renderer's WGSL (depth textureLoad has no GLSL translation); \
+                 treating as no usable adapter",
+                info.name
+            );
+        }
+
         let (device, queue, supports_bc, supports_timestamps) = request_device(&adapter).await?;
         Ok(Self {
             device,
