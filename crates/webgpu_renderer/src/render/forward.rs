@@ -2435,17 +2435,21 @@ fn transform_aabb(m: Mat4, min: Vec3, max: Vec3) -> (Vec3, Vec3) {
 }
 
 fn compute_world_bounds(scene: &CpuScene) -> Option<(Vec3, Vec3)> {
+    // Union the per-primitive world AABBs rather than raw vertices: that helper
+    // covers the morphed pose, so a morphing scene cannot report bounds smaller
+    // than the geometry it actually draws (these bounds fit the shadow
+    // cascades). For primitives without morph targets the helper still does the
+    // exact per-vertex transform, so this is identical to the previous result.
     let mut bounds: Option<(Vec3, Vec3)> = None;
     for prim in &scene.primitives {
-        for vertex in &prim.vertices {
-            let world = prim
-                .transform
-                .transform_point3(Vec3::from_array(vertex.position));
-            bounds = Some(match bounds {
-                None => (world, world),
-                Some((min, max)) => (min.min(world), max.max(world)),
-            });
+        if prim.vertices.is_empty() {
+            continue;
         }
+        let (lo, hi) = primitive_world_aabb(prim);
+        bounds = Some(match bounds {
+            None => (lo, hi),
+            Some((min, max)) => (min.min(lo), max.max(hi)),
+        });
     }
     bounds
 }
