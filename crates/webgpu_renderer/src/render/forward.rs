@@ -88,6 +88,15 @@ struct GpuPrimitive {
     /// binds slot 1 and there is no un-instanced code path to diverge.
     instance_buffer: wgpu::Buffer,
     instance_count: u32,
+    /// Instance transforms as last set, empty for the default identity. Kept on
+    /// the CPU so culling bounds can be recomposed whenever EITHER side moves:
+    /// the instances (`set_instances`) or the posed geometry they replicate
+    /// (`set_animation_time`).
+    instance_transforms: Vec<Mat4>,
+    /// World bounds BEFORE instance transforms are applied - the box each
+    /// instance replicates. Stored so recomposition never has to re-derive the
+    /// skinned/morphed pose.
+    pre_instance_aabb: (Vec3, Vec3),
     model: Mat4,
     base_color: [f32; 4],
     material_factors: [f32; 4],
@@ -678,6 +687,13 @@ impl ForwardRenderer {
                 bytemuck::bytes_of(&InstanceRaw::IDENTITY),
             );
             primitive.instance_count = 1;
+            // Back to the single identity instance: bounds collapse to the
+            // posed box.
+            primitive.instance_transforms.clear();
+            let (min, max) = primitive.pre_instance_aabb;
+            primitive.aabb_min = min;
+            primitive.aabb_max = max;
+            primitive.world_center = (min + max) * 0.5;
             return;
         }
 
@@ -701,6 +717,12 @@ impl ForwardRenderer {
                     });
         }
         primitive.instance_count = raw.len() as u32;
+        // Culling bounds must span every instance, not just the base position.
+        primitive.instance_transforms = transforms.to_vec();
+        let (min, max) = instanced_bounds(primitive.pre_instance_aabb, transforms);
+        primitive.aabb_min = min;
+        primitive.aabb_max = max;
+        primitive.world_center = (min + max) * 0.5;
     }
 
     /// Instance count of a primitive, for tests and diagnostics.
@@ -1121,6 +1143,8 @@ impl ForwardRenderer {
                 shadow_bind_group,
                 instance_buffer,
                 instance_count: 1,
+                instance_transforms: Vec::new(),
+                pre_instance_aabb: prim_bounds,
                 model: prim.transform,
                 base_color: material.base_color,
                 material_factors: [
@@ -1873,7 +1897,10 @@ impl ForwardRenderer {
                             &world,
                         );
                     }
-                    let (min, max) = bounds;
+                    // The posed box just moved, so the instances that replicate
+                    // it have to be re-applied on top.
+                    prim.pre_instance_aabb = bounds;
+                    let (min, max) = instanced_bounds(bounds, &prim.instance_transforms);
                     prim.aabb_min = min;
                     prim.aabb_max = max;
                     prim.world_center = (min + max) * 0.5;
@@ -2252,6 +2279,28 @@ impl Frustum {
         }
         true
     }
+}
+
+/// Bounds covering every instance of `pre`.
+///
+/// The shader builds its world position as `instance_matrix * skin_matrix * v`,
+/// so instance transforms apply ON TOP of the posed box. With bounds left at the
+/// un-instanced position the frustum test culls the whole primitive - every
+/// instance with it - as soon as the base position leaves the view, even while
+/// the instances are on screen. Empty means the default single identity
+/// instance, for which the bounds are unchanged.
+fn instanced_bounds(pre: (Vec3, Vec3), instances: &[Mat4]) -> (Vec3, Vec3) {
+    if instances.is_empty() {
+        return pre;
+    }
+    let mut min = Vec3::splat(f32::INFINITY);
+    let mut max = Vec3::splat(f32::NEG_INFINITY);
+    for m in instances {
+        let (lo, hi) = transform_aabb(*m, pre.0, pre.1);
+        min = min.min(lo);
+        max = max.max(hi);
+    }
+    (min, max)
 }
 
 /// Widen world bounds so they cover every pose the skin can put this geometry
