@@ -215,6 +215,9 @@ impl ApplicationHandler for DemoApp {
                         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                             label: Some("overlay_encoder"),
                         });
+                // Show this frame's cull counts next to the occlusion toggle,
+                // same as the native viewer, so the web overlay reports them too.
+                controls.occlusion_stats = Some(renderer.occlusion_cull_stats());
                 let mut changed = false;
                 overlay.render(
                     &gpu.device,
@@ -237,6 +240,7 @@ impl ApplicationHandler for DemoApp {
                     renderer.bloom_strength = controls.bloom;
                     renderer.ssao_strength = controls.ssao;
                     renderer.exposure_ev = controls.exposure_ev;
+                    renderer.occlusion_queries_enabled = controls.occlusion_culling;
                 }
 
                 window.pre_present_notify();
