@@ -694,6 +694,7 @@ impl ForwardRenderer {
             primitive.aabb_min = min;
             primitive.aabb_max = max;
             primitive.world_center = (min + max) * 0.5;
+            self.recompute_scene_bounds();
             return;
         }
 
@@ -723,6 +724,7 @@ impl ForwardRenderer {
         primitive.aabb_min = min;
         primitive.aabb_max = max;
         primitive.world_center = (min + max) * 0.5;
+        self.recompute_scene_bounds();
     }
 
     /// Instance count of a primitive, for tests and diagnostics.
@@ -731,6 +733,12 @@ impl ForwardRenderer {
             .get(primitive_index)
             .map(|p| p.instance_count)
             .unwrap_or(0)
+    }
+
+    /// Whole-scene world bounds, exactly as cascade fitting reads them. `None`
+    /// before anything is uploaded.
+    pub fn scene_bounds(&self) -> Option<(Vec3, Vec3)> {
+        self.scene_bounds
     }
 
     /// World-space culling bounds of a primitive, exactly as the frustum test
@@ -1180,7 +1188,14 @@ impl ForwardRenderer {
                     AlphaMode::Mask(cutoff) => material.base_color[3] >= cutoff,
                     AlphaMode::Opaque => true,
                 },
-                world_center: primitive_world_center(prim),
+                // AABB centre, NOT the vertex centroid: every other site that
+                // maintains this field uses the box centre, so seeding it with a
+                // centroid meant the value silently changed definition the first
+                // time an animation or instance update ran. For an unevenly
+                // tessellated mesh the two differ, so `set_animation_time(0.0)` -
+                // no movement at all - could flip the LOD level across a switch
+                // distance and reorder the transparent draw list.
+                world_center: (prim_bounds.0 + prim_bounds.1) * 0.5,
                 aabb_min: prim_bounds.0,
                 aabb_max: prim_bounds.1,
                 lod_levels,
@@ -1880,8 +1895,6 @@ impl ForwardRenderer {
 
         let world = CpuScene::compute_world_transforms(&self.nodes);
         self.pending_joint_world = Some(world.clone());
-        let mut scene_min = Vec3::splat(f32::INFINITY);
-        let mut scene_max = Vec3::splat(f32::NEG_INFINITY);
         for prim in &mut self.primitives {
             if let Some(node) = prim.node_index {
                 if let Some(m) = world.get(node) {
@@ -1906,11 +1919,27 @@ impl ForwardRenderer {
                     prim.world_center = (min + max) * 0.5;
                 }
             }
-            scene_min = scene_min.min(prim.aabb_min);
-            scene_max = scene_max.max(prim.aabb_max);
         }
-        if scene_min.x <= scene_max.x {
-            self.scene_bounds = Some((scene_min, scene_max));
+        self.recompute_scene_bounds();
+    }
+
+    /// Re-derive `scene_bounds` from the current per-primitive world AABBs.
+    ///
+    /// These bounds are the ONLY input to cascade fitting (`update_cascades`), so
+    /// anything that moves a primitive's box has to call this or the shadow
+    /// cascades stay fitted to a scene that no longer exists - geometry then falls
+    /// outside every cascade and neither receives nor casts shadows. Kept as one
+    /// function precisely because the bug it fixes was two call sites disagreeing
+    /// about whose job this was.
+    fn recompute_scene_bounds(&mut self) {
+        let mut min = Vec3::splat(f32::INFINITY);
+        let mut max = Vec3::splat(f32::NEG_INFINITY);
+        for prim in &self.primitives {
+            min = min.min(prim.aabb_min);
+            max = max.max(prim.aabb_max);
+        }
+        if min.x <= max.x {
+            self.scene_bounds = Some((min, max));
         }
     }
 
@@ -2359,18 +2388,6 @@ fn primitive_world_aabb(prim: &crate::scene::CpuPrimitive) -> (Vec3, Vec3) {
     } else {
         (min, max)
     }
-}
-
-fn primitive_world_center(prim: &crate::scene::CpuPrimitive) -> Vec3 {
-    if prim.vertices.is_empty() {
-        return prim.transform.transform_point3(Vec3::ZERO);
-    }
-    let mut sum = Vec3::ZERO;
-    for vertex in &prim.vertices {
-        sum += Vec3::from_array(vertex.position);
-    }
-    prim.transform
-        .transform_point3(sum / prim.vertices.len() as f32)
 }
 
 fn keyframe_lerp_indices(times: &[f32], t: f32) -> (usize, usize, f32) {

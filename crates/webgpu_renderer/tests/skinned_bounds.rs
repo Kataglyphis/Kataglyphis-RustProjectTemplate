@@ -157,3 +157,40 @@ fn bounds_span_every_instance() {
         base_max.x
     );
 }
+
+/// scene_bounds is the ONLY input to shadow-cascade fitting, so it has to track
+/// instances too. Before this was wired, cascades stayed fitted to the
+/// un-instanced scene and distant instances neither received nor cast shadows.
+#[test]
+fn scene_bounds_track_instances() {
+    let Ok(gpu) = GpuContext::new_headless() else {
+        eprintln!("SKIP: no GPU adapter available in this environment");
+        return;
+    };
+
+    let scene = skinned_cube_scene(Vec3::ZERO);
+    let mut renderer = ForwardRenderer::new(&gpu, 128, 128);
+    renderer.upload_scene(&gpu, &scene);
+    let (base_min, base_max) = renderer.scene_bounds().expect("bounds after upload");
+
+    renderer.set_instances(&gpu, 0, &[Mat4::from_translation(Vec3::new(40.0, 0.0, 0.0))]);
+    let (min, max) = renderer.scene_bounds().expect("bounds after instancing");
+    assert!(
+        max.x >= 39.0,
+        "scene bounds must follow the instance out to x=40, got x=[{}, {}]",
+        min.x,
+        max.x
+    );
+
+    // And collapse back when the instances are cleared.
+    renderer.set_instances(&gpu, 0, &[]);
+    let (rmin, rmax) = renderer.scene_bounds().expect("bounds after reset");
+    assert!(
+        (rmax.x - base_max.x).abs() < 1e-4 && (rmin.x - base_min.x).abs() < 1e-4,
+        "clearing instances must restore scene bounds, got x=[{}, {}] vs [{}, {}]",
+        rmin.x,
+        rmax.x,
+        base_min.x,
+        base_max.x
+    );
+}

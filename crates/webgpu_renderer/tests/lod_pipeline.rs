@@ -205,3 +205,42 @@ fn quadric_level_zero_differs_from_full_detail() {
         "quadric level 0 must actually simplify: {full_triangles} -> {level_0}"
     );
 }
+
+/// `world_center` drives BOTH the LOD switch distance and the transparent sort
+/// order, so its definition must not change underneath them. It used to be the
+/// vertex centroid at upload and the AABB centre afterwards, so the first
+/// `set_animation_time` - even one that moves nothing - could flip the selected
+/// LOD level and reorder blending on any unevenly tessellated mesh.
+#[test]
+fn lod_selection_is_stable_across_a_no_op_animation_update() {
+    let Ok(gpu) = GpuContext::new_headless() else {
+        eprintln!("SKIP: no GPU adapter available in this environment");
+        return;
+    };
+    let mut renderer = renderer_with_lod(&gpu, true);
+
+    // Sample a spread of distances so at least one sits near a switch boundary.
+    let eyes = [
+        Vec3::new(0.0, 0.0, 3.0),
+        Vec3::new(0.0, 0.0, 8.0),
+        Vec3::new(0.0, 0.0, 12.0),
+        Vec3::new(0.0, 0.0, 24.0),
+        Vec3::new(0.0, 0.0, 60.0),
+    ];
+    let before: Vec<u32> = eyes
+        .iter()
+        .map(|e| renderer.selected_index_count(0, *e).unwrap())
+        .collect();
+
+    // Advancing to t=0 changes no pose whatsoever.
+    renderer.set_animation_time(0.0);
+
+    let after: Vec<u32> = eyes
+        .iter()
+        .map(|e| renderer.selected_index_count(0, *e).unwrap())
+        .collect();
+    assert_eq!(
+        before, after,
+        "a no-op animation update must not change LOD selection"
+    );
+}
