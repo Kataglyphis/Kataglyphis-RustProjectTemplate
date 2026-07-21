@@ -595,6 +595,8 @@ impl WeldedMesh {
             node_index: source.node_index,
             skin_index: source.skin_index,
             material: source.material.clone(),
+            morph_targets: Vec::new(),
+            morph_weights: Vec::new(),
         }
     }
 }
@@ -686,6 +688,8 @@ mod tests {
             node_index: None,
             skin_index: None,
             material: CpuMaterial::default(),
+            morph_targets: Vec::new(),
+            morph_weights: Vec::new(),
         }
     }
 

@@ -115,6 +115,10 @@ pub fn simplify_primitive(prim: &CpuPrimitive, cell_ratio: f32) -> CpuPrimitive 
         node_index: prim.node_index,
         skin_index: prim.skin_index,
         material: prim.material.clone(),
+        // Simplification changes the vertex count, so per-vertex morph deltas
+        // can't be carried; simplified LODs render unmorphed.
+        morph_targets: Vec::new(),
+        morph_weights: Vec::new(),
     }
 }
 
@@ -243,6 +247,8 @@ mod tests {
             node_index: None,
             skin_index: None,
             material: CpuMaterial::default(),
+            morph_targets: Vec::new(),
+            morph_weights: Vec::new(),
         }
     }
 

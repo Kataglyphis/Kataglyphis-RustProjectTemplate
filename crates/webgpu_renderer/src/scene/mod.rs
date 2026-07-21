@@ -218,6 +218,10 @@ pub enum ChannelValues {
     Translation(Vec<Vec3>),
     Rotation(Vec<Quat>),
     Scale(Vec<Vec3>),
+    /// Morph-target weights, flattened: `num_targets` weights per keyframe
+    /// (length `num_targets * times.len()`, ×3 under CubicSpline). `num_targets`
+    /// is derived at apply time from the target primitive's morph-target count.
+    MorphWeights(Vec<f32>),
 }
 
 /// glTF keyframe interpolation mode. For `CubicSpline` the value array holds
@@ -280,6 +284,60 @@ pub struct CpuPrimitive {
     /// Index into `CpuScene::skins` for skinned primitives.
     pub skin_index: Option<usize>,
     pub material: CpuMaterial,
+    /// glTF morph targets (POSITION/NORMAL deltas per target). Empty for meshes
+    /// without morphing.
+    pub morph_targets: Vec<MorphTarget>,
+    /// Current morph weights, one per `morph_targets` entry. Seeded from the
+    /// mesh's default weights and animatable via a WEIGHTS animation channel.
+    pub morph_weights: Vec<f32>,
+}
+
+/// One glTF morph target: per-vertex deltas added to the base attributes,
+/// scaled by the target's weight. `normal_deltas` is empty when the target
+/// morphs only positions.
+#[derive(Clone, Debug, Default)]
+pub struct MorphTarget {
+    pub position_deltas: Vec<Vec3>,
+    pub normal_deltas: Vec<Vec3>,
+}
+
+/// Blend a base vertex buffer with its morph targets at the given weights:
+/// `out[v] = base[v] + Σ_i weight[i] * target[i].delta[v]`. Positions always,
+/// normals when the target provides them (re-normalized). Targets/weights of
+/// mismatched length and zero-weight targets are skipped. Returns a fresh buffer
+/// so the base stays intact for the next frame's weights.
+pub fn blend_morph_targets(base: &[Vertex], targets: &[MorphTarget], weights: &[f32]) -> Vec<Vertex> {
+    let mut out = base.to_vec();
+    for (target, &w) in targets.iter().zip(weights) {
+        if w == 0.0 {
+            continue;
+        }
+        for (v, delta) in target.position_deltas.iter().enumerate() {
+            if let Some(vert) = out.get_mut(v) {
+                vert.position[0] += w * delta.x;
+                vert.position[1] += w * delta.y;
+                vert.position[2] += w * delta.z;
+            }
+        }
+        for (v, delta) in target.normal_deltas.iter().enumerate() {
+            if let Some(vert) = out.get_mut(v) {
+                vert.normal[0] += w * delta.x;
+                vert.normal[1] += w * delta.y;
+                vert.normal[2] += w * delta.z;
+            }
+        }
+    }
+    // Re-normalize any normals we touched.
+    if targets.iter().any(|t| !t.normal_deltas.is_empty()) {
+        for vert in &mut out {
+            let n = Vec3::from_array(vert.normal);
+            let len = n.length();
+            if len > 1e-6 {
+                vert.normal = (n / len).to_array();
+            }
+        }
+    }
+    out
 }
 
 #[derive(Clone, Debug, Default)]
@@ -339,6 +397,73 @@ impl CpuScene {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn vert(pos: [f32; 3]) -> Vertex {
+        Vertex {
+            position: pos,
+            normal: [0.0, 0.0, 1.0],
+            uv: [0.0, 0.0],
+            tangent: [0.0; 4],
+            joints: [0.0; 4],
+            weights: [0.0; 4],
+        }
+    }
+
+    #[test]
+    fn morph_zero_weight_returns_the_base() {
+        let base = vec![vert([0.0, 0.0, 0.0]), vert([1.0, 0.0, 0.0])];
+        let t = MorphTarget {
+            position_deltas: vec![Vec3::new(0.0, 1.0, 0.0), Vec3::new(0.0, 2.0, 0.0)],
+            normal_deltas: vec![],
+        };
+        let out = blend_morph_targets(&base, &[t], &[0.0]);
+        assert_eq!(out[0].position, base[0].position);
+        assert_eq!(out[1].position, base[1].position);
+    }
+
+    #[test]
+    fn morph_full_weight_adds_the_delta() {
+        let base = vec![vert([0.0, 0.0, 0.0])];
+        let t = MorphTarget {
+            position_deltas: vec![Vec3::new(0.0, 10.0, 0.0)],
+            normal_deltas: vec![],
+        };
+        let out = blend_morph_targets(&base, &[t], &[1.0]);
+        assert!((out[0].position[1] - 10.0).abs() < 1e-5, "got {:?}", out[0].position);
+    }
+
+    #[test]
+    fn morph_two_targets_accumulate_at_their_weights() {
+        let base = vec![vert([0.0, 0.0, 0.0])];
+        let t1 = MorphTarget {
+            position_deltas: vec![Vec3::new(4.0, 0.0, 0.0)],
+            normal_deltas: vec![],
+        };
+        let t2 = MorphTarget {
+            position_deltas: vec![Vec3::new(0.0, 8.0, 0.0)],
+            normal_deltas: vec![],
+        };
+        // 0.5*4 = 2.0 on x, 0.25*8 = 2.0 on y.
+        let out = blend_morph_targets(&base, &[t1, t2], &[0.5, 0.25]);
+        assert!(
+            (out[0].position[0] - 2.0).abs() < 1e-5 && (out[0].position[1] - 2.0).abs() < 1e-5,
+            "got {:?}",
+            out[0].position
+        );
+    }
+
+    #[test]
+    fn morph_normals_are_renormalized() {
+        let mut base = vert([0.0, 0.0, 0.0]);
+        base.normal = [1.0, 0.0, 0.0];
+        let t = MorphTarget {
+            position_deltas: vec![],
+            normal_deltas: vec![Vec3::new(0.0, 1.0, 0.0)],
+        };
+        let out = blend_morph_targets(&[base], &[t], &[1.0]);
+        let n = Vec3::from_array(out[0].normal);
+        assert!((n.length() - 1.0).abs() < 1e-5, "normal must be unit, got {n:?}");
+    }
 
     fn node(parent: Option<usize>, translation: Vec3) -> CpuNode {
         CpuNode {

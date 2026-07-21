@@ -93,7 +93,9 @@ fn build_scene(
                 ReadOutputs::Scales(iter) => {
                     ChannelValues::Scale(iter.map(glam::Vec3::from_array).collect())
                 }
-                ReadOutputs::MorphTargetWeights(_) => continue,
+                ReadOutputs::MorphTargetWeights(w) => {
+                    ChannelValues::MorphWeights(w.into_f32().collect())
+                }
             };
             let interpolation = match channel.sampler().interpolation() {
                 gltf::animation::Interpolation::Linear => Interpolation::Linear,
@@ -399,6 +401,21 @@ fn load_primitive(
         (vertices, indices)
     };
 
+    // Morph targets: per-target POSITION/NORMAL deltas. Weights default to zero
+    // (the base mesh); a WEIGHTS animation channel / mesh defaults drive them later.
+    let morph_targets: Vec<crate::scene::MorphTarget> = reader
+        .read_morph_targets()
+        .map(|(pos, norm, _tan)| crate::scene::MorphTarget {
+            position_deltas: pos
+                .map(|it| it.map(Vec3::from_array).collect())
+                .unwrap_or_default(),
+            normal_deltas: norm
+                .map(|it| it.map(Vec3::from_array).collect())
+                .unwrap_or_default(),
+        })
+        .collect();
+    let morph_weights = vec![0.0f32; morph_targets.len()];
+
     let material = primitive.material();
     let pbr = material.pbr_metallic_roughness();
 
@@ -461,6 +478,8 @@ fn load_primitive(
         node_index: None,
         skin_index: None,
         material: cpu_material,
+        morph_targets,
+        morph_weights,
     }))
 }
 
@@ -575,7 +594,7 @@ pub(crate) fn generate_tangents_mikktspace(
     vertices: &[Vertex],
     indices: &[u32],
 ) -> Option<(Vec<Vertex>, Vec<u32>)> {
-    if indices.len() < 3 || indices.len() % 3 != 0 {
+    if indices.len() < 3 || !indices.len().is_multiple_of(3) {
         return None;
     }
 
@@ -638,8 +657,7 @@ pub(crate) fn generate_tangents_mikktspace(
     let mut remap: std::collections::HashMap<(u32, [u32; 4]), u32> = std::collections::HashMap::new();
     let mut out_vertices: Vec<Vertex> = Vec::with_capacity(vertices.len());
     let mut out_indices: Vec<u32> = Vec::with_capacity(indices.len());
-    for corner in 0..num_corners {
-        let orig = indices[corner];
+    for (corner, &orig) in indices.iter().enumerate() {
         let tangent = mesh.tangents[corner];
         let key = (
             orig,

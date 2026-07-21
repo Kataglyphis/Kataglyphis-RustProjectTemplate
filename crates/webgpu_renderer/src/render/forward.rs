@@ -16,7 +16,7 @@ use crate::render::tonemap::TonemapPass;
 use crate::scene::camera::OrbitCamera;
 use crate::scene::{
     AlphaMode, ChannelValues, CpuAnimation, CpuLight, CpuLightKind, CpuNode, CpuSampler, CpuScene,
-    CpuSkin, CpuTexture, CpuWrap, InstanceRaw, Interpolation, Vertex,
+    CpuSkin, CpuTexture, CpuWrap, InstanceRaw, Interpolation, MorphTarget, Vertex,
 };
 
 /// Upper bound on joints per skin (storage buffer is sized to the skin).
@@ -112,6 +112,17 @@ struct GpuPrimitive {
     /// levels so per-frame selection scans a contiguous f32 slice and never
     /// allocates.
     lod_min_distances: Vec<f32>,
+    /// Un-morphed vertices, kept only when this primitive has morph targets so
+    /// each frame re-blends from the neutral pose rather than accumulating.
+    /// Empty (and cheap) for the overwhelming majority of primitives.
+    base_vertices: Vec<Vertex>,
+    /// POSITION/NORMAL deltas, one entry per morph target.
+    morph_targets: Vec<MorphTarget>,
+    /// Current per-target weights (animation-driven or the mesh defaults).
+    morph_weights: Vec<f32>,
+    /// Set when `morph_weights` changed and the vertex buffer needs re-blending
+    /// on the next render. Starts true so non-zero default weights apply once.
+    morph_dirty: bool,
 }
 
 impl GpuPrimitive {
@@ -894,10 +905,18 @@ impl ForwardRenderer {
         }
 
         for (i, prim) in scene.primitives.iter().enumerate() {
+            // Morphed primitives are re-blended and re-uploaded per frame, so
+            // their vertex buffer needs COPY_DST. Everyone else stays upload-once.
+            let has_morph = !prim.morph_targets.is_empty();
+            let vertex_usage = if has_morph {
+                wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST
+            } else {
+                wgpu::BufferUsages::VERTEX
+            };
             let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some(&format!("vertices_{i}")),
                 contents: bytemuck::cast_slice(&prim.vertices),
-                usage: wgpu::BufferUsages::VERTEX,
+                usage: vertex_usage,
             });
             let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some(&format!("indices_{i}")),
@@ -1112,6 +1131,18 @@ impl ForwardRenderer {
                 aabb_max: prim_bounds.1,
                 lod_levels,
                 lod_min_distances,
+                // Keep the neutral pose only for morphed primitives; the render
+                // path re-blends from it each time the weights move.
+                base_vertices: if has_morph {
+                    prim.vertices.clone()
+                } else {
+                    Vec::new()
+                },
+                morph_targets: prim.morph_targets.clone(),
+                morph_weights: prim.morph_weights.clone(),
+                // Apply once up front so non-zero mesh default weights show
+                // even before any animation channel drives them.
+                morph_dirty: has_morph && prim.morph_weights.iter().any(|w| *w != 0.0),
             });
         }
     }
@@ -1178,6 +1209,7 @@ impl ForwardRenderer {
         );
 
         self.update_joint_matrices(gpu);
+        self.apply_morph_targets(gpu);
 
         let aspect = width as f32 / height as f32;
         let view_proj = camera.view_projection(aspect);
@@ -1674,6 +1706,27 @@ impl ForwardRenderer {
         }
     }
 
+    /// Re-blend and re-upload the vertex buffer of every morphed primitive whose
+    /// weights moved since the last frame. The dirty flag gates the work, so a
+    /// paused animation (or a scene with no morph targets) costs nothing here,
+    /// and only morphed primitives carry the `base_vertices` copy this reads.
+    /// LOD levels are left un-morphed (simplified meshes drop morphing, v1).
+    fn apply_morph_targets(&mut self, gpu: &GpuContext) {
+        for prim in &mut self.primitives {
+            if !prim.morph_dirty || prim.base_vertices.is_empty() {
+                continue;
+            }
+            let blended = crate::scene::blend_morph_targets(
+                &prim.base_vertices,
+                &prim.morph_targets,
+                &prim.morph_weights,
+            );
+            gpu.queue
+                .write_buffer(&prim.vertex_buffer, 0, bytemuck::cast_slice(&blended));
+            prim.morph_dirty = false;
+        }
+    }
+
     /// True when the uploaded scene carries animations.
     pub fn has_animations(&self) -> bool {
         !self.animations.is_empty()
@@ -1730,6 +1783,42 @@ impl ForwardRenderer {
                         {
                             node.scale = v;
                         }
+                    }
+                    // Morph weights don't drive a node transform; they re-pose
+                    // the primitives on this node, handled in a separate pass
+                    // below so it doesn't fight the `nodes` mutable borrow.
+                    ChannelValues::MorphWeights(_) => {}
+                }
+            }
+        }
+
+        // Morph-weight pass: sample per-target weights and mark affected
+        // primitives dirty. `num_targets` comes from each primitive, so the
+        // sampler strides the flattened channel correctly regardless of mesh.
+        for animation in &self.animations {
+            let t = if animation.duration > 0.0 {
+                time % animation.duration
+            } else {
+                0.0
+            };
+            for channel in &animation.channels {
+                let ChannelValues::MorphWeights(values) = &channel.values else {
+                    continue;
+                };
+                let (i0, i1, frac) = keyframe_lerp_indices(&channel.times, t);
+                let dt = match (channel.times.get(i0), channel.times.get(i1)) {
+                    (Some(a), Some(b)) => b - a,
+                    _ => 0.0,
+                };
+                for prim in &mut self.primitives {
+                    if prim.node_index != Some(channel.node) || prim.morph_targets.is_empty() {
+                        continue;
+                    }
+                    let n = prim.morph_targets.len();
+                    let w = sample_morph_weights(values, n, channel.interpolation, i0, i1, frac, dt);
+                    if w != prim.morph_weights {
+                        prim.morph_weights = w;
+                        prim.morph_dirty = true;
                     }
                 }
             }
@@ -2239,6 +2328,48 @@ fn sample_quat(
     }
 }
 
+/// Sample a morph-weights channel: `n` weights per keyframe, returned as a Vec
+/// of length `n`. Under CubicSpline the channel stores `3 * n` per keyframe as
+/// three contiguous `n`-blocks (in-tangents, values, out-tangents), each target
+/// Hermite-interpolated with the same basis the vector/quaternion paths use. On
+/// any out-of-range index the weight falls back to 0 rather than panicking.
+fn sample_morph_weights(
+    values: &[f32],
+    n: usize,
+    interp: Interpolation,
+    i0: usize,
+    i1: usize,
+    frac: f32,
+    dt: f32,
+) -> Vec<f32> {
+    if n == 0 {
+        return Vec::new();
+    }
+    let at = |idx: usize| values.get(idx).copied().unwrap_or(0.0);
+    match interp {
+        Interpolation::Step => (0..n).map(|k| at(i0 * n + k)).collect(),
+        Interpolation::Linear => (0..n)
+            .map(|k| {
+                let a = at(i0 * n + k);
+                let b = at(i1 * n + k);
+                a + (b - a) * frac
+            })
+            .collect(),
+        Interpolation::CubicSpline => {
+            let (w0, w1, w2, w3) = cubic_spline_weights(frac, dt);
+            (0..n)
+                .map(|k| {
+                    let p0 = at(i0 * 3 * n + n + k); // value at start
+                    let m0 = at(i0 * 3 * n + 2 * n + k); // out-tangent at start
+                    let m1 = at(i1 * 3 * n + k); // in-tangent at end
+                    let p1 = at(i1 * 3 * n + n + k); // value at end
+                    p0 * w0 + m0 * w1 + p1 * w2 + m1 * w3
+                })
+                .collect()
+        }
+    }
+}
+
 fn primitive_local_aabb(prim: &crate::scene::CpuPrimitive) -> (Vec3, Vec3) {
     let mut min = Vec3::splat(f32::INFINITY);
     let mut max = Vec3::splat(f32::NEG_INFINITY);
@@ -2640,6 +2771,39 @@ mod tests {
         assert!(start.dot(q0).abs() > 0.999, "t=0 should match q0");
         assert!(end.dot(q1).abs() > 0.999, "t=1 should match q1");
         assert!((start.length() - 1.0).abs() < 1e-5, "result must be a unit quaternion");
+    }
+
+    #[test]
+    fn morph_weights_linear_and_step_stride_two_targets() {
+        // 2 targets, 2 keyframes, flattened [k0t0, k0t1, k1t0, k1t1].
+        let vals = vec![0.0, 1.0, 1.0, 3.0];
+        let lin = sample_morph_weights(&vals, 2, Interpolation::Linear, 0, 1, 0.5, 1.0);
+        assert_eq!(lin, vec![0.5, 2.0], "each target lerps independently");
+        let step = sample_morph_weights(&vals, 2, Interpolation::Step, 0, 1, 0.9, 1.0);
+        assert_eq!(step, vec![0.0, 1.0], "Step holds the left keyframe per target");
+    }
+
+    #[test]
+    fn morph_weights_cubic_hits_keyframe_values_at_ends() {
+        // 1 target, 2 keyframes, cubic layout is [in, value, out] per keyframe:
+        // [in0, v0, out0, in1, v1, out1] with non-zero tangents to prove the
+        // ends ignore them.
+        let vals = vec![9.0, 0.2, -4.0, 7.0, 0.8, -3.0];
+        let start = sample_morph_weights(&vals, 1, Interpolation::CubicSpline, 0, 1, 0.0, 1.0);
+        let end = sample_morph_weights(&vals, 1, Interpolation::CubicSpline, 0, 1, 1.0, 1.0);
+        assert!((start[0] - 0.2).abs() < 1e-5, "t=0 is value0, got {}", start[0]);
+        assert!((end[0] - 0.8).abs() < 1e-5, "t=1 is value1, got {}", end[0]);
+    }
+
+    #[test]
+    fn morph_weights_out_of_range_falls_back_to_zero() {
+        // A malformed/short channel must not panic; missing samples read 0.
+        let vals = vec![0.5];
+        let w = sample_morph_weights(&vals, 3, Interpolation::Linear, 0, 1, 0.5, 1.0);
+        assert_eq!(w.len(), 3);
+        assert_eq!(w[1], 0.0);
+        assert_eq!(w[2], 0.0);
+        assert!(sample_morph_weights(&vals, 0, Interpolation::Linear, 0, 1, 0.5, 1.0).is_empty());
     }
 
     #[test]
