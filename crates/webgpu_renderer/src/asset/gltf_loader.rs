@@ -164,6 +164,36 @@ fn build_scene(
     Ok(scene)
 }
 
+/// Expands a triangle strip or fan into a plain triangle list.
+///
+/// Strip winding alternates: every odd triangle has its first two indices
+/// swapped, otherwise half the faces come out back-facing and get culled.
+fn triangulate(indices: &[u32], mode: gltf::mesh::Mode) -> Vec<u32> {
+    use gltf::mesh::Mode;
+    match mode {
+        Mode::TriangleStrip => {
+            let mut out = Vec::with_capacity(indices.len().saturating_sub(2) * 3);
+            for i in 0..indices.len().saturating_sub(2) {
+                let (a, b, c) = (indices[i], indices[i + 1], indices[i + 2]);
+                if i % 2 == 0 {
+                    out.extend_from_slice(&[a, b, c]);
+                } else {
+                    out.extend_from_slice(&[b, a, c]);
+                }
+            }
+            out
+        }
+        Mode::TriangleFan => {
+            let mut out = Vec::with_capacity(indices.len().saturating_sub(2) * 3);
+            for i in 1..indices.len().saturating_sub(1) {
+                out.extend_from_slice(&[indices[0], indices[i], indices[i + 1]]);
+            }
+            out
+        }
+        _ => indices.to_vec(),
+    }
+}
+
 /// Converts a decoded glTF image (any of the formats the `gltf` crate emits)
 /// into tightly packed RGBA8.
 fn to_rgba8(img: gltf::image::Data) -> anyhow::Result<CpuTexture> {
@@ -316,7 +346,13 @@ fn visit_node(
 
     if let Some(mesh) = node.mesh() {
         for primitive in mesh.primitives() {
-            if primitive.mode() != gltf::mesh::Mode::Triangles {
+            // Strips and fans are triangulated on load (below); anything else
+            // (points, lines) genuinely has no triangles to draw.
+            use gltf::mesh::Mode;
+            if !matches!(
+                primitive.mode(),
+                Mode::Triangles | Mode::TriangleStrip | Mode::TriangleFan
+            ) {
                 log::warn!(
                     "Skipping non-triangle primitive (mode {:?}) in mesh {:?}",
                     primitive.mode(),
@@ -414,10 +450,15 @@ fn load_primitive(
         })
         .collect();
 
-    let indices: Vec<u32> = match reader.read_indices() {
+    let raw_indices: Vec<u32> = match reader.read_indices() {
         Some(iter) => iter.into_u32().collect(),
         None => (0..vertices.len() as u32).collect(),
     };
+    // Strip/fan primitives were skipped entirely, so those meshes simply never
+    // appeared - with only a log line to say why. Triangulating on load keeps
+    // every downstream stage (culling, LOD, QEM, the draw path) on one plain
+    // triangle-list representation.
+    let indices = triangulate(&raw_indices, primitive.mode());
 
     // Missing normals: derive flat face normals so lighting stays sane.
     if reader.read_normals().is_none() {
@@ -735,6 +776,28 @@ pub(crate) fn generate_tangents_mikktspace(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn strips_and_fans_expand_to_triangle_lists() {
+        use gltf::mesh::Mode;
+        let idx = [0u32, 1, 2, 3, 4];
+
+        // Strip: 3 triangles, and the ODD one must have its first two indices
+        // swapped or half the faces come out back-facing and get culled.
+        let strip = triangulate(&idx, Mode::TriangleStrip);
+        assert_eq!(strip, vec![0, 1, 2, /*swapped*/ 2, 1, 3, 2, 3, 4]);
+
+        // Fan: every triangle shares index 0.
+        let fan = triangulate(&idx, Mode::TriangleFan);
+        assert_eq!(fan, vec![0, 1, 2, 0, 2, 3, 0, 3, 4]);
+
+        // Triangles pass through untouched.
+        assert_eq!(triangulate(&idx, Mode::Triangles), idx.to_vec());
+
+        // Degenerate input must not panic or underflow.
+        assert!(triangulate(&[0, 1], Mode::TriangleStrip).is_empty());
+        assert!(triangulate(&[], Mode::TriangleFan).is_empty());
+    }
 
     #[test]
     fn sixteen_bit_images_down_convert_instead_of_failing_the_whole_file() {
