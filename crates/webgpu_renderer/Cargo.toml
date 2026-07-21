@@ -15,7 +15,7 @@ crate-type = ["cdylib", "rlib"]
 anyhow = { workspace = true }
 log = { workspace = true }
 env_logger = { workspace = true }
-wgpu = "27.0.1"
+wgpu = "29"
 winit = "0.30"
 pollster = "0.4"
 bytemuck = { version = "1.25", features = ["derive"] }
@@ -25,15 +25,15 @@ gltf = { version = "1", features = ["import", "KHR_lights_punctual", "KHR_textur
 # bevy_mikktspace is the pure-Rust port - unlike the `mikktspace` crate it does
 # NOT pull the stale nalgebra 0.26 (which is future-incompat on current rustc).
 bevy_mikktspace = "1"
-egui = "0.33.3"
-egui-wgpu = "0.33.3"
-egui-winit = { version = "0.33.3", default-features = false }
+egui = "0.35"
+egui-wgpu = "0.35"
+egui-winit = { version = "0.35", default-features = false }
 ktx2 = "0.5"
 
 [dev-dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }
 # Shader interop with the C++ Vulkan engine: WGSL -> SPIR-V / GLSL.
-naga = { version = "26", features = ["wgsl-in", "spv-out", "glsl-out"] }
+naga = { version = "29", features = ["wgsl-in", "spv-out", "glsl-out"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"
