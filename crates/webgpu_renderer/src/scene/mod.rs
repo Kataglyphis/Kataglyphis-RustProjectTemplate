@@ -321,3 +321,64 @@ impl CpuScene {
         self.primitives.iter().map(|p| p.indices.len() / 3).sum()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn node(parent: Option<usize>, translation: Vec3) -> CpuNode {
+        CpuNode {
+            parent,
+            translation,
+            rotation: Quat::IDENTITY,
+            scale: Vec3::ONE,
+        }
+    }
+
+    #[test]
+    fn root_node_world_equals_its_local_transform() {
+        let nodes = vec![node(None, Vec3::new(1.0, 2.0, 3.0))];
+        let world = CpuScene::compute_world_transforms(&nodes);
+        let p = world[0].transform_point3(Vec3::ZERO);
+        assert!((p - Vec3::new(1.0, 2.0, 3.0)).length() < 1e-5, "got {p:?}");
+    }
+
+    #[test]
+    fn child_transform_composes_with_its_parent() {
+        // Parent translates +10 X, child translates +5 Y: the child's origin
+        // lands at (10, 5, 0) in world space.
+        let nodes = vec![
+            node(None, Vec3::new(10.0, 0.0, 0.0)),
+            node(Some(0), Vec3::new(0.0, 5.0, 0.0)),
+        ];
+        let world = CpuScene::compute_world_transforms(&nodes);
+        let p = world[1].transform_point3(Vec3::ZERO);
+        assert!((p - Vec3::new(10.0, 5.0, 0.0)).length() < 1e-5, "got {p:?}");
+    }
+
+    #[test]
+    fn resolves_correctly_when_a_child_precedes_its_parent_in_the_array() {
+        // The memoized recursion must handle out-of-order nodes: here the child
+        // is index 0 and its parent index 1. A naive single forward pass would
+        // compute the child before the parent and get the wrong world matrix.
+        let nodes = vec![
+            node(Some(1), Vec3::new(0.0, 0.0, 2.0)), // child first
+            node(None, Vec3::new(1.0, 0.0, 0.0)),    // parent second
+        ];
+        let world = CpuScene::compute_world_transforms(&nodes);
+        let child = world[0].transform_point3(Vec3::ZERO);
+        assert!((child - Vec3::new(1.0, 0.0, 2.0)).length() < 1e-5, "got {child:?}");
+    }
+
+    #[test]
+    fn three_level_chain_accumulates() {
+        let nodes = vec![
+            node(None, Vec3::new(1.0, 0.0, 0.0)),
+            node(Some(0), Vec3::new(1.0, 0.0, 0.0)),
+            node(Some(1), Vec3::new(1.0, 0.0, 0.0)),
+        ];
+        let world = CpuScene::compute_world_transforms(&nodes);
+        let leaf = world[2].transform_point3(Vec3::ZERO);
+        assert!((leaf - Vec3::new(3.0, 0.0, 0.0)).length() < 1e-5, "got {leaf:?}");
+    }
+}
