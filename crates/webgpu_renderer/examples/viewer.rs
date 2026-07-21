@@ -1,6 +1,7 @@
 //! Minimal glTF viewer: `cargo run -p kataglyphis_webgpu_renderer --example viewer [model.gltf]`
 //! Drag to orbit, wheel to zoom (auto-orbit until first drag), egui overlay
-//! with light/tonemap controls; Esc closes.
+//! with light/tonemap controls and an occlusion-culling toggle. Keys: Esc
+//! closes, "s" screenshot, "r" reload shaders. Drag-and-drop loads a model.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -222,6 +223,7 @@ impl Viewer {
             renderer.bloom_strength = controls.bloom;
             renderer.ssao_strength = controls.ssao;
             renderer.exposure_ev = controls.exposure_ev;
+            renderer.occlusion_queries_enabled = controls.occlusion_culling;
         }
 
         window.pre_present_notify();

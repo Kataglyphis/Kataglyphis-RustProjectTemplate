@@ -103,6 +103,7 @@ pub struct OverlayControls {
     pub bloom: f32,
     pub ssao: f32,
     pub exposure_ev: f32,
+    pub occlusion_culling: bool,
 }
 
 impl OverlayControls {
@@ -119,6 +120,7 @@ impl OverlayControls {
             bloom: 0.6,
             ssao: 0.7,
             exposure_ev: 0.0,
+            occlusion_culling: false,
         }
     }
 
@@ -165,6 +167,9 @@ impl OverlayControls {
                     .changed();
                 changed |= ui
                     .add(egui::Slider::new(&mut self.exposure_ev, -4.0..=4.0).text("exposure EV"))
+                    .changed();
+                changed |= ui
+                    .checkbox(&mut self.occlusion_culling, "occlusion culling")
                     .changed();
                 ui.separator();
                 ui.label("drag: orbit - wheel: zoom");
