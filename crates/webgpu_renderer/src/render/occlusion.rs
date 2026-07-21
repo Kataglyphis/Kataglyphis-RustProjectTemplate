@@ -344,6 +344,16 @@ impl OcclusionQueries {
         &self.samples
     }
 
+    /// Whether primitive `i` should be drawn given the last readback.
+    ///
+    /// Defaults to VISIBLE (`true`) for any index the readback has not covered
+    /// yet - the first frames before results land, or a primitive added since.
+    /// Defaulting to visible is the safe direction: a never-culled primitive
+    /// costs a draw, a wrongly-culled one pops out of existence.
+    pub fn visible(&self, i: usize) -> bool {
+        self.visibility.get(i).copied().unwrap_or(true)
+    }
+
     /// Index of a slot with no outstanding map, preferring `current` so the
     /// ring advances in order when nothing is in flight.
     fn free_slot(&self) -> Option<usize> {

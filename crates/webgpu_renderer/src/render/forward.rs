@@ -208,6 +208,11 @@ pub struct ForwardRenderer {
     /// Caster draws submitted / considered across all cascades in the last
     /// frame. Summed over cascades, so one mesh under three cascades
     /// considers 3 - same convention as the C++ engine's counters.
+    /// Opaque primitives drawn / considered by the camera pass last frame,
+    /// after both frustum and (when enabled) occlusion culling. `drawn <
+    /// considered` is the observable proof occlusion culling engaged.
+    occlusion_drawn: u32,
+    occlusion_considered: u32,
     shadow_casters_drawn: u32,
     shadow_casters_considered: u32,
     primitives: Vec<GpuPrimitive>,
@@ -603,6 +608,8 @@ impl ForwardRenderer {
             shadow_layer_views,
             cascade_index_bind_groups,
             cascade_matrices: [Mat4::IDENTITY; CASCADE_COUNT],
+            occlusion_drawn: 0,
+            occlusion_considered: 0,
             shadow_casters_drawn: 0,
             shadow_casters_considered: 0,
             cascade_splits: [10.0, 30.0, CASCADE_COUNT as f32, 0.0],
@@ -755,6 +762,13 @@ impl ForwardRenderer {
     /// per-cascade culling actually engaged.
     pub fn shadow_caster_stats(&self) -> (u32, u32) {
         (self.shadow_casters_drawn, self.shadow_casters_considered)
+    }
+
+    /// Opaque primitives drawn / considered by the camera pass last frame.
+    /// With occlusion queries enabled, `drawn < considered` once a primitive
+    /// has been occluded for a frame - the observable proof the skip engaged.
+    pub fn occlusion_cull_stats(&self) -> (u32, u32) {
+        (self.occlusion_drawn, self.occlusion_considered)
     }
 
     pub fn gpu_timings_ms(&self) -> Vec<(&'static str, f32)> {
@@ -1292,6 +1306,10 @@ impl ForwardRenderer {
         }
         self.shadow_casters_drawn = casters_drawn;
         self.shadow_casters_considered = casters_considered;
+        // Occlusion-cull stats, filled by the opaque loop below and read back
+        // out to the fields once the pass (which borrows self) has ended.
+        let mut occ_drawn = 0u32;
+        let mut occ_considered = 0u32;
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("forward_pass"),
@@ -1329,11 +1347,23 @@ impl ForwardRenderer {
             // again after the sky. The sky pipeline has its own layout, which
             // invalidates every group binding when it is bound.
             pass.set_bind_group(1, &self.ibl_bind_group, &[]);
-            for prim in self
-                .primitives
-                .iter()
-                .filter(|p| !p.alpha_blend && frustum.intersects_aabb(p.aabb_min, p.aabb_max))
-            {
+            for (i, prim) in self.primitives.iter().enumerate() {
+                // Frustum first (cheap, no dependency on last frame).
+                if prim.alpha_blend || !frustum.intersects_aabb(prim.aabb_min, prim.aabb_max) {
+                    continue;
+                }
+                occ_considered += 1;
+                // Occlusion skip uses LAST frame's query result (this frame's
+                // is still being recorded below). One-frame latency is the
+                // accepted cost; `visible` defaults to true for primitives the
+                // readback has not covered, so nothing pops on the first frames
+                // or right after a scene change. The occlusion pass still
+                // queries EVERY primitive, so a skipped one is re-evaluated and
+                // reappears the frame its occluder moves away.
+                if self.occlusion_queries_enabled && !self.occlusion.visible(i) {
+                    continue;
+                }
+                occ_drawn += 1;
                 let pipeline = if prim.double_sided {
                     &self.pipeline_double_sided
                 } else {
@@ -1386,6 +1416,9 @@ impl ForwardRenderer {
                 pass.draw_indexed(0..index_count, 0, 0..prim.instance_count);
             }
         }
+
+        self.occlusion_drawn = occ_drawn;
+        self.occlusion_considered = occ_considered;
 
         // Occlusion DETECTION rides the forward depth: a separate depth-only
         // pass draws each primitive's world AABB with depth-write off, so a box

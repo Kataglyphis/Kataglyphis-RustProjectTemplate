@@ -159,3 +159,76 @@ fn detection_is_off_by_default() {
         "no visibility should be recorded while detection is off"
     );
 }
+
+#[test]
+fn an_occluded_primitive_is_actually_skipped_in_the_opaque_pass() {
+    // Increment 2: detection feeds the draw loop. Same occluder/hidden scene
+    // as the detection test; after the readback lands, the hidden cube must be
+    // SKIPPED - 1 of 2 opaque primitives drawn - while both are still frustum-
+    // visible (so this proves occlusion, not frustum, culling).
+    let Ok(gpu) = GpuContext::new_headless() else {
+        eprintln!("SKIP: no GPU adapter available in this environment");
+        return;
+    };
+
+    let occluder = cube_with_transform(
+        Mat4::from_translation(Vec3::new(0.0, 0.0, 2.0)) * Mat4::from_scale(Vec3::splat(4.0)),
+    );
+    let hidden = cube_with_transform(Mat4::from_translation(Vec3::new(0.0, 0.0, -3.0)));
+    let scene = CpuScene {
+        primitives: vec![occluder, hidden],
+        ..Default::default()
+    };
+
+    let mut renderer = ForwardRenderer::new(&gpu, 256, 256);
+    renderer.upload_scene(&gpu, &scene);
+    renderer.occlusion_queries_enabled = true;
+
+    let camera = looking_down_neg_z();
+    render_until_readback_lands(&mut renderer, &gpu, &camera);
+    // One more frame so the loop sees the settled visibility.
+    renderer
+        .render_to_pixels(&gpu, 256, 256, &camera)
+        .expect("render");
+
+    let (drawn, considered) = renderer.occlusion_cull_stats();
+    assert_eq!(considered, 2, "both cubes are within the frustum");
+    assert_eq!(
+        drawn, 1,
+        "the hidden cube must be occlusion-culled, leaving 1 draw (got {drawn})"
+    );
+
+    // Disabling it draws both again next frame - the skip is gated on the flag.
+    renderer.occlusion_queries_enabled = false;
+    renderer
+        .render_to_pixels(&gpu, 256, 256, &camera)
+        .expect("render");
+    let (drawn_off, _) = renderer.occlusion_cull_stats();
+    assert_eq!(drawn_off, 2, "with culling off both cubes draw");
+}
+
+#[test]
+fn two_visible_cubes_are_both_drawn_with_culling_on() {
+    // Guard against over-culling: two side-by-side cubes (both visible) must
+    // BOTH draw even with occlusion enabled.
+    let Ok(gpu) = GpuContext::new_headless() else {
+        eprintln!("SKIP: no GPU adapter available in this environment");
+        return;
+    };
+    let left = cube_with_transform(Mat4::from_translation(Vec3::new(-3.0, 0.0, 0.0)));
+    let right = cube_with_transform(Mat4::from_translation(Vec3::new(3.0, 0.0, 0.0)));
+    let scene = CpuScene {
+        primitives: vec![left, right],
+        ..Default::default()
+    };
+    let mut renderer = ForwardRenderer::new(&gpu, 256, 256);
+    renderer.upload_scene(&gpu, &scene);
+    renderer.occlusion_queries_enabled = true;
+    let camera = looking_down_neg_z();
+    render_until_readback_lands(&mut renderer, &gpu, &camera);
+    renderer
+        .render_to_pixels(&gpu, 256, 256, &camera)
+        .expect("render");
+    let (drawn, considered) = renderer.occlusion_cull_stats();
+    assert_eq!((drawn, considered), (2, 2), "both visible cubes must draw");
+}
