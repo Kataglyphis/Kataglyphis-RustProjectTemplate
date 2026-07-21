@@ -1308,7 +1308,7 @@ impl ForwardRenderer {
             let uniforms = Uniforms {
                 view_proj: view_proj.to_cols_array_2d(),
                 model: prim.model.to_cols_array_2d(),
-                normal_matrix: prim.model.inverse().transpose().to_cols_array_2d(),
+                normal_matrix: normal_matrix_of(prim.model).to_cols_array_2d(),
                 light_space: light_space.to_cols_array_2d(),
                 light_space_1: self.cascade_matrices[1].to_cols_array_2d(),
                 light_space_2: self.cascade_matrices[2].to_cols_array_2d(),
@@ -2325,6 +2325,22 @@ impl Frustum {
     }
 }
 
+/// Inverse-transpose of a model matrix, guarded against singular input.
+///
+/// A zero-scale node is how Blender (and plenty of exporters) hide an object, so
+/// singular model matrices arrive in ordinary files. `Mat4::inverse` on one
+/// yields inf/NaN, which poisons the normal matrix and shades that primitive as
+/// garbage. Fall back to identity: the geometry is degenerate anyway, and a
+/// finite wrong normal is strictly better than a NaN one.
+fn normal_matrix_of(model: Mat4) -> Mat4 {
+    let inv = model.inverse();
+    if inv.is_finite() {
+        inv.transpose()
+    } else {
+        Mat4::IDENTITY
+    }
+}
+
 /// True when `p` lies inside the AABB expanded by the SAME margin the occlusion
 /// proxy box uses (`occlusion_bbox.wgsl`: 2% of the half-extent plus 1 cm), so
 /// this CPU test agrees with the box actually rasterised rather than a slightly
@@ -2404,6 +2420,11 @@ fn primitive_world_aabb(prim: &crate::scene::CpuPrimitive) -> (Vec3, Vec3) {
         let world = prim
             .transform
             .transform_point3(Vec3::from_array(vertex.position));
+        // Same reasoning as primitive_local_aabb: never let a non-finite vertex
+        // (or a non-finite transform) reach the cascade fitting.
+        if !world.is_finite() {
+            continue;
+        }
         min = min.min(world);
         max = max.max(world);
     }
@@ -2556,6 +2577,15 @@ fn primitive_local_aabb(prim: &crate::scene::CpuPrimitive) -> (Vec3, Vec3) {
     let mut max = Vec3::splat(f32::NEG_INFINITY);
     for (i, vertex) in prim.vertices.iter().enumerate() {
         let p = Vec3::from_array(vertex.position);
+        // Skip non-finite positions instead of letting them propagate. A single
+        // NaN/inf vertex otherwise NaNs these bounds, then the scene bounds, then
+        // the cascade radius - and ALL THREE cascade matrices become NaN, so
+        // shadows break for every object in the scene, not just the bad mesh.
+        // (`Frustum::test_planes` also treats NaN as visible, so the bad
+        // primitive would additionally never cull.)
+        if !p.is_finite() {
+            continue;
+        }
         let (mut lo, mut hi) = (p, p);
         for target in &prim.morph_targets {
             if let Some(d) = target.position_deltas.get(i) {
@@ -2963,6 +2993,44 @@ mod tests {
         assert!(start.dot(q0).abs() > 0.999, "t=0 should match q0");
         assert!(end.dot(q1).abs() > 0.999, "t=1 should match q1");
         assert!((start.length() - 1.0).abs() < 1e-5, "result must be a unit quaternion");
+    }
+
+    #[test]
+    fn a_singular_model_matrix_yields_a_finite_normal_matrix() {
+        // Zero scale on an axis is how Blender hides an object, so singular
+        // matrices arrive in ordinary files. inverse() is inf/NaN there, and a
+        // NaN normal matrix shades the primitive as garbage.
+        let squashed = Mat4::from_scale(Vec3::new(1.0, 0.0, 1.0));
+        assert!(!squashed.inverse().is_finite(), "precondition: inverse is not finite");
+        assert!(normal_matrix_of(squashed).is_finite(), "guard must return something finite");
+        // A well-formed matrix must still get the real inverse-transpose.
+        let ok = Mat4::from_scale(Vec3::new(2.0, 1.0, 1.0));
+        let expected = ok.inverse().transpose();
+        assert!((normal_matrix_of(ok) - expected).abs_diff_eq(Mat4::ZERO, 1e-6));
+    }
+
+    #[test]
+    fn a_non_finite_vertex_cannot_poison_the_bounds() {
+        // One bad vertex used to NaN these bounds, then the scene bounds, then
+        // the cascade radius - breaking shadows for EVERY object in the scene.
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/assets/cube.gltf");
+        let scene = crate::load_gltf(path).expect("cube.gltf must load");
+        let mut prim = scene.primitives[0].clone();
+        prim.vertices[0].position = [f32::NAN, 1.0, f32::INFINITY];
+
+        let (min, max) = primitive_local_aabb(&prim);
+        assert!(
+            min.is_finite() && max.is_finite(),
+            "local bounds must stay finite, got {min:?}..{max:?}"
+        );
+        let (wmin, wmax) = primitive_world_aabb(&prim);
+        assert!(
+            wmin.is_finite() && wmax.is_finite(),
+            "world bounds must stay finite, got {wmin:?}..{wmax:?}"
+        );
+        // And the surviving vertices must still define a real box.
+        assert!(max.x > min.x, "the good vertices must still bound something");
     }
 
     #[test]

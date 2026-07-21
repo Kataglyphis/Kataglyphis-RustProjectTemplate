@@ -381,30 +381,42 @@ impl CpuScene {
     pub fn compute_world_transforms(nodes: &[CpuNode]) -> Vec<Mat4> {
         let mut world = vec![Mat4::IDENTITY; nodes.len()];
         let mut done = vec![false; nodes.len()];
+        // `visiting` breaks parent cycles. A malformed file can point a node at
+        // its own descendant (or at itself); without this the recursion below
+        // never terminates and the process dies by stack overflow - an abort, not
+        // an error anyone can catch. On a cycle we stop climbing and treat the
+        // node as a root, which yields a wrong-but-finite transform instead.
+        let mut visiting = vec![false; nodes.len()];
         fn resolve(
             i: usize,
             nodes: &[CpuNode],
             world: &mut Vec<Mat4>,
             done: &mut Vec<bool>,
+            visiting: &mut Vec<bool>,
         ) -> Mat4 {
             if done[i] {
                 return world[i];
             }
+            if visiting[i] {
+                return Mat4::IDENTITY;
+            }
+            visiting[i] = true;
             let local = Mat4::from_scale_rotation_translation(
                 nodes[i].scale,
                 nodes[i].rotation,
                 nodes[i].translation,
             );
             let m = match nodes[i].parent {
-                Some(p) => resolve(p, nodes, world, done) * local,
-                None => local,
+                Some(p) if p < nodes.len() => resolve(p, nodes, world, done, visiting) * local,
+                _ => local,
             };
+            visiting[i] = false;
             world[i] = m;
             done[i] = true;
             m
         }
         for i in 0..nodes.len() {
-            resolve(i, nodes, &mut world, &mut done);
+            resolve(i, nodes, &mut world, &mut done, &mut visiting);
         }
         world
     }
@@ -480,6 +492,38 @@ mod tests {
             "got {:?}",
             out[0].position
         );
+    }
+
+    #[test]
+    fn a_cyclic_parent_chain_terminates_instead_of_overflowing_the_stack() {
+        // A malformed file can point a node at its own descendant. The resolver
+        // used to recurse forever and die by stack overflow - an abort, not an
+        // error anyone can catch. It must terminate with finite transforms.
+        let node = |parent| CpuNode {
+            parent,
+            translation: Vec3::new(1.0, 0.0, 0.0),
+            rotation: Quat::IDENTITY,
+            scale: Vec3::ONE,
+        };
+        // 0 -> 1 -> 0, plus a node that parents itself.
+        let nodes = vec![node(Some(1)), node(Some(0)), node(Some(2))];
+        let world = CpuScene::compute_world_transforms(&nodes);
+        assert_eq!(world.len(), 3);
+        for (i, m) in world.iter().enumerate() {
+            assert!(m.is_finite(), "node {i} transform must be finite, got {m:?}");
+        }
+    }
+
+    #[test]
+    fn an_out_of_range_parent_index_does_not_panic() {
+        let nodes = vec![CpuNode {
+            parent: Some(99),
+            translation: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+            scale: Vec3::ONE,
+        }];
+        let world = CpuScene::compute_world_transforms(&nodes);
+        assert!(world[0].is_finite());
     }
 
     #[test]
