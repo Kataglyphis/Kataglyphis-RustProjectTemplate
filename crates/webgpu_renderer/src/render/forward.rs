@@ -392,7 +392,7 @@ impl ForwardRenderer {
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("forward_pipeline_layout"),
             bind_group_layouts: &[&bind_group_layout, &ibl_bind_group_layout],
-            push_constant_ranges: &[],
+            immediate_size: 0,
         });
 
         // One tiny static buffer per cascade, bound at group(1) of the shadow
@@ -445,7 +445,7 @@ impl ForwardRenderer {
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("shadow_pipeline_layout"),
                 bind_group_layouts: &[&shadow_bind_group_layout, &cascade_index_layout],
-                push_constant_ranges: &[],
+                immediate_size: 0,
             });
 
         let (pipeline, pipeline_double_sided, pipeline_blend, pipeline_blend_double_sided) =
@@ -474,7 +474,7 @@ impl ForwardRenderer {
         let sky_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("sky_pipeline_layout"),
             bind_group_layouts: &[&sky_bind_group_layout],
-            push_constant_ranges: &[],
+            immediate_size: 0,
         });
         let sky_pipeline = create_sky_pipeline(device, &sky_shader, &sky_pipeline_layout);
         let sky_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1978,7 +1978,7 @@ fn create_forward_pipeline_set(
                 bias: wgpu::DepthBiasState::default(),
             }),
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         })
     };
@@ -2021,7 +2021,7 @@ fn create_shadow_pipeline(
             },
         }),
         multisample: wgpu::MultisampleState::default(),
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     })
 }
@@ -2059,7 +2059,7 @@ fn create_sky_pipeline(
             bias: wgpu::DepthBiasState::default(),
         }),
         multisample: wgpu::MultisampleState::default(),
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     })
 }
