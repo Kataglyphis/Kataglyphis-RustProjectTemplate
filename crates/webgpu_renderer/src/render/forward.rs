@@ -711,6 +711,15 @@ impl ForwardRenderer {
             .unwrap_or(0)
     }
 
+    /// World-space culling bounds of a primitive, exactly as the frustum test
+    /// reads them. Exposed so tests can assert on the bounds that actually gate
+    /// drawing rather than on a recomputed copy.
+    pub fn primitive_world_aabb(&self, primitive_index: usize) -> Option<(Vec3, Vec3)> {
+        self.primitives
+            .get(primitive_index)
+            .map(|p| (p.aabb_min, p.aabb_max))
+    }
+
     /// Number of pre-uploaded LOD levels for a primitive (0 when LOD is off).
     pub fn lod_level_count(&self, primitive_index: usize) -> usize {
         self.primitives
@@ -904,6 +913,10 @@ impl ForwardRenderer {
             );
         }
 
+        // Resolved once for the whole upload: skinned primitives need the joint
+        // nodes' world matrices to size their bounds (below).
+        let upload_node_world = CpuScene::compute_world_transforms(&scene.nodes);
+
         for (i, prim) in scene.primitives.iter().enumerate() {
             // Morphed primitives are re-blended and re-uploaded per frame, so
             // their vertex buffer needs COPY_DST. Everyone else stays upload-once.
@@ -930,8 +943,21 @@ impl ForwardRenderer {
                 mapped_at_creation: false,
             });
 
-            let prim_bounds = primitive_world_aabb(prim);
             let local_bounds = primitive_local_aabb(prim);
+            // Skinned bounds matter even before any animation runs: a scene can
+            // be authored with its joints already posed away from the bind pose,
+            // and set_animation_time (which also widens) bails out early when the
+            // scene carries no animations.
+            let mut prim_bounds = primitive_world_aabb(prim);
+            if let Some(skin) = prim.skin_index.and_then(|s| scene.skins.get(s)) {
+                prim_bounds = widen_bounds_for_skin(
+                    prim_bounds,
+                    local_bounds.0,
+                    local_bounds.1,
+                    skin,
+                    &upload_node_world,
+                );
+            }
             let material = &prim.material;
             let slots = [
                 (&material.base_color_texture, &self.white_texture_view),
@@ -1836,7 +1862,18 @@ impl ForwardRenderer {
             if let Some(node) = prim.node_index {
                 if let Some(m) = world.get(node) {
                     prim.model = *m;
-                    let (min, max) = transform_aabb(*m, prim.local_aabb_min, prim.local_aabb_max);
+                    let mut bounds =
+                        transform_aabb(*m, prim.local_aabb_min, prim.local_aabb_max);
+                    if let Some(skin) = prim.skin_index.and_then(|s| self.skins.get(s)) {
+                        bounds = widen_bounds_for_skin(
+                            bounds,
+                            prim.local_aabb_min,
+                            prim.local_aabb_max,
+                            skin,
+                            &world,
+                        );
+                    }
+                    let (min, max) = bounds;
                     prim.aabb_min = min;
                     prim.aabb_max = max;
                     prim.world_center = (min + max) * 0.5;
@@ -2215,6 +2252,39 @@ impl Frustum {
         }
         true
     }
+}
+
+/// Widen world bounds so they cover every pose the skin can put this geometry
+/// in.
+///
+/// A skinned vertex ignores the node/model matrix entirely (`skin_matrix` in
+/// forward.wgsl returns the joint blend and only falls back to `uniforms.model`
+/// when the weights are zero), so node-derived bounds describe the bind pose,
+/// not what is drawn. Skin weights are normalized, which makes the skinned
+/// position a CONVEX COMBINATION of `J_i * v`; it therefore lies inside the
+/// union of the per-joint boxes, so unioning them is conservative and never
+/// culls visible geometry. The caller's node-derived box is kept in the union
+/// because a skinned primitive may still contain zero-weight vertices.
+fn widen_bounds_for_skin(
+    bounds: (Vec3, Vec3),
+    local_min: Vec3,
+    local_max: Vec3,
+    skin: &CpuSkin,
+    world: &[Mat4],
+) -> (Vec3, Vec3) {
+    let (mut min, mut max) = bounds;
+    for (i, &joint_node) in skin.joints.iter().take(MAX_JOINTS).enumerate() {
+        let jw = world.get(joint_node).copied().unwrap_or(Mat4::IDENTITY);
+        let ib = skin
+            .inverse_bind_matrices
+            .get(i)
+            .copied()
+            .unwrap_or(Mat4::IDENTITY);
+        let (lo, hi) = transform_aabb(jw * ib, local_min, local_max);
+        min = min.min(lo);
+        max = max.max(hi);
+    }
+    (min, max)
 }
 
 fn primitive_world_aabb(prim: &crate::scene::CpuPrimitive) -> (Vec3, Vec3) {
