@@ -3,7 +3,7 @@
 //! headless render-to-pixels for golden tests and CI.
 
 use anyhow::Context as _;
-use glam::{Mat4, Vec3, Vec4};
+use glam::{Mat4, Quat, Vec3, Vec4};
 use wgpu::util::DeviceExt as _;
 
 use crate::context::GpuContext;
@@ -16,7 +16,7 @@ use crate::render::tonemap::TonemapPass;
 use crate::scene::camera::OrbitCamera;
 use crate::scene::{
     AlphaMode, ChannelValues, CpuAnimation, CpuLight, CpuLightKind, CpuNode, CpuSampler, CpuScene,
-    CpuSkin, CpuTexture, CpuWrap, InstanceRaw, Vertex,
+    CpuSkin, CpuTexture, CpuWrap, InstanceRaw, Interpolation, Vertex,
 };
 
 /// Upper bound on joints per skin (storage buffer is sized to the skin).
@@ -1703,20 +1703,30 @@ impl ForwardRenderer {
                     0.0
                 };
                 let (i0, i1, frac) = keyframe_lerp_indices(&channel.times, t);
+                let dt = match (channel.times.get(i0), channel.times.get(i1)) {
+                    (Some(a), Some(b)) => b - a,
+                    _ => 0.0,
+                };
                 match &channel.values {
                     ChannelValues::Translation(values) => {
-                        if let (Some(a), Some(b)) = (values.get(i0), values.get(i1)) {
-                            node.translation = a.lerp(*b, frac);
+                        if let Some(v) =
+                            sample_vec3(values, channel.interpolation, i0, i1, frac, dt)
+                        {
+                            node.translation = v;
                         }
                     }
                     ChannelValues::Rotation(values) => {
-                        if let (Some(a), Some(b)) = (values.get(i0), values.get(i1)) {
-                            node.rotation = a.slerp(*b, frac);
+                        if let Some(q) =
+                            sample_quat(values, channel.interpolation, i0, i1, frac, dt)
+                        {
+                            node.rotation = q;
                         }
                     }
                     ChannelValues::Scale(values) => {
-                        if let (Some(a), Some(b)) = (values.get(i0), values.get(i1)) {
-                            node.scale = a.lerp(*b, frac);
+                        if let Some(v) =
+                            sample_vec3(values, channel.interpolation, i0, i1, frac, dt)
+                        {
+                            node.scale = v;
                         }
                     }
                 }
@@ -2160,6 +2170,73 @@ fn keyframe_lerp_indices(times: &[f32], t: f32) -> (usize, usize, f32) {
     (i, i + 1, (t - times[i]) / span)
 }
 
+/// glTF CUBICSPLINE Hermite basis weights for (value0, out_tangent0, value1,
+/// in_tangent1) at local time `t` in [0,1] over a segment of duration `td`.
+/// The tangent weights are scaled by `td` per the glTF spec.
+fn cubic_spline_weights(t: f32, td: f32) -> (f32, f32, f32, f32) {
+    let t2 = t * t;
+    let t3 = t2 * t;
+    (
+        2.0 * t3 - 3.0 * t2 + 1.0,
+        td * (t3 - 2.0 * t2 + t),
+        -2.0 * t3 + 3.0 * t2,
+        td * (t3 - t2),
+    )
+}
+
+/// Sample a Vec3 channel (translation/scale) between keyframes `i0` and `i1` at
+/// fraction `frac`, honoring the interpolation mode. `dt` is the segment's time
+/// span (used by CubicSpline). For CubicSpline the array is 3x `times`
+/// (in-tangent, value, out-tangent per keyframe).
+fn sample_vec3(
+    values: &[Vec3],
+    interp: Interpolation,
+    i0: usize,
+    i1: usize,
+    frac: f32,
+    dt: f32,
+) -> Option<Vec3> {
+    match interp {
+        Interpolation::Step => values.get(i0).copied(),
+        Interpolation::Linear => Some(values.get(i0)?.lerp(*values.get(i1)?, frac)),
+        Interpolation::CubicSpline => {
+            let p0 = *values.get(3 * i0 + 1)?;
+            let m0 = *values.get(3 * i0 + 2)?;
+            let m1 = *values.get(3 * i1)?;
+            let p1 = *values.get(3 * i1 + 1)?;
+            let (w0, w1, w2, w3) = cubic_spline_weights(frac, dt);
+            Some(p0 * w0 + m0 * w1 + p1 * w2 + m1 * w3)
+        }
+    }
+}
+
+/// Sample a rotation channel. CubicSpline interpolates the quaternion components
+/// with the Hermite basis and renormalizes (the glTF-spec approximation);
+/// Linear uses slerp; Step holds the keyframe.
+fn sample_quat(
+    values: &[Quat],
+    interp: Interpolation,
+    i0: usize,
+    i1: usize,
+    frac: f32,
+    dt: f32,
+) -> Option<Quat> {
+    match interp {
+        Interpolation::Step => values.get(i0).copied(),
+        Interpolation::Linear => Some(values.get(i0)?.slerp(*values.get(i1)?, frac)),
+        Interpolation::CubicSpline => {
+            let p0 = *values.get(3 * i0 + 1)?;
+            let m0 = *values.get(3 * i0 + 2)?;
+            let m1 = *values.get(3 * i1)?;
+            let p1 = *values.get(3 * i1 + 1)?;
+            let (w0, w1, w2, w3) = cubic_spline_weights(frac, dt);
+            let v4 = |q: Quat| Vec4::new(q.x, q.y, q.z, q.w);
+            let v = v4(p0) * w0 + v4(m0) * w1 + v4(p1) * w2 + v4(m1) * w3;
+            Some(Quat::from_vec4(v.normalize()))
+        }
+    }
+}
+
 fn primitive_local_aabb(prim: &crate::scene::CpuPrimitive) -> (Vec3, Vec3) {
     let mut min = Vec3::splat(f32::INFINITY);
     let mut max = Vec3::splat(f32::NEG_INFINITY);
@@ -2503,6 +2580,65 @@ mod tests {
     }
     use super::*;
     use crate::scene::camera::OrbitCamera;
+
+    #[test]
+    fn cubic_spline_weights_collapse_to_the_keyframe_at_the_ends() {
+        // At t=0 only the value0 weight is 1; at t=1 only the value1 weight is 1.
+        let (a, b, c, d) = cubic_spline_weights(0.0, 3.0);
+        assert!((a - 1.0).abs() < 1e-6 && b.abs() < 1e-6 && c.abs() < 1e-6 && d.abs() < 1e-6);
+        let (a, b, c, d) = cubic_spline_weights(1.0, 3.0);
+        assert!(a.abs() < 1e-6 && b.abs() < 1e-6 && (c - 1.0).abs() < 1e-6 && d.abs() < 1e-6);
+    }
+
+    #[test]
+    fn cubic_spline_vec3_hits_keyframe_values_at_segment_ends() {
+        // 2 keyframes, cubic layout: [in0, v0, out0, in1, v1, out1]. The tangents
+        // are non-zero to prove the ends ignore them.
+        let v0 = Vec3::new(1.0, 2.0, 3.0);
+        let v1 = Vec3::new(4.0, 5.0, 6.0);
+        let vals = vec![Vec3::ONE, v0, Vec3::splat(9.0), Vec3::splat(-7.0), v1, Vec3::ONE];
+        let start = sample_vec3(&vals, Interpolation::CubicSpline, 0, 1, 0.0, 2.0).unwrap();
+        let end = sample_vec3(&vals, Interpolation::CubicSpline, 0, 1, 1.0, 2.0).unwrap();
+        assert!((start - v0).length() < 1e-5, "t=0 should be v0, got {start:?}");
+        assert!((end - v1).length() < 1e-5, "t=1 should be v1, got {end:?}");
+    }
+
+    #[test]
+    fn cubic_spline_vec3_zero_tangents_reduce_to_smoothstep_midpoint() {
+        // With zero tangents the Hermite basis is h00·v0 + h01·v1; at t=0.5 both
+        // are 0.5, so the midpoint is the linear midpoint.
+        let vals = vec![Vec3::ZERO, Vec3::ZERO, Vec3::ZERO, Vec3::ZERO, Vec3::ONE, Vec3::ZERO];
+        let mid = sample_vec3(&vals, Interpolation::CubicSpline, 0, 1, 0.5, 1.0).unwrap();
+        assert!(
+            (mid - Vec3::splat(0.5)).length() < 1e-5,
+            "zero-tangent cubic midpoint should be 0.5, got {mid:?}"
+        );
+    }
+
+    #[test]
+    fn step_holds_and_linear_interpolates_vec3() {
+        let vals = vec![Vec3::ZERO, Vec3::splat(2.0)];
+        assert_eq!(
+            sample_vec3(&vals, Interpolation::Step, 0, 1, 0.9, 1.0).unwrap(),
+            Vec3::ZERO,
+            "Step must hold the left keyframe"
+        );
+        let lin = sample_vec3(&vals, Interpolation::Linear, 0, 1, 0.5, 1.0).unwrap();
+        assert!((lin - Vec3::splat(1.0)).length() < 1e-6);
+    }
+
+    #[test]
+    fn cubic_spline_quat_ends_are_the_normalized_keyframes() {
+        let q0 = Quat::from_rotation_y(0.3);
+        let q1 = Quat::from_rotation_y(1.1);
+        let vals = vec![Quat::IDENTITY, q0, Quat::IDENTITY, Quat::IDENTITY, q1, Quat::IDENTITY];
+        let start = sample_quat(&vals, Interpolation::CubicSpline, 0, 1, 0.0, 1.0).unwrap();
+        let end = sample_quat(&vals, Interpolation::CubicSpline, 0, 1, 1.0, 1.0).unwrap();
+        // dot ~= 1 means (near-)identical orientation (sign-agnostic).
+        assert!(start.dot(q0).abs() > 0.999, "t=0 should match q0");
+        assert!(end.dot(q1).abs() > 0.999, "t=1 should match q1");
+        assert!((start.length() - 1.0).abs() < 1e-5, "result must be a unit quaternion");
+    }
 
     #[test]
     fn frustum_culls_out_of_view_aabbs() {

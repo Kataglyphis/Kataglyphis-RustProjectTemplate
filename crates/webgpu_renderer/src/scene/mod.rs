@@ -220,12 +220,26 @@ pub enum ChannelValues {
     Scale(Vec<Vec3>),
 }
 
+/// glTF keyframe interpolation mode. For `CubicSpline` the value array holds
+/// THREE entries per keyframe - in-tangent, value, out-tangent - so it is 3x
+/// the length of `times`; `Linear`/`Step` store one value per keyframe.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Interpolation {
+    #[default]
+    Linear,
+    Step,
+    CubicSpline,
+}
+
 #[derive(Clone, Debug)]
 pub struct CpuAnimationChannel {
     pub node: usize,
     /// Keyframe times (seconds), ascending.
     pub times: Vec<f32>,
     pub values: ChannelValues,
+    /// How to interpolate between keyframes. Note `CubicSpline` makes `values`
+    /// 3x as long as `times` (in-tangent, value, out-tangent per keyframe).
+    pub interpolation: Interpolation,
 }
 
 #[derive(Clone, Debug)]

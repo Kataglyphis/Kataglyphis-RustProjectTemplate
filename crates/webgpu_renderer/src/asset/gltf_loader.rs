@@ -12,7 +12,7 @@ use glam::{Mat4, Vec2, Vec3};
 use crate::scene::{
     AlphaMode, ChannelValues, CpuAnimation, CpuAnimationChannel, CpuCamera, CpuLight, CpuLightKind,
     CpuMaterial, CpuNode, CpuPrimitive, CpuSampler, CpuScene, CpuSkin, CpuTexture, CpuTextureRef,
-    CpuWrap, Vertex,
+    CpuWrap, Interpolation, Vertex,
 };
 
 pub fn load_gltf(path: impl AsRef<Path>) -> anyhow::Result<CpuScene> {
@@ -95,10 +95,16 @@ fn build_scene(
                 }
                 ReadOutputs::MorphTargetWeights(_) => continue,
             };
+            let interpolation = match channel.sampler().interpolation() {
+                gltf::animation::Interpolation::Linear => Interpolation::Linear,
+                gltf::animation::Interpolation::Step => Interpolation::Step,
+                gltf::animation::Interpolation::CubicSpline => Interpolation::CubicSpline,
+            };
             channels.push(CpuAnimationChannel {
                 node: channel.target().node().index(),
                 times,
                 values,
+                interpolation,
             });
         }
         if !channels.is_empty() {
