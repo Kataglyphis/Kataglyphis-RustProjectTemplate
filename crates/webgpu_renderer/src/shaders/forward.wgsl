@@ -97,6 +97,21 @@ struct IblParams {
 @group(1) @binding(3) var brdf_lut: texture_2d<f32>;
 @group(1) @binding(4) var ibl_sampler: sampler;
 
+/// Normal transform for the per-instance matrix: the COFACTOR of its upper 3x3.
+///
+/// The cofactor equals det(M) * inverse-transpose, and the result is normalized
+/// straight afterwards, so the determinant factor drops out - which makes this
+/// both cheaper than a real inverse and finite for singular instance matrices
+/// (a zero-scale instance no longer produces NaN normals). Columns of the
+/// cofactor are the cross products of the other two columns.
+fn instance_cofactor(in: VsIn) -> mat3x3<f32> {
+    let m = instance_matrix(in);
+    let c0 = m[0].xyz;
+    let c1 = m[1].xyz;
+    let c2 = m[2].xyz;
+    return mat3x3<f32>(cross(c1, c2), cross(c2, c0), cross(c0, c1));
+}
+
 /// Linear blend skinning; returns the model matrix to use for this vertex.
 fn skin_matrix(in: VsIn) -> mat4x4<f32> {
     let w = in.weights;
@@ -135,10 +150,16 @@ fn vs_main(in: VsIn) -> VsOut {
     if (in.weights.x + in.weights.y + in.weights.z + in.weights.w > 0.0001) {
         out.world_normal = normalize((model * vec4<f32>(in.normal, 0.0)).xyz);
     } else {
-        // The instance matrix must rotate the normal too, or instanced copies
-        // keep the un-instanced orientation's lighting.
-        out.world_normal =
-            normalize((instance_matrix(in) * uniforms.normal_matrix * vec4<f32>(in.normal, 0.0)).xyz);
+        // The instance matrix must transform the normal too, or instanced copies
+        // keep the un-instanced orientation's lighting - but a normal is NOT
+        // transformed by the matrix itself. Applying the raw instance matrix is
+        // only correct for rotation plus uniform scale; under non-uniform or
+        // mirrored instance scale it shears normals off the surface, which is
+        // exactly the scattered/squashed foliage-and-debris case instancing
+        // exists for. (The tangent path above IS right to use `model`: tangents
+        // are direction vectors and do transform by the matrix.)
+        let n_model = (uniforms.normal_matrix * vec4<f32>(in.normal, 0.0)).xyz;
+        out.world_normal = normalize(instance_cofactor(in) * n_model);
     }
     out.world_tangent = vec4<f32>(
         normalize((model * vec4<f32>(in.tangent.xyz, 0.0)).xyz),

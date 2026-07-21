@@ -194,3 +194,58 @@ fn scene_bounds_track_instances() {
         base_max.x
     );
 }
+
+/// A non-uniform scale applied via the NODE transform and the same scale applied
+/// via an INSTANCE transform must shade identically - the geometry is the same
+/// in both cases. Applying the raw instance matrix to normals (instead of its
+/// inverse-transpose/cofactor) shears them off the surface, so the two disagree
+/// in the shaded pixels while the silhouette matches.
+#[test]
+fn a_non_uniform_instance_scale_shades_like_the_same_node_scale() {
+    let Ok(gpu) = GpuContext::new_headless() else {
+        eprintln!("SKIP: no GPU adapter available in this environment");
+        return;
+    };
+    let (w, h) = (128, 128);
+    let camera = kataglyphis_webgpu_renderer::OrbitCamera::default();
+    // Scale COMBINED with a rotation: a cube's normals are axis-aligned, and for
+    // a plain diagonal scale the raw matrix and the inverse-transpose normalize
+    // to the same direction - so an unrotated squash cannot tell them apart.
+    // Rotating first puts the normals off the scale axes, where they differ.
+    let squash = Mat4::from_scale(Vec3::new(0.25, 1.0, 1.0))
+        * Mat4::from_rotation_y(std::f32::consts::FRAC_PI_4);
+
+    let base = load_gltf(cube_path()).expect("cube.gltf must load");
+
+    // A: squash baked into the primitive's own transform, identity instance.
+    let mut scene_a = base.clone();
+    scene_a.primitives[0].transform = squash;
+    scene_a.primitives[0].node_index = None; // keep the baked transform
+    let mut ra = ForwardRenderer::new(&gpu, w, h);
+    ra.upload_scene(&gpu, &scene_a);
+    let pixels_a = ra.render_to_pixels(&gpu, w, h, &camera).expect("render a");
+
+    // B: identity primitive, squash supplied as an instance transform.
+    let mut scene_b = base.clone();
+    scene_b.primitives[0].transform = Mat4::IDENTITY;
+    scene_b.primitives[0].node_index = None;
+    let mut rb = ForwardRenderer::new(&gpu, w, h);
+    rb.upload_scene(&gpu, &scene_b);
+    rb.set_instances(&gpu, 0, &[squash]);
+    let pixels_b = rb.render_to_pixels(&gpu, w, h, &camera).expect("render b");
+
+    // Compare only lit cube pixels; count how many differ beyond dither noise.
+    let mut differing = 0usize;
+    for (a, b) in pixels_a.chunks_exact(4).zip(pixels_b.chunks_exact(4)) {
+        let d = (a[0] as i32 - b[0] as i32).abs()
+            + (a[1] as i32 - b[1] as i32).abs()
+            + (a[2] as i32 - b[2] as i32).abs();
+        if d > 12 {
+            differing += 1;
+        }
+    }
+    assert!(
+        differing < 40,
+        "node-scale and instance-scale must shade the same, {differing} pixels differ"
+    );
+}
