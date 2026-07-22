@@ -178,6 +178,21 @@ fn build_scene(
     Ok(scene)
 }
 
+/// Warns when a material slot asks for a UV set other than TEXCOORD_0.
+///
+/// Only TEXCOORD_0 is loaded, so a slot bound to TEXCOORD_1 is sampled with the
+/// WRONG coordinates - it still renders, just with the texture in the wrong
+/// places. Baked AO/lightmaps on UV1 are the standard Blender/Substance export,
+/// so this is a real asset shape, and "looks subtly wrong" is far harder to
+/// diagnose than a line in the log saying exactly which slot and which set.
+fn warn_uv_set(slot: &str, tex_coord: u32) {
+    if tex_coord != 0 {
+        log::warn!(
+            "Material {slot} texture uses TEXCOORD_{tex_coord}, but only TEXCOORD_0 is loaded;              it will be sampled with the wrong UVs"
+        );
+    }
+}
+
 /// Expands a triangle strip or fan into a plain triangle list.
 ///
 /// Strip winding alternates: every odd triangle has its first two indices
@@ -565,19 +580,36 @@ fn load_primitive(
         unlit: material.unlit(),
         base_color_texture: pbr
             .base_color_texture()
-            .and_then(|info| texture_ref(&info.texture(), textures, true)),
+            .and_then(|info| {
+                warn_uv_set("base color", info.tex_coord());
+                texture_ref(&info.texture(), textures, true)
+            }),
         metallic_roughness_texture: pbr
             .metallic_roughness_texture()
-            .and_then(|info| texture_ref(&info.texture(), textures, false)),
+            .and_then(|info| {
+                warn_uv_set("metallic-roughness", info.tex_coord());
+                texture_ref(&info.texture(), textures, false)
+            }),
         normal_texture: material
             .normal_texture()
-            .and_then(|info| texture_ref(&info.texture(), textures, false)),
+            .and_then(|info| {
+                warn_uv_set("normal", info.tex_coord());
+                texture_ref(&info.texture(), textures, false)
+            }),
         emissive_texture: material
             .emissive_texture()
-            .and_then(|info| texture_ref(&info.texture(), textures, true)),
+            .and_then(|info| {
+                warn_uv_set("emissive", info.tex_coord());
+                texture_ref(&info.texture(), textures, true)
+            }),
+        // Occlusion matters most here: baked AO on UV1 is the standard
+        // Blender/Substance export, so this is the slot most likely to be wrong.
         occlusion_texture: material
             .occlusion_texture()
-            .and_then(|info| texture_ref(&info.texture(), textures, false)),
+            .and_then(|info| {
+                warn_uv_set("occlusion", info.tex_coord());
+                texture_ref(&info.texture(), textures, false)
+            }),
     };
 
     Ok(Some(CpuPrimitive {
