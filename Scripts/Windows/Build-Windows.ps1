@@ -110,12 +110,23 @@ function Sync-BuildArtifacts {
 
   & robocopy.exe @robocopyArgs > $null 2>&1
   $robocopyExit = $LASTEXITCODE
-  # Robocopy semantics: 0-7 are success variants; >= 8 is a real failure.
-  if ($robocopyExit -ge 8) {
-    throw "Sync-BuildArtifacts failed (robocopy exit $robocopyExit): '$Source' -> '$Destination'"
+  # Robocopy exit codes are a BITMASK, not a severity scale:
+  #   1 copied, 2 extra, 4 mismatch, 8 some files could not be copied,
+  #   16 serious error / nothing copied.
+  # Only 16 means the mirror did not happen. Bit 8 (exit 9 = 8+1 in CI) fires
+  # routinely on a live bind-mounted tree - a transient lock on one file while
+  # the rest copy fine - and treating it as fatal killed the packaging step.
+  # The sibling Sync-FastLocalArtifactsToHost ignores the code entirely for
+  # the same reason; this at least warns on a partial copy and fails only on
+  # the catastrophic bit.
+  if ($robocopyExit -ge 16) {
+    throw "Sync-BuildArtifacts failed (robocopy exit $robocopyExit, serious error): '$Source' -> '$Destination'"
   }
-  # Do not leak robocopy's nonzero "files were copied" codes into callers
-  # that treat $LASTEXITCODE as pass/fail.
+  if (($robocopyExit -band 8) -ne 0) {
+    Write-Warning "Sync-BuildArtifacts: robocopy exit $robocopyExit - some files could not be copied (likely a transient lock); continuing."
+  }
+  # Do not leak robocopy's nonzero success codes into callers that treat
+  # $LASTEXITCODE as pass/fail.
   $global:LASTEXITCODE = 0
 }
 
