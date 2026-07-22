@@ -1,0 +1,4 @@
+# PowerShell backtick line-continuations in the Windows workflows are broken by
+# CRLF: a backtick before CR escapes the CR, not the newline, so the continuation
+# dies with "Missing expression after unary operator". Force LF for workflow YAML.
+.github/workflows/*.yml text eol=lf

@@ -74,11 +74,11 @@ jobs:
             --cpus ${{ env.WINDOWS_DOCKER_CPUS }} `
             --env CARGO_TERM_COLOR="${{ env.CARGO_TERM_COLOR }}" `
             --env CARGO_BUILD_JOBS="${{ env.WINDOWS_DOCKER_CPUS }}" `
-            --mount "type=bind,source=${{ github.workspace }},target=C:\workspace" `
-            -w "C:\workspace" `
+            --mount "type=bind,source=${{ github.workspace }},target=C:\ws" `
+            -w "C:\ws" `
             ${{ env.WINDOWS_CONTAINER_IMAGE }} `
             powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
-            "C:\workspace\Scripts\Windows\Invoke-DebugTests.ps1"
+            "C:\ws\Scripts\Windows\Invoke-DebugTests.ps1"
 
       - name: Build and run all Windows app configs
         shell: pwsh
@@ -90,11 +90,11 @@ jobs:
             --cpus ${{ env.WINDOWS_DOCKER_CPUS }} `
             --env CARGO_TERM_COLOR="${{ env.CARGO_TERM_COLOR }}" `
             --env CARGO_BUILD_JOBS="${{ env.WINDOWS_DOCKER_CPUS }}" `
-            --mount "type=bind,source=${{ github.workspace }},target=C:\workspace" `
-            -w "C:\workspace" `
+            --mount "type=bind,source=${{ github.workspace }},target=C:\ws" `
+            -w "C:\ws" `
             ${{ env.WINDOWS_CONTAINER_IMAGE }} `
             powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
-            "C:\workspace\Scripts\Windows\Invoke-WindowsConfigMatrix.ps1"
+            "C:\ws\Scripts\Windows\Invoke-WindowsConfigMatrix.ps1"
 
       - name: Build, lint, and package MSIX/MSI
         shell: pwsh
@@ -118,11 +118,11 @@ jobs:
             --env MSIX_DISPLAY_NAME="${{ env.MSIX_DISPLAY_NAME }}" `
             --env MSIX_DESCRIPTION="${{ env.MSIX_DESCRIPTION }}" `
             --env MSIX_VERSION="$ver" `
-            --mount "type=bind,source=${{ github.workspace }},target=C:\workspace" `
-            -w "C:\workspace" `
+            --mount "type=bind,source=${{ github.workspace }},target=C:\ws" `
+            -w "C:\ws" `
             ${{ env.WINDOWS_CONTAINER_IMAGE }} `
             powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
-            "C:\workspace\Scripts\Windows\Build-Windows.ps1" `
+            "C:\ws\Scripts\Windows\Build-Windows.ps1" `
             -SkipTests
 
       - name: Prepare archive variables
@@ -144,8 +144,8 @@ jobs:
           docker run --rm `
             --memory "${{ env.WINDOWS_DOCKER_MEMORY }}" `
             --cpus ${{ env.WINDOWS_DOCKER_CPUS }} `
-            --mount "type=bind,source=${{ github.workspace }},target=C:\workspace" `
-            -w "C:\workspace" `
+            --mount "type=bind,source=${{ github.workspace }},target=C:\ws" `
+            -w "C:\ws" `
             -e "BINARY=${{ env.BINARY }}" `
             -e "VERSION=$ver" `
             -e "PLATFORM=windows-2025" `
@@ -153,7 +153,7 @@ jobs:
             -e "CARGO_BUILD_JOBS=${{ env.WINDOWS_DOCKER_CPUS }}" `
             ${{ env.WINDOWS_CONTAINER_IMAGE }} `
             powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
-            "C:\workspace\ExternalLib\Kataglyphis-ContainerHub\windows\scripts\rust\New-Archive.ps1"
+            "C:\ws\ExternalLib\Kataglyphis-ContainerHub\windows\scripts\rust\New-Archive.ps1"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v7.0.1
