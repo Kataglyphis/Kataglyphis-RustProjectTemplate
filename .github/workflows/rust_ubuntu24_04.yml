@@ -123,6 +123,22 @@ jobs:
             bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_fmt_clippy.sh
           '
 
+      # The web demo lives entirely behind #[cfg(target_arch = "wasm32")], so no
+      # native job compiles it - cargo test, clippy and every other lane here are
+      # native. It therefore sat BROKEN from the wgpu 29 migration (it still
+      # referenced wgpu::SurfaceError, removed in 29) until someone happened to
+      # build the target by hand. A type check costs seconds and closes that
+      # blind spot; it deliberately does NOT run tests, since wasm32 has no
+      # test runner here.
+      - name: Type-check the wasm32 (web demo) target
+        run: |
+          docker run --rm             --platform ${{ env.PLATFORM }}             -v ${{ github.workspace }}:/workspace             -w /workspace             -e CARGO_HOME=/tmp/cargo-home             ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross             bash -lc '
+            set -e
+            git config --global --add safe.directory /workspace || true
+            rustup target add wasm32-unknown-unknown
+            cargo check -p kataglyphis_webgpu_renderer --target wasm32-unknown-unknown
+          '
+
       - name: Run unit, integration, and doc tests
         run: |
           docker run --rm \
