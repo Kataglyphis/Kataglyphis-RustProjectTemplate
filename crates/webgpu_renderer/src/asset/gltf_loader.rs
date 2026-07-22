@@ -136,14 +136,28 @@ fn build_scene(
         let Some(camera) = node.camera() else {
             continue;
         };
-        if let gltf::camera::Projection::Perspective(perspective) = camera.projection() {
-            scene.cameras.push(CpuCamera {
-                name: camera.name().map(str::to_string),
-                node: node.index(),
-                yfov_rad: perspective.yfov(),
-                znear: perspective.znear(),
-                zfar: perspective.zfar(),
-            });
+        match camera.projection() {
+            gltf::camera::Projection::Perspective(perspective) => {
+                scene.cameras.push(CpuCamera {
+                    name: camera.name().map(str::to_string),
+                    node: node.index(),
+                    yfov_rad: perspective.yfov(),
+                    znear: perspective.znear(),
+                    zfar: perspective.zfar(),
+                });
+            }
+            // `CpuCamera` has no room for xmag/ymag, so an authored orthographic
+            // camera cannot be represented yet. Say so instead of dropping it in
+            // silence: the file loads "fine" and the camera the author placed is
+            // simply absent from `scene.cameras`, which is indistinguishable
+            // from a file that never had one. Same reasoning as the
+            // non-triangle-primitive warning above.
+            gltf::camera::Projection::Orthographic(_) => {
+                log::warn!(
+                    "Ignoring orthographic camera {:?}: only perspective cameras are represented",
+                    camera.name().unwrap_or("<unnamed>")
+                );
+            }
         }
     }
 
