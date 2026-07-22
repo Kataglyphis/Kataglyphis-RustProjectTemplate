@@ -63,14 +63,16 @@ struct VsIn {
     @location(5) weights: vec4<f32>,
     // glTF COLOR_0 (linear RGBA), (1,1,1,1) when absent.
     @location(6) color: vec4<f32>,
+    // glTF TEXCOORD_1 (second UV set); slots flagged in material_flags.y use it.
+    @location(7) uv1: vec2<f32>,
     // Per-instance transform, four columns of a mat4. Every draw binds an
     // instance buffer - unbatched primitives get a single identity instance -
     // so there is one code path rather than two pipelines to keep in step.
-    // Locations 7-10: vertex colour took 6.
-    @location(7) instance0: vec4<f32>,
-    @location(8) instance1: vec4<f32>,
-    @location(9) instance2: vec4<f32>,
-    @location(10) instance3: vec4<f32>,
+    // Locations 8-11: vertex attrs occupy 0-7 (colour 6, uv1 7).
+    @location(8) instance0: vec4<f32>,
+    @location(9) instance1: vec4<f32>,
+    @location(10) instance2: vec4<f32>,
+    @location(11) instance3: vec4<f32>,
 };
 
 fn instance_matrix(in: VsIn) -> mat4x4<f32> {
@@ -138,6 +140,7 @@ struct VsOut {
     @location(4) world_position: vec3<f32>,
     @location(5) view_depth: f32,
     @location(6) vertex_color: vec4<f32>,
+    @location(7) uv1: vec2<f32>,
 };
 
 @vertex
@@ -174,6 +177,7 @@ fn vs_main(in: VsIn) -> VsOut {
     out.world_position = world_pos.xyz;
     out.view_depth = distance(world_pos.xyz, uniforms.camera_position.xyz);
     out.vertex_color = in.color;
+    out.uv1 = in.uv1;
     return out;
 }
 
@@ -432,18 +436,28 @@ fn punctual_lighting(
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    // Per-slot UV set: material_flags.y is a bitmask (bit 0 base .. 4 occlusion);
+    // a set bit selects TEXCOORD_1 (baked AO on UV1 is the standard export).
+    let uv_mask = u32(uniforms.material_flags.y);
+    let base_in = select(in.uv, in.uv1, (uv_mask & 1u) != 0u);
+    let mr_in = select(in.uv, in.uv1, (uv_mask & 2u) != 0u);
+    let normal_in = select(in.uv, in.uv1, (uv_mask & 4u) != 0u);
+    let emissive_in = select(in.uv, in.uv1, (uv_mask & 8u) != 0u);
+    let occlusion_in = select(in.uv, in.uv1, (uv_mask & 16u) != 0u);
+
     // All implicit-derivative samples up front, in uniform control flow.
+    // KHR_texture_transform applies to the base slot's chosen set.
     let base_uv = vec2<f32>(
-        uniforms.base_uv_row0.x * in.uv.x + uniforms.base_uv_row0.y * in.uv.y
+        uniforms.base_uv_row0.x * base_in.x + uniforms.base_uv_row0.y * base_in.y
             + uniforms.base_uv_row0.z,
-        uniforms.base_uv_row1.x * in.uv.x + uniforms.base_uv_row1.y * in.uv.y
+        uniforms.base_uv_row1.x * base_in.x + uniforms.base_uv_row1.y * base_in.y
             + uniforms.base_uv_row1.z,
     );
     let base_sample = textureSample(base_color_tex, base_color_sampler, base_uv);
-    let mr_sample = textureSample(metal_rough_tex, metal_rough_sampler, in.uv);
-    let normal_sample = textureSample(normal_tex, normal_sampler, in.uv);
-    let emissive_sample = textureSample(emissive_tex, emissive_sampler, in.uv);
-    let occlusion_sample = textureSample(occlusion_tex, occlusion_sampler, in.uv);
+    let mr_sample = textureSample(metal_rough_tex, metal_rough_sampler, mr_in);
+    let normal_sample = textureSample(normal_tex, normal_sampler, normal_in);
+    let emissive_sample = textureSample(emissive_tex, emissive_sampler, emissive_in);
+    let occlusion_sample = textureSample(occlusion_tex, occlusion_sampler, occlusion_in);
 
     // glTF: COLOR_0 multiplies the base color factor and texture.
     let albedo = uniforms.base_color * base_sample * in.vertex_color;

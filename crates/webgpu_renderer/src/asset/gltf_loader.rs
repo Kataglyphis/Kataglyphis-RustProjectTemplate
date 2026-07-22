@@ -185,11 +185,19 @@ fn build_scene(
 /// places. Baked AO/lightmaps on UV1 are the standard Blender/Substance export,
 /// so this is a real asset shape, and "looks subtly wrong" is far harder to
 /// diagnose than a line in the log saying exactly which slot and which set.
-fn warn_uv_set(slot: &str, tex_coord: u32) {
-    if tex_coord != 0 {
-        log::warn!(
-            "Material {slot} texture uses TEXCOORD_{tex_coord}, but only TEXCOORD_0 is loaded;              it will be sampled with the wrong UVs"
-        );
+/// Returns the uv-set bit for a slot: 1 when the texture references
+/// TEXCOORD_1 (both UV0/UV1 are loaded), 0 otherwise. texCoord >= 2 is not
+/// supported and falls back to UV0 with a warning.
+fn uv_set_bit(slot: &str, tex_coord: u32, bit: u32) -> u32 {
+    match tex_coord {
+        0 => 0,
+        1 => 1u32 << bit,
+        n => {
+            log::warn!(
+                "Material {slot} texture uses TEXCOORD_{n}, but only TEXCOORD_0/1 are supported; sampling with UV0"
+            );
+            0
+        }
     }
 }
 
@@ -434,6 +442,12 @@ fn load_primitive(
         Some(iter) => iter.into_f32().collect(),
         None => vec![[0.0, 0.0]; positions.len()],
     };
+    // TEXCOORD_1: defaults to UV0 when absent, so a slot mistakenly flagged
+    // UV1 still samples something sane.
+    let uvs1: Vec<[f32; 2]> = match reader.read_tex_coords(1) {
+        Some(iter) => iter.into_f32().collect(),
+        None => uvs.clone(),
+    };
     let joints: Vec<[f32; 4]> = match reader.read_joints(0) {
         Some(iter) => iter
             .into_u16()
@@ -484,6 +498,7 @@ fn load_primitive(
             joints: joints.get(i).copied().unwrap_or([0.0; 4]),
             weights: weights.get(i).copied().unwrap_or([0.0; 4]),
             color: colors.get(i).copied().unwrap_or([1.0, 1.0, 1.0, 1.0]),
+            uv1: uvs1.get(i).copied().unwrap_or_else(|| *t),
         })
         .collect();
 
@@ -588,36 +603,27 @@ fn load_primitive(
         unlit: material.unlit(),
         base_color_texture: pbr
             .base_color_texture()
-            .and_then(|info| {
-                warn_uv_set("base color", info.tex_coord());
-                texture_ref(&info.texture(), textures, true)
-            }),
+            .and_then(|info| texture_ref(&info.texture(), textures, true)),
         metallic_roughness_texture: pbr
             .metallic_roughness_texture()
-            .and_then(|info| {
-                warn_uv_set("metallic-roughness", info.tex_coord());
-                texture_ref(&info.texture(), textures, false)
-            }),
+            .and_then(|info| texture_ref(&info.texture(), textures, false)),
         normal_texture: material
             .normal_texture()
-            .and_then(|info| {
-                warn_uv_set("normal", info.tex_coord());
-                texture_ref(&info.texture(), textures, false)
-            }),
+            .and_then(|info| texture_ref(&info.texture(), textures, false)),
         emissive_texture: material
             .emissive_texture()
-            .and_then(|info| {
-                warn_uv_set("emissive", info.tex_coord());
-                texture_ref(&info.texture(), textures, true)
-            }),
-        // Occlusion matters most here: baked AO on UV1 is the standard
+            .and_then(|info| texture_ref(&info.texture(), textures, true)),
+        // Occlusion matters most: baked AO on UV1 is the standard
         // Blender/Substance export, so this is the slot most likely to be wrong.
         occlusion_texture: material
             .occlusion_texture()
-            .and_then(|info| {
-                warn_uv_set("occlusion", info.tex_coord());
-                texture_ref(&info.texture(), textures, false)
-            }),
+            .and_then(|info| texture_ref(&info.texture(), textures, false)),
+        // Which slots sample UV1 (bit per slot: 0 base .. 4 occlusion).
+        uv_set_mask: pbr.base_color_texture().map_or(0, |i| uv_set_bit("base color", i.tex_coord(), 0))
+            | pbr.metallic_roughness_texture().map_or(0, |i| uv_set_bit("metallic-roughness", i.tex_coord(), 1))
+            | material.normal_texture().map_or(0, |i| uv_set_bit("normal", i.tex_coord(), 2))
+            | material.emissive_texture().map_or(0, |i| uv_set_bit("emissive", i.tex_coord(), 3))
+            | material.occlusion_texture().map_or(0, |i| uv_set_bit("occlusion", i.tex_coord(), 4)),
     };
 
     Ok(Some(CpuPrimitive {
@@ -900,6 +906,7 @@ mod tests {
             joints: [0.0; 4],
             weights: [0.0; 4],
             color: [1.0, 1.0, 1.0, 1.0],
+            uv1: [0.0, 0.0],
         })
         .collect();
         let indices = [0u32, 1, 2, 0, 2, 3];
@@ -937,6 +944,7 @@ mod tests {
                 joints: [0.0; 4],
                 weights: [0.0; 4],
                 color: [1.0, 1.0, 1.0, 1.0],
+                uv1: [0.0, 0.0],
             })
             .collect();
         (vertices, [0u32, 1, 2, 0, 2, 3])

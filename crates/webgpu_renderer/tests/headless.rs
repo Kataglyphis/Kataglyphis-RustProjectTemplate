@@ -1226,6 +1226,7 @@ fn masked_card_casts_half_the_shadow_of_an_opaque_one() {
         joints: [0.0; 4],
         weights: [0.0; 4],
         color: [1.0, 1.0, 1.0, 1.0],
+        uv1: [0.0, 0.0],
     })
     .collect();
 
@@ -1367,6 +1368,7 @@ fn vertex_colors_tint_the_surface() {
             joints: [0.0; 4],
             weights: [0.0; 4],
             color,
+            uv1: *uv,
         })
         .collect();
         CpuPrimitive {
@@ -1414,4 +1416,102 @@ fn vertex_colors_tint_the_surface() {
         (wr - wg).abs() < 30 && (wg - wb).abs() < 30,
         "white vertex colour should render neutral (got r={wr} g={wg} b={wb})"
     );
+}
+
+/// A texture whose slot references TEXCOORD_1 must sample the second UV set,
+/// not UV0. Baked AO on UV1 is the standard Blender/Substance export and used
+/// to be sampled with albedo (UV0) UVs. Here the base-colour texture is put on
+/// UV1: UV0 is CONSTANT (all 0,0 -> one texel) while UV1 SPANS the texture, so
+/// sampling UV1 shows the texture's two halves (red/blue) across the quad and
+/// sampling UV0 would show one flat colour.
+#[test]
+fn texture_slot_samples_its_declared_uv_set() {
+    use kataglyphis_webgpu_renderer::scene::{
+        AlphaMode, CpuMaterial, CpuPrimitive, CpuSampler, CpuTexture, CpuTextureRef, Vertex,
+    };
+    use std::sync::Arc;
+
+    let Ok(gpu) = GpuContext::new_headless() else {
+        eprintln!("SKIP: no GPU adapter available in this environment");
+        return;
+    };
+
+    // 2x1 texture: left half red, right half blue.
+    let tex = CpuTextureRef {
+        texture: Arc::new(CpuTexture {
+            width: 2,
+            height: 1,
+            rgba8: vec![255, 0, 0, 255, 0, 0, 255, 255],
+            compressed: None,
+        }),
+        sampler: CpuSampler { mag_nearest: true, min_nearest: true, ..CpuSampler::default() },
+        srgb: true,
+    };
+
+    // Quad facing the camera. UV0 = (0,0) everywhere (samples the red texel);
+    // UV1 = the full 0..1 span (left red, right blue).
+    let corners = [
+        ([-2.0f32, -2.0, 0.0], [0.0f32, 0.0]),
+        ([2.0, -2.0, 0.0], [1.0, 0.0]),
+        ([2.0, 2.0, 0.0], [1.0, 1.0]),
+        ([-2.0, 2.0, 0.0], [0.0, 1.0]),
+    ];
+    let verts: Vec<Vertex> = corners
+        .iter()
+        .map(|(p, uv1)| Vertex {
+            position: *p,
+            normal: [0.0, 0.0, 1.0],
+            uv: [0.0, 0.0], // constant UV0
+            tangent: [1.0, 0.0, 0.0, 1.0],
+            joints: [0.0; 4],
+            weights: [0.0; 4],
+            color: [1.0, 1.0, 1.0, 1.0],
+            uv1: *uv1, // spanning UV1
+        })
+        .collect();
+
+    let render = |uv_set_mask: u32| -> Vec<u8> {
+        let mut scene = load_gltf(cube_path()).expect("cube.gltf must load");
+        scene.primitives = vec![CpuPrimitive {
+            vertices: verts.clone(),
+            indices: vec![0, 1, 2, 0, 2, 3],
+            transform: glam::Mat4::IDENTITY,
+            node_index: None,
+            skin_index: None,
+            material: CpuMaterial {
+                base_color: [1.0, 1.0, 1.0, 1.0],
+                alpha_mode: AlphaMode::Opaque,
+                unlit: true,
+                base_color_texture: Some(tex.clone()),
+                uv_set_mask,
+                ..CpuMaterial::default()
+            },
+            morph_targets: Vec::new(),
+            morph_weights: Vec::new(),
+        }];
+        let (w, h) = (128u32, 128u32);
+        let mut renderer = ForwardRenderer::new(&gpu, w, h);
+        renderer.upload_scene(&gpu, &scene);
+        let camera = OrbitCamera { radius: 5.0, yaw_deg: 90.0, pitch_deg: 0.0, ..OrbitCamera::default() };
+        renderer.render_to_pixels(&gpu, w, h, &camera).expect("headless render must succeed")
+    };
+
+    let sample = |px: &[u8], x: usize| -> (i32, i32, i32) {
+        let idx = ((64usize * 128) + x) * 4;
+        (px[idx] as i32, px[idx + 1] as i32, px[idx + 2] as i32)
+    };
+
+    // Base slot on UV1 (bit 0): left of the quad is red, right is blue.
+    let on_uv1 = render(0b0_0001);
+    let (lr, _lg, lb) = sample(&on_uv1, 40);
+    let (rr, _rg, rb) = sample(&on_uv1, 88);
+    assert!(lr > lb + 40, "left of the quad should be red on UV1 (got r={lr} b={lb})");
+    assert!(rb > rr + 40, "right of the quad should be blue on UV1 (got r={rr} b={rb})");
+
+    // Base slot on UV0 (mask 0): UV0 is constant (0,0) -> the whole quad is the
+    // red texel, no blue anywhere. This is what the old always-UV0 code did.
+    let on_uv0 = render(0);
+    let (l0r, _l0g, l0b) = sample(&on_uv0, 40);
+    let (r0r, _r0g, r0b) = sample(&on_uv0, 88);
+    assert!(l0r > l0b + 40 && r0r > r0b + 40, "on UV0 the whole quad is red (l r={l0r} b={l0b}, r r={r0r} b={r0b})");
 }

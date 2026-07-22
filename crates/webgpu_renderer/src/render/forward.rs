@@ -110,6 +110,9 @@ struct GpuPrimitive {
     material_factors: [f32; 4],
     emissive_factor: [f32; 4],
     base_uv_transform: [[f32; 3]; 2],
+    /// Per-slot UV1 selector (bit per texture slot); packed into
+    /// material_flags.y for the shader.
+    uv_set_mask: u32,
     double_sided: bool,
     /// KHR_materials_unlit: skip lighting entirely and emit the base color.
     unlit: bool,
@@ -1335,6 +1338,7 @@ impl ForwardRenderer {
                     },
                 ],
                 base_uv_transform: material.base_uv_transform,
+                uv_set_mask: material.uv_set_mask,
                 node_index: prim.node_index,
                 skin_index: prim.skin_index,
                 joint_buffer,
@@ -1497,7 +1501,8 @@ impl ForwardRenderer {
                     0.0,
                 ],
                 cascade_splits: self.cascade_splits,
-                material_flags: [if prim.unlit { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
+                // y: which texture slots sample UV1 (bit per slot).
+                material_flags: [if prim.unlit { 1.0 } else { 0.0 }, prim.uv_set_mask as f32, 0.0, 0.0],
             };
             gpu.queue
                 .write_buffer(&prim.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));

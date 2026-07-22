@@ -27,18 +27,22 @@ pub struct Vertex {
     /// CAD, low-poly, baked-AO packs) carry colour, previously dropped so they
     /// rendered uniformly white.
     pub color: [f32; 4],
+    /// glTF TEXCOORD_1: the second UV set. A texture slot whose `texCoord` is
+    /// 1 (baked AO on UV1 is the standard Blender/Substance export) samples
+    /// this instead of `uv`. Copies `uv` when the asset ships no second set.
+    pub uv1: [f32; 2],
 }
 
 impl Vertex {
     pub const LAYOUT: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
         array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
         step_mode: wgpu::VertexStepMode::Vertex,
-        // location 6 is the vertex colour; the instance buffer starts at 7
-        // (@location is a single shader-global space across all bound vertex
-        // buffers, so the two must not collide).
+        // Vertex attrs 0-7 (6 = colour, 7 = uv1); the instance buffer starts
+        // at 8 (@location is a single shader-global space across all bound
+        // vertex buffers, so the two must not collide).
         attributes: &wgpu::vertex_attr_array![
             0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4,
-            4 => Float32x4, 5 => Float32x4, 6 => Float32x4
+            4 => Float32x4, 5 => Float32x4, 6 => Float32x4, 7 => Float32x2
         ],
     };
 }
@@ -58,8 +62,8 @@ impl InstanceRaw {
         array_stride: std::mem::size_of::<InstanceRaw>() as wgpu::BufferAddress,
         // The whole point: advance once per INSTANCE, not per vertex.
         step_mode: wgpu::VertexStepMode::Instance,
-        // Locations 7-10: vertex colour took 6 (single shader-global location space).
-        attributes: &wgpu::vertex_attr_array![7 => Float32x4, 8 => Float32x4, 9 => Float32x4, 10 => Float32x4],
+        // Locations 8-11: vertex attrs occupy 0-7 (colour 6, uv1 7).
+        attributes: &wgpu::vertex_attr_array![8 => Float32x4, 9 => Float32x4, 10 => Float32x4, 11 => Float32x4],
     };
 
     pub const IDENTITY: Self = Self {
@@ -154,6 +158,11 @@ pub struct CpuMaterial {
     /// [m00, m01, tx], [m10, m11, ty]. Identity when absent. Applied to the
     /// base color slot only (other slots: roadmap refinement).
     pub base_uv_transform: [[f32; 3]; 2],
+    /// Which texture slots sample TEXCOORD_1 instead of TEXCOORD_0, as a bit
+    /// per slot: bit 0 base, 1 metallic-roughness, 2 normal, 3 emissive,
+    /// 4 occlusion. 0 = every slot on UV0 (the common case). Only UV sets 0
+    /// and 1 are supported; texCoord >= 2 falls back to UV0 with a warning.
+    pub uv_set_mask: u32,
     pub alpha_mode: AlphaMode,
     pub metallic_factor: f32,
     pub roughness_factor: f32,
@@ -176,6 +185,7 @@ impl Default for CpuMaterial {
         Self {
             base_color: [1.0, 1.0, 1.0, 1.0],
             base_uv_transform: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            uv_set_mask: 0,
             alpha_mode: AlphaMode::Opaque,
             metallic_factor: 1.0,
             roughness_factor: 1.0,
@@ -458,6 +468,7 @@ mod tests {
             joints: [0.0; 4],
             weights: [0.0; 4],
             color: [1.0, 1.0, 1.0, 1.0],
+            uv1: [0.0, 0.0],
         }
     }
 

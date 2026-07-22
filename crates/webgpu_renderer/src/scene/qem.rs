@@ -666,6 +666,7 @@ fn blend(a: &Vertex, b: &Vertex, t: f32) -> Vertex {
             a.color[2] + (b.color[2] - a.color[2]) * t,
             a.color[3] + (b.color[3] - a.color[3]) * t,
         ],
+        uv1: lerp2(a.uv1, b.uv1),
     }
 }
 
@@ -684,6 +685,7 @@ mod tests {
             joints: [0.0; 4],
             weights: [0.0; 4],
             color: [1.0, 1.0, 1.0, 1.0],
+            uv1: [0.0, 0.0],
         }
     }
 
