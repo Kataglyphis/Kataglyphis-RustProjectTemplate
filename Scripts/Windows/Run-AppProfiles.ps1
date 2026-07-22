@@ -4,7 +4,11 @@ param(
   [string[]]$AppArgs = @('stats', '--path', 'README.md'),
   [string]$Package = 'kataglyphis_cli',
   [string]$Binary = 'kataglyphis_rustprojecttemplate',
-  [string]$TargetDir = ''
+  [string]$TargetDir = '',
+  # Build the binary but skip launching it. Needed for GUI-featured builds in
+  # the headless servercore CI container, where the process dies at load time
+  # (missing display/DLLs) before main() ever runs.
+  [switch]$BuildOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -77,9 +81,14 @@ foreach ($profile in $resolvedProfiles) {
     throw "Built binary not found: $binaryPath"
   }
 
+  if ($BuildOnly) {
+    Write-Host "==> Build-only for features '$featureLabel': skipping the app run."
+    continue
+  }
+
   Write-Host "==> Running $Binary [$profile] with args: $($AppArgs -join ' ')"
   & $binaryPath @AppArgs
   if ($LASTEXITCODE -ne 0) {
-    throw "Run failed for profile '$profile' and features '$featureLabel'."
+    throw "Run failed for profile '$profile' and features '$featureLabel' (exit $LASTEXITCODE)."
   }
 }
