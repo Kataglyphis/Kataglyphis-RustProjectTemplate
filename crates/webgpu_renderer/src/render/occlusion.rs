@@ -14,7 +14,7 @@
 //!    primitive that ships everywhere this renderer runs.
 //!
 //! 2. **Reading results must not stall the frame.** Occlusion counts land in a
-//!    ring of [`SLOT_COUNT`] slots, each mapped asynchronously after submit and
+//!    ring of `SLOT_COUNT` slots, each mapped asynchronously after submit and
 //!    consumed whenever it happens to be ready - one or more frames later. A
 //!    slot still in flight is skipped for that frame rather than waited on, so
 //!    the frame path never blocks. Detection lagging the frame it measured is

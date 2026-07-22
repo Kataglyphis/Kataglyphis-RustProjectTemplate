@@ -59,7 +59,7 @@ pub enum HdrError {
     UnsupportedOrientation {
         orientation: String,
     },
-    /// Zero or beyond [`MAX_PIXELS`] total.
+    /// Zero or beyond the internal `MAX_PIXELS` cap.
     BadDimensions {
         width: u64,
         height: u64,
