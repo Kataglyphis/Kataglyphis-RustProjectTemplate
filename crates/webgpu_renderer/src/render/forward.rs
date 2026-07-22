@@ -202,8 +202,13 @@ pub struct ForwardRenderer {
     pipeline_blend_double_sided: wgpu::RenderPipeline,
     shadow_pipeline: wgpu::RenderPipeline,
     sky_pipeline: wgpu::RenderPipeline,
+    // Read only by the native-only shader hot-reload path; on wasm32 they are
+    // retained state with no reader, which is fine.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pipeline_layout: wgpu::PipelineLayout,
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     shadow_pipeline_layout: wgpu::PipelineLayout,
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     sky_pipeline_layout: wgpu::PipelineLayout,
     sky_uniform_buffer: wgpu::Buffer,
     sky_bind_group: wgpu::BindGroup,

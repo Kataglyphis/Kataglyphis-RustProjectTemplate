@@ -40,7 +40,22 @@ wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 console_error_panic_hook = "0.1"
 console_log = "1"
-web-sys = { version = "0.3", features = ["Document", "Window", "Element", "HtmlCanvasElement"] }
+js-sys = "0.3"
+# Node + EventTarget are Element's deref chain (needed to attach the
+# drag-and-drop listeners); DragEvent/DataTransfer/FileList/File are the
+# drop-zone payload types.
+web-sys = { version = "0.3", features = [
+    "Document",
+    "Window",
+    "Element",
+    "HtmlCanvasElement",
+    "Node",
+    "EventTarget",
+    "DragEvent",
+    "DataTransfer",
+    "FileList",
+    "File",
+] }
 
 [lints]
 workspace = true

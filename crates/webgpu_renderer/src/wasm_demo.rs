@@ -23,6 +23,49 @@ use crate::scene::controller::OrbitController;
 
 const DEMO_SCENE: &[u8] = include_bytes!("../tests/assets/cube_on_plane.gltf");
 
+/// A model dropped onto the page, parked here until the render loop picks it
+/// up: the File read is async, and the GPU state may not even exist yet when
+/// the drop happens.
+type DroppedScene = Rc<RefCell<Option<(String, Vec<u8>)>>>;
+
+/// Browser drag-and-drop model loading (the winit web backend never delivers
+/// `WindowEvent::DroppedFile`, so this goes through the DOM File API).
+/// Listeners go on the document so the whole page is the drop target.
+fn install_drop_zone(document: &web_sys::Document, slot: DroppedScene) {
+    // dragover must be cancelled, otherwise the browser handles the drop
+    // itself and navigates away to the file.
+    let on_dragover = Closure::<dyn FnMut(web_sys::DragEvent)>::new(|event: web_sys::DragEvent| {
+        event.prevent_default();
+    });
+    let _ = document
+        .add_event_listener_with_callback("dragover", on_dragover.as_ref().unchecked_ref());
+    on_dragover.forget();
+
+    let on_drop = Closure::<dyn FnMut(web_sys::DragEvent)>::new(move |event: web_sys::DragEvent| {
+        event.prevent_default();
+        let Some(file) = event
+            .data_transfer()
+            .and_then(|transfer| transfer.files())
+            .and_then(|files| files.get(0))
+        else {
+            return;
+        };
+        let name = file.name();
+        let slot = Rc::clone(&slot);
+        wasm_bindgen_futures::spawn_local(async move {
+            match wasm_bindgen_futures::JsFuture::from(file.array_buffer()).await {
+                Ok(buffer) => {
+                    let bytes = js_sys::Uint8Array::new(&buffer).to_vec();
+                    slot.borrow_mut().replace((name, bytes));
+                }
+                Err(err) => log::error!("Reading the dropped file failed: {err:?}"),
+            }
+        });
+    });
+    let _ = document.add_event_listener_with_callback("drop", on_drop.as_ref().unchecked_ref());
+    on_drop.forget();
+}
+
 /// Syncs the canvas backing store to its CSS layout size x devicePixelRatio
 /// and returns the backing size. winit does not do this on web — an unsized
 /// canvas leads to an invisible ~1x1 surface.
@@ -52,6 +95,8 @@ struct DemoApp {
     window: Option<Arc<Window>>,
     /// Filled asynchronously once the WebGPU adapter/device resolve.
     state: Rc<RefCell<Option<GpuState>>>,
+    /// Filled asynchronously by the drop-zone listeners.
+    dropped_scene: DroppedScene,
     controller: OrbitController,
     camera: OrbitCamera,
     frame: u64,
@@ -86,6 +131,7 @@ impl ApplicationHandler for DemoApp {
         mount
             .append_child(&canvas)
             .expect("failed to append canvas");
+        install_drop_zone(&document, Rc::clone(&self.dropped_scene));
         let (initial_width, initial_height) = sync_canvas_backing_size(&canvas);
 
         // WebGPU init is async-only in browsers: fill the shared state slot
@@ -155,6 +201,31 @@ impl ApplicationHandler for DemoApp {
                 let Some(state) = state_ref.as_mut() else {
                     return;
                 };
+
+                // A dropped model swaps the scene with the same semantics as
+                // the native viewer: upload, re-frame the camera, and on a
+                // parse error keep the current scene running. Only .glb (or
+                // .gltf with embedded buffers) can work from a single file -
+                // external .bin/textures are unreachable from one File.
+                if let Some((name, bytes)) = self.dropped_scene.borrow_mut().take() {
+                    match load_gltf_slice(&bytes) {
+                        Ok(scene) => {
+                            log::info!(
+                                "Loaded {name}: {} primitives, {} triangles",
+                                scene.primitives.len(),
+                                scene.triangle_count()
+                            );
+                            state.renderer.upload_scene(&state.gpu, &scene);
+                            self.camera = OrbitCamera::default();
+                            self.controller = OrbitController::default();
+                            self.frame = 0;
+                        }
+                        Err(err) => log::error!(
+                            "Failed to load {name}: {err:#} (external .bin/textures cannot \
+                             be resolved from a drop - use a self-contained .glb)"
+                        ),
+                    }
+                }
 
                 // Responsive canvas: follow the CSS layout size every frame
                 // and reconfigure the surface when it changes.

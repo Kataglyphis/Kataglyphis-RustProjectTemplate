@@ -47,6 +47,12 @@
       white-space: nowrap;
     }
     header .brand .spark { opacity: 0.75; }
+    header .hint {
+      font-size: 0.78rem;
+      opacity: 0.8;
+      white-space: nowrap;
+    }
+    header .hint code { font-size: 0.78rem; }
     header #status {
       margin-left: auto;
       font-size: 0.82rem;
@@ -94,6 +100,7 @@
 <body>
   <header>
     <span class="brand">Kataglyphis <span class="spark">&#9670;</span> WebGPU + glTF demo</span>
+    <span class="hint">drop a self-contained <code>.glb</code> anywhere to view it</span>
     <span id="status">checking WebGPU support&#8230;</span>
   </header>
   <div id="unsupported" hidden>
