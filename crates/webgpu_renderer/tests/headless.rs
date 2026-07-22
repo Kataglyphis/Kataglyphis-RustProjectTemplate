@@ -1174,3 +1174,164 @@ fn a_shared_texture_uploads_once() {
         .expect("render with shared textures must succeed");
     assert!(px.chunks_exact(4).any(|p| p[0] != px[0]), "frame is uniformly flat");
 }
+
+/// Per-pixel alpha-tested shadows: a MASK card whose texture cuts half of it
+/// away must cast roughly HALF the shadow of the same card rendered opaque.
+///
+/// The caster is a single horizontal QUAD, deliberately not a closed cube: a
+/// cube's shadow is the union of six faces' projections, so discarding half of
+/// every face leaves the silhouette unchanged and an alpha test that provably
+/// ran moves the shadowed count by under 10% (measured on the reverted first
+/// attempt). Red state (depth-only shadow pipeline for MASK casters): the
+/// masked count equals the opaque count and the upper bound fails.
+#[test]
+fn masked_card_casts_half_the_shadow_of_an_opaque_one() {
+    use kataglyphis_webgpu_renderer::scene::{
+        AlphaMode, CpuMaterial, CpuPrimitive, CpuSampler, CpuTexture, CpuTextureRef, Vertex,
+    };
+    use std::sync::Arc;
+
+    let Ok(gpu) = GpuContext::new_headless() else {
+        eprintln!("SKIP: no GPU adapter available in this environment");
+        return;
+    };
+
+    // Receiver: the bundled plane (primitive 1 of cube_on_plane is the cube -
+    // drop it; primitive 0 is the 10x10 ground plane).
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf");
+    let base = load_gltf(path).expect("cube_on_plane.gltf must load");
+    let plane = base
+        .primitives
+        .iter()
+        .find(|p| p.vertices.len() == 4)
+        .expect("the ground plane is the 4-vertex primitive")
+        .clone();
+
+    // Caster: a 2x2 horizontal card at y = 1.4 - the top of the proven
+    // shadow test's cube, so its shadow lands exactly where that test's
+    // camera demonstrably sees shadow. u spans left-to-right.
+    let card_vertices: Vec<Vertex> = [
+        ([-1.0f32, 1.4, -1.0], [0.0f32, 0.0]),
+        ([1.0, 1.4, -1.0], [1.0, 0.0]),
+        ([1.0, 1.4, 1.0], [1.0, 1.0]),
+        ([-1.0, 1.4, 1.0], [0.0, 1.0]),
+    ]
+    .iter()
+    .map(|(pos, uv)| Vertex {
+        position: *pos,
+        normal: [0.0, 1.0, 0.0],
+        uv: *uv,
+        tangent: [1.0, 0.0, 0.0, 1.0],
+        joints: [0.0; 4],
+        weights: [0.0; 4],
+    })
+    .collect();
+
+    // 2x1 texture: left texel fully opaque, right texel fully transparent -
+    // with nearest filtering the card's right half is cut away.
+    let cutout = CpuTextureRef {
+        texture: Arc::new(CpuTexture {
+            width: 2,
+            height: 1,
+            rgba8: vec![255, 255, 255, 255, 255, 255, 255, 0],
+            compressed: None,
+        }),
+        sampler: CpuSampler {
+            mag_nearest: true,
+            min_nearest: true,
+            ..CpuSampler::default()
+        },
+        srgb: true,
+    };
+
+    let card = |material: CpuMaterial| CpuPrimitive {
+        vertices: card_vertices.clone(),
+        // Winding chosen so the geometric normal points UP toward the
+        // light: the depth-only shadow pipeline backface-culls, and the
+        // first version of this test wound the quad downward - the light saw
+        // its back face and the card cast nothing at all.
+        indices: vec![0, 2, 1, 0, 3, 2],
+        transform: glam::Mat4::IDENTITY,
+        node_index: None,
+        skin_index: None,
+        material,
+        morph_targets: Vec::new(),
+        morph_weights: Vec::new(),
+    };
+
+    let render = |primitives: Vec<CpuPrimitive>| -> Vec<u8> {
+        let mut scene = base.clone();
+        scene.primitives = primitives;
+
+        let (width, height) = (256u32, 256u32);
+        let mut renderer = ForwardRenderer::new(&gpu, width, height);
+        renderer.upload_scene(&gpu, &scene);
+        // The proven shadow test's light/camera: low light from -x/-z pushes
+        // the shadow onto the +x/+z plane area this camera looks at.
+        renderer.light_dir_ambient = glam::Vec4::new(-1.0, 0.7, -0.3, 0.15);
+        // SSAO OFF: it darkens the plane behind the card from the FORWARD
+        // depth - which the forward alpha test already halves - and the
+        // first version of this oracle measured exactly that instead of the
+        // shadow map (the red state passed with a perfectly halved "shadow").
+        renderer.ssao_strength = 0.0;
+
+        let camera = OrbitCamera {
+            radius: 6.0,
+            pitch_deg: 55.0,
+            ..OrbitCamera::default()
+        };
+        renderer
+            .render_to_pixels(&gpu, width, height, &camera)
+            .expect("headless render must succeed")
+    };
+
+    // Differential shadow oracle: pixels the caster DARKENS versus a
+    // caster-free baseline, keeping only the NEAR-BLACK ones. Instrumented
+    // fact from building this test: the card's lit top face renders MID-GRAY
+    // from this camera and the true sky-ambient shadow renders near-black
+    // (~10 luminance) - an earlier filter with the opposite assumption
+    // counted the card body as "shadow" and measured the forward alpha test
+    // instead of the shadow map (a red state with routing disabled still
+    // "halved" perfectly). lum < 30 keeps the shadow, drops the card.
+    let baseline = render(vec![plane.clone()]);
+    let shadowed_count = |caster_material: CpuMaterial| -> usize {
+        let with_card = render(vec![plane.clone(), card(caster_material)]);
+        baseline
+            .chunks_exact(4)
+            .zip(with_card.chunks_exact(4))
+            .filter(|(b, w)| {
+                let lum_b = (b[0] as i32 * 3 + b[1] as i32 * 6 + b[2] as i32) / 10;
+                let lum_w = (w[0] as i32 * 3 + w[1] as i32 * 6 + w[2] as i32) / 10;
+                lum_b - lum_w > 40 && lum_w < 30
+            })
+            .count()
+    };
+
+    let opaque = shadowed_count(CpuMaterial {
+        base_color_texture: Some(cutout.clone()),
+        ..CpuMaterial::default()
+    });
+    let masked = shadowed_count(CpuMaterial {
+        alpha_mode: AlphaMode::Mask(0.5),
+        base_color_texture: Some(cutout.clone()),
+        ..CpuMaterial::default()
+    });
+
+    eprintln!("masked-card shadow counts: opaque = {opaque}, masked = {masked}");
+    assert!(
+        opaque > 300,
+        "the opaque card must cast a substantial shadow, got {opaque} pixels"
+    );
+    // Roughly half, with generous tolerance for penumbra/PCF edges.
+    assert!(
+        masked < (opaque * 7) / 10,
+        "masked shadow ({masked}) is not meaningfully smaller than opaque ({opaque}) - \
+         the alpha test is not reaching the shadow pass"
+    );
+    assert!(
+        masked > opaque / 5,
+        "masked shadow ({masked}) nearly vanished vs opaque ({opaque}) - \
+         the cut-out should keep about half"
+    );
+}

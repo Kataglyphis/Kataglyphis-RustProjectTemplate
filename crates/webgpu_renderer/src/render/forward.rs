@@ -88,6 +88,10 @@ struct GpuPrimitive {
     /// Uniforms-only group for the shadow pass: the full group samples the
     /// shadow map, which the shadow pass writes — an exclusive-usage conflict.
     shadow_bind_group: wgpu::BindGroup,
+    /// MASK material with a real base-color texture: route through the
+    /// alpha-testing shadow pipeline so the cut-out's shape shadows.
+    alpha_masked: bool,
+    shadow_masked_bind_group: Option<wgpu::BindGroup>,
     /// Per-instance transforms. Always at least one (identity), so every draw
     /// binds slot 1 and there is no un-instanced code path to diverge.
     instance_buffer: wgpu::Buffer,
@@ -214,6 +218,10 @@ pub struct ForwardRenderer {
     sky_bind_group: wgpu::BindGroup,
     bind_group_layout: wgpu::BindGroupLayout,
     shadow_bind_group_layout: wgpu::BindGroupLayout,
+    shadow_masked_bind_group_layout: wgpu::BindGroupLayout,
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    shadow_masked_pipeline_layout: wgpu::PipelineLayout,
+    shadow_masked_pipeline: wgpu::RenderPipeline,
     /// Group 1 of the forward pipeline: the IBL maps, bound once per pass.
     ibl_bind_group_layout: wgpu::BindGroupLayout,
     ibl_uniform_buffer: wgpu::Buffer,
@@ -482,6 +490,63 @@ impl ForwardRenderer {
                 immediate_size: 0,
             });
 
+        // Masked-shadow variant: same per-primitive uniform + joints, plus the
+        // material's base color texture/sampler at the MAIN pass's slot
+        // numbers (3/4), so the WGSL entry points reuse the existing global
+        // declarations. Binding 0 needs FRAGMENT visibility too - the alpha
+        // test reads the cutoff and base color factor from the uniform.
+        let shadow_masked_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("shadow_masked_bind_group_layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 13,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+        let shadow_masked_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("shadow_masked_pipeline_layout"),
+                bind_group_layouts: &[
+                    Some(&shadow_masked_bind_group_layout),
+                    Some(&cascade_index_layout),
+                ],
+                immediate_size: 0,
+            });
+
         let (pipeline, pipeline_double_sided, pipeline_blend, pipeline_blend_double_sided) =
             create_forward_pipeline_set(device, &shader, &pipeline_layout);
 
@@ -527,6 +592,8 @@ impl ForwardRenderer {
         });
 
         let shadow_pipeline = create_shadow_pipeline(device, &shader, &shadow_pipeline_layout);
+        let shadow_masked_pipeline =
+            create_masked_shadow_pipeline(device, &shader, &shadow_masked_pipeline_layout);
 
         let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("shadow_sampler"),
@@ -623,6 +690,9 @@ impl ForwardRenderer {
             sky_pipeline,
             pipeline_layout,
             shadow_pipeline_layout,
+            shadow_masked_bind_group_layout,
+            shadow_masked_pipeline_layout,
+            shadow_masked_pipeline,
             sky_pipeline_layout,
             sky_uniform_buffer,
             sky_bind_group,
@@ -1141,6 +1211,40 @@ impl ForwardRenderer {
                 ],
             });
 
+            // Per-pixel alpha-tested shadows: MASK materials with a real
+            // base-color texture get a bind group carrying that texture (the
+            // SAME dedup-cached view/sampler the forward pass binds - slot 0
+            // of the views built above), routed through the masked shadow
+            // pipeline in the caster loop.
+            let alpha_masked = matches!(material.alpha_mode, AlphaMode::Mask(_))
+                && material.base_color_texture.is_some();
+            let shadow_masked_bind_group = if alpha_masked {
+                Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some(&format!("shadow_masked_bind_group_{i}")),
+                    layout: &self.shadow_masked_bind_group_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: uniform_buffer.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: wgpu::BindingResource::TextureView(&views[0]),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 4,
+                            resource: wgpu::BindingResource::Sampler(&samplers[0]),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 13,
+                            resource: joint_buffer.as_entire_binding(),
+                        },
+                    ],
+                }))
+            } else {
+                None
+            };
+
             let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some(&format!("instances_{i}")),
                 contents: bytemuck::bytes_of(&InstanceRaw::IDENTITY),
@@ -1206,6 +1310,8 @@ impl ForwardRenderer {
                 uniform_buffer,
                 bind_group,
                 shadow_bind_group,
+                alpha_masked,
+                shadow_masked_bind_group,
                 instance_buffer,
                 instance_count: 1,
                 instance_transforms: Vec::new(),
@@ -1463,7 +1569,20 @@ impl ForwardRenderer {
                     continue;
                 }
                 casters_drawn += 1;
-                pass.set_bind_group(0, &prim.shadow_bind_group, &[]);
+                // MASK-with-texture casters run the alpha-testing pipeline so
+                // the cut-out's shape shadows; everything else stays on the
+                // cheaper depth-only pipeline. set_pipeline per primitive is
+                // fine at this scene scale; sort-by-pipeline if it ever shows
+                // in the shadow pass timing.
+                if let (true, Some(masked_group)) =
+                    (prim.alpha_masked, prim.shadow_masked_bind_group.as_ref())
+                {
+                    pass.set_pipeline(&self.shadow_masked_pipeline);
+                    pass.set_bind_group(0, masked_group, &[]);
+                } else {
+                    pass.set_pipeline(&self.shadow_pipeline);
+                    pass.set_bind_group(0, &prim.shadow_bind_group, &[]);
+                }
                 pass.set_vertex_buffer(0, prim.vertex_buffer.slice(..));
                 pass.set_vertex_buffer(1, prim.instance_buffer.slice(..));
                 pass.set_index_buffer(prim.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
@@ -1807,6 +1926,8 @@ impl ForwardRenderer {
         });
         let set = create_forward_pipeline_set(device, &shader, &self.pipeline_layout);
         let shadow = create_shadow_pipeline(device, &shader, &self.shadow_pipeline_layout);
+        let shadow_masked =
+            create_masked_shadow_pipeline(device, &shader, &self.shadow_masked_pipeline_layout);
         let sky = create_sky_pipeline(device, &sky_shader, &self.sky_pipeline_layout);
         if let Some(err) = pollster::block_on(error_scope.pop()) {
             anyhow::bail!("shader reload rejected: {err}");
@@ -1818,6 +1939,7 @@ impl ForwardRenderer {
             self.pipeline_blend_double_sided,
         ) = set;
         self.shadow_pipeline = shadow;
+        self.shadow_masked_pipeline = shadow_masked;
         self.sky_pipeline = sky;
         Ok(())
     }
@@ -2261,6 +2383,52 @@ fn create_forward_pipeline_set(
         make(Some(wgpu::Face::Back), true, "forward_pipeline_blend"),
         make(None, true, "forward_pipeline_blend_double_sided"),
     )
+}
+
+fn create_masked_shadow_pipeline(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("shadow_masked_pipeline"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_shadow_masked"),
+            buffers: &[Vertex::LAYOUT, InstanceRaw::LAYOUT],
+            compilation_options: Default::default(),
+        },
+        // A fragment stage with no color targets: it exists purely for the
+        // alpha-test discard.
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_shadow_masked"),
+            targets: &[],
+            compilation_options: Default::default(),
+        }),
+        // Cut-out cards are usually single-sided quads viewed from either
+        // side by the light; culling them would delete the shadow whenever
+        // the light sits behind the card's front face.
+        primitive: wgpu::PrimitiveState {
+            cull_mode: None,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Less),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState {
+                constant: 2,
+                slope_scale: 2.0,
+                clamp: 0.0,
+            },
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
+    })
 }
 
 fn create_shadow_pipeline(

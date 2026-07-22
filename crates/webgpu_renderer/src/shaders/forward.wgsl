@@ -198,6 +198,48 @@ fn vs_shadow(in: VsIn) -> @builtin(position) vec4<f32> {
     return uniforms.light_space * world;
 }
 
+// Per-pixel alpha-tested shadow variant for MASK materials. The depth-only
+// vs_shadow casts the shadow of the full geometry a cut-out is modelled as
+// (a foliage card shadows as its quad); this pair samples the base-color
+// alpha and discards below the cutoff, so the cut-out's SHAPE shadows.
+// Reuses the main pass's binding slots - the masked shadow bind group binds
+// only 0 (uniforms), 3/4 (base color), 13 (joints).
+struct VsShadowMaskedOut {
+    @builtin(position) pos: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+};
+
+@vertex
+fn vs_shadow_masked(in: VsIn) -> VsShadowMaskedOut {
+    var out: VsShadowMaskedOut;
+    let world = instance_matrix(in) * skin_matrix(in) * vec4<f32>(in.position, 1.0);
+    let cascade = shadow_cascade_index.x;
+    if (cascade == 1u) {
+        out.pos = uniforms.light_space_1 * world;
+    } else if (cascade == 2u) {
+        out.pos = uniforms.light_space_2 * world;
+    } else {
+        out.pos = uniforms.light_space * world;
+    }
+    out.uv = in.uv;
+    return out;
+}
+
+@fragment
+fn fs_shadow_masked(in: VsShadowMaskedOut) {
+    // Same KHR_texture_transform the forward pass applies to this slot.
+    let uv = vec2<f32>(
+        uniforms.base_uv_row0.x * in.uv.x + uniforms.base_uv_row0.y * in.uv.y + uniforms.base_uv_row0.z,
+        uniforms.base_uv_row1.x * in.uv.x + uniforms.base_uv_row1.y * in.uv.y + uniforms.base_uv_row1.z,
+    );
+    // emissive_factor.w carries the MASK cutoff (0 = never discard).
+    let alpha = uniforms.base_color.a
+        * textureSampleLevel(base_color_tex, base_color_sampler, uv, 0.0).a;
+    if (alpha < uniforms.emissive_factor.w) {
+        discard;
+    }
+}
+
 fn shadow_factor(view_depth: f32, world_pos: vec3<f32>, n_dot_l: f32) -> f32 {
     // Cascade selection by view distance.
     var cascade = 0;
