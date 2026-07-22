@@ -104,8 +104,10 @@ pub(crate) fn create_render_pipeline(
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("pipeline_layout"),
-        bind_group_layouts: &[&bind_group_layout],
-        push_constant_ranges: &[],
+        // wgpu 29: layouts are Option-wrapped and push constants became the
+        // immediates API.
+        bind_group_layouts: &[Some(&bind_group_layout)],
+        immediate_size: 0,
     });
 
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -130,7 +132,7 @@ pub(crate) fn create_render_pipeline(
         primitive: wgpu::PrimitiveState::default(),
         depth_stencil: None,
         multisample: wgpu::MultisampleState::default(),
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     })
 }
@@ -146,9 +148,14 @@ pub(crate) async fn init_wgpu(
 )> {
     let size = window.inner_size();
 
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+    // wgpu 29: InstanceDescriptor lost Default (the new `display` field is a
+    // deliberate decision) and Instance::new takes it by value.
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends,
-        ..Default::default()
+        flags: wgpu::InstanceFlags::default(),
+        memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+        backend_options: wgpu::BackendOptions::default(),
+        display: None,
     });
     let surface = instance
         .create_surface(Arc::clone(window))

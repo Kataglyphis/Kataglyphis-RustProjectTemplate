@@ -62,7 +62,7 @@ impl WgpuState {
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         });
 
@@ -218,7 +218,7 @@ impl WgpuState {
         self.inference.maybe_infer(frame);
     }
 
-    pub(crate) fn render(&mut self, window: &Window) -> Result<(), wgpu::SurfaceError> {
+    pub(crate) fn render(&mut self, window: &Window) -> anyhow::Result<()> {
         #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
         self.inference.poll();
 
@@ -266,8 +266,19 @@ impl WgpuState {
         _window: &Window,
         clipped_primitives: &[egui::ClippedPrimitive],
         _full_output: &egui::FullOutput,
-    ) -> Result<(), wgpu::SurfaceError> {
-        let frame = self.surface.get_current_texture()?;
+    ) -> anyhow::Result<()> {
+        // wgpu 29: get_current_texture returns a CurrentSurfaceTexture enum
+        // instead of Result<_, SurfaceError>. Outdated/Lost reconfigure and
+        // skip the frame rather than tearing the app down.
+        let frame = match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(frame)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                self.surface.configure(&self.device, &self.config);
+                return Ok(());
+            }
+            other => anyhow::bail!("surface acquire failed: {other:?}"),
+        };
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -295,6 +306,7 @@ impl WgpuState {
                 depth_stencil_attachment: None,
                 occlusion_query_set: None,
                 timestamp_writes: None,
+                multiview_mask: None,
             });
 
             rpass.set_pipeline(&self.render_pipeline);
@@ -334,6 +346,7 @@ impl WgpuState {
                     depth_stencil_attachment: None,
                     occlusion_query_set: None,
                     timestamp_writes: None,
+                    multiview_mask: None,
                 })
                 .forget_lifetime();
 

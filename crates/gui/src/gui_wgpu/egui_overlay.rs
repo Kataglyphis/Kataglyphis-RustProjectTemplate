@@ -88,18 +88,22 @@ impl EguiOverlay {
         #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
         let score_threshold = inference.score_threshold;
 
-        let full_output = self.ctx.run(raw_input, |ctx| {
+        // egui 0.35 replaced Context::run with begin_pass/end_pass. The clone
+        // is a cheap Arc handle and dodges the self-borrow inside the closures.
+        let ctx = self.ctx.clone();
+        ctx.begin_pass(raw_input);
+        {
             if overlay_enabled {
                 egui::Window::new("Overlay")
                     .default_pos(egui::pos2(12.0, 12.0))
                     .resizable(false)
-                    .show(ctx, |ui| {
+                    .show(&ctx, |ui| {
                         Self::draw_system_stats(ui, frame_dimensions, &self.stats);
 
                         #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
                         {
                             Self::draw_detection_boxes(
-                                ctx,
+                                &ctx,
                                 frame_dimensions,
                                 &inference.last_detections,
                             );
@@ -121,14 +125,15 @@ impl EguiOverlay {
                 egui::Window::new("Overlay (hidden)")
                     .default_pos(egui::pos2(12.0, 12.0))
                     .resizable(false)
-                    .show(ctx, |ui| {
+                    .show(&ctx, |ui| {
                         ui.label("Overlay is hidden");
                         if ui.button("Show overlay again").clicked() {
                             overlay_enabled = true;
                         }
                     });
             }
-        });
+        }
+        let full_output = ctx.end_pass();
 
         self.enabled = overlay_enabled;
         #[cfg(any(feature = "onnx_tract", feature = "onnxruntime"))]
