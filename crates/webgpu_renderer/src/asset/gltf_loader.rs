@@ -178,16 +178,14 @@ fn build_scene(
     Ok(scene)
 }
 
-/// Warns when a material slot asks for a UV set other than TEXCOORD_0.
+/// Returns the uv-set bit for a material texture slot: `1 << bit` when the
+/// texture references TEXCOORD_1, 0 for TEXCOORD_0.
 ///
-/// Only TEXCOORD_0 is loaded, so a slot bound to TEXCOORD_1 is sampled with the
-/// WRONG coordinates - it still renders, just with the texture in the wrong
-/// places. Baked AO/lightmaps on UV1 are the standard Blender/Substance export,
-/// so this is a real asset shape, and "looks subtly wrong" is far harder to
-/// diagnose than a line in the log saying exactly which slot and which set.
-/// Returns the uv-set bit for a slot: 1 when the texture references
-/// TEXCOORD_1 (both UV0/UV1 are loaded), 0 otherwise. texCoord >= 2 is not
-/// supported and falls back to UV0 with a warning.
+/// Both UV0 and UV1 are loaded, so a slot bound to TEXCOORD_1 (baked
+/// AO/lightmaps on UV1 are the standard Blender/Substance export) is sampled
+/// with the correct set. texCoord >= 2 is still unsupported: it falls back to
+/// UV0 and logs which slot and which set, because "looks subtly wrong" is far
+/// harder to diagnose than a line in the log saying exactly what happened.
 fn uv_set_bit(slot: &str, tex_coord: u32, bit: u32) -> u32 {
     match tex_coord {
         0 => 0,
