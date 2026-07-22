@@ -20,6 +20,8 @@ fn vertex(position: [f32; 3], normal: [f32; 3]) -> Vertex {
         tangent: [1.0, 0.0, 0.0, 1.0],
         joints: [0.0; 4],
         weights: [0.0; 4],
+        color: [1.0, 1.0, 1.0, 1.0],
+        uv1: [0.0, 0.0],
     }
 }
 
