@@ -40,11 +40,35 @@ jobs:
       #- name: Enable Git long paths
       #  run: git config --global core.longpaths true
 
-      - name: Checkout repository
+      # Windows MAX_PATH is the whole problem here. The runner workspace is
+      # D:\a\<repo>\<repo> (repo name doubled, ~75 chars), and the nested
+      # submodule chain - RustProjectTemplate -> ContainerHub -> DocumANTation
+      # -> md2pdfLib -> latex/{smile,awesome-beamer} - pushes
+      # .git/modules/.../objects/pack/pack-*.keep past 260 characters. A
+      # recursive checkout here dies with "Filename too long" and
+      # "fatal: '$GIT_DIR' too big" before any build step runs. So check out
+      # WITHOUT submodules, then clone the whole tree into a SHORT path where
+      # the same chain fits, and build from there. Mirrors the fix already
+      # proven in BeschleunigerBallett's Windows lane.
+      - name: Checkout repository (no submodules; see the short-path clone below)
         uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
-          submodules: recursive
+          submodules: false
+
+      - name: Clone full tree with submodules into a short path (D:\ws)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config --global core.longpaths true
+          # .gitmodules pins git@github.com: (SSH) for ContainerHub and the
+          # runner has no SSH key; rewrite to token HTTPS as checkout would.
+          git config --global url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf "git@github.com:"
+          rm -rf /d/ws
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" /d/ws
+          git -C /d/ws checkout --force "${{ github.sha }}"
+          git -C /d/ws submodule update --init --recursive
 
       - name: Compute version
         id: compute_version
@@ -74,7 +98,7 @@ jobs:
             --cpus ${{ env.WINDOWS_DOCKER_CPUS }} `
             --env CARGO_TERM_COLOR="${{ env.CARGO_TERM_COLOR }}" `
             --env CARGO_BUILD_JOBS="${{ env.WINDOWS_DOCKER_CPUS }}" `
-            --mount "type=bind,source=${{ github.workspace }},target=C:\ws" `
+            --mount "type=bind,source=D:\ws,target=C:\ws" `
             -w "C:\ws" `
             ${{ env.WINDOWS_CONTAINER_IMAGE }} `
             powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
@@ -90,7 +114,7 @@ jobs:
             --cpus ${{ env.WINDOWS_DOCKER_CPUS }} `
             --env CARGO_TERM_COLOR="${{ env.CARGO_TERM_COLOR }}" `
             --env CARGO_BUILD_JOBS="${{ env.WINDOWS_DOCKER_CPUS }}" `
-            --mount "type=bind,source=${{ github.workspace }},target=C:\ws" `
+            --mount "type=bind,source=D:\ws,target=C:\ws" `
             -w "C:\ws" `
             ${{ env.WINDOWS_CONTAINER_IMAGE }} `
             powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
@@ -118,7 +142,7 @@ jobs:
             --env MSIX_DISPLAY_NAME="${{ env.MSIX_DISPLAY_NAME }}" `
             --env MSIX_DESCRIPTION="${{ env.MSIX_DESCRIPTION }}" `
             --env MSIX_VERSION="$ver" `
-            --mount "type=bind,source=${{ github.workspace }},target=C:\ws" `
+            --mount "type=bind,source=D:\ws,target=C:\ws" `
             -w "C:\ws" `
             ${{ env.WINDOWS_CONTAINER_IMAGE }} `
             powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
@@ -144,7 +168,7 @@ jobs:
           docker run --rm `
             --memory "${{ env.WINDOWS_DOCKER_MEMORY }}" `
             --cpus ${{ env.WINDOWS_DOCKER_CPUS }} `
-            --mount "type=bind,source=${{ github.workspace }},target=C:\ws" `
+            --mount "type=bind,source=D:\ws,target=C:\ws" `
             -w "C:\ws" `
             -e "BINARY=${{ env.BINARY }}" `
             -e "VERSION=$ver" `
@@ -159,16 +183,16 @@ jobs:
         uses: actions/upload-artifact@v7.0.1
         with:
           name: ${{ env.BINARY }}-${{ steps.vars.outputs.version }}-windows-2025-x64
-          path: dist/${{ steps.vars.outputs.archive_name }}
+          path: D:/ws/dist/${{ steps.vars.outputs.archive_name }}
 
       - name: Upload MSIX artifact
         uses: actions/upload-artifact@v7.0.1
         with:
           name: ${{ env.MSIX_PACKAGE_NAME }}-${{ steps.vars.outputs.version }}-x64-msix
-          path: dist/msix/*.msix
+          path: D:/ws/dist/msix/*.msix
 
       - name: Upload MSI artifact
         uses: actions/upload-artifact@v7.0.1
         with:
           name: ${{ env.BINARY }}-${{ steps.vars.outputs.version }}-x64-msi
-          path: dist/msi/*.msi
+          path: D:/ws/dist/msi/*.msi
