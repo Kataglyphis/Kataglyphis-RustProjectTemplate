@@ -1225,6 +1225,7 @@ fn masked_card_casts_half_the_shadow_of_an_opaque_one() {
         tangent: [1.0, 0.0, 0.0, 1.0],
         joints: [0.0; 4],
         weights: [0.0; 4],
+        color: [1.0, 1.0, 1.0, 1.0],
     })
     .collect();
 
@@ -1333,5 +1334,84 @@ fn masked_card_casts_half_the_shadow_of_an_opaque_one() {
         masked > opaque / 5,
         "masked shadow ({masked}) nearly vanished vs opaque ({opaque}) - \
          the cut-out should keep about half"
+    );
+}
+
+/// glTF COLOR_0 vertex colours multiply the base colour. A mesh with green
+/// vertex colours and a WHITE unlit material must render green - the loader
+/// used to drop COLOR_0 entirely, so such a mesh rendered white. Unlit keeps
+/// the assertion about the colour path alone, with no lighting in the way.
+#[test]
+fn vertex_colors_tint_the_surface() {
+    use kataglyphis_webgpu_renderer::scene::{AlphaMode, CpuMaterial, CpuPrimitive, Vertex};
+
+    let Ok(gpu) = GpuContext::new_headless() else {
+        eprintln!("SKIP: no GPU adapter available in this environment");
+        return;
+    };
+
+    // A quad facing the camera at the origin, all four vertices GREEN.
+    let make_quad = |color: [f32; 4]| -> CpuPrimitive {
+        let verts: Vec<Vertex> = [
+            ([-2.0f32, -2.0, 0.0], [0.0f32, 0.0]),
+            ([2.0, -2.0, 0.0], [1.0, 0.0]),
+            ([2.0, 2.0, 0.0], [1.0, 1.0]),
+            ([-2.0, 2.0, 0.0], [0.0, 1.0]),
+        ]
+        .iter()
+        .map(|(p, uv)| Vertex {
+            position: *p,
+            normal: [0.0, 0.0, 1.0],
+            uv: *uv,
+            tangent: [1.0, 0.0, 0.0, 1.0],
+            joints: [0.0; 4],
+            weights: [0.0; 4],
+            color,
+        })
+        .collect();
+        CpuPrimitive {
+            vertices: verts,
+            indices: vec![0, 1, 2, 0, 2, 3],
+            transform: glam::Mat4::IDENTITY,
+            node_index: None,
+            skin_index: None,
+            material: CpuMaterial {
+                // White unlit: the only colour source is the vertex colour.
+                base_color: [1.0, 1.0, 1.0, 1.0],
+                alpha_mode: AlphaMode::Opaque,
+                unlit: true,
+                ..CpuMaterial::default()
+            },
+            morph_targets: Vec::new(),
+            morph_weights: Vec::new(),
+        }
+    };
+
+    let render = |color: [f32; 4]| -> Vec<u8> {
+        let mut scene = load_gltf(cube_path()).expect("cube.gltf must load");
+        scene.primitives = vec![make_quad(color)];
+        let (w, h) = (128u32, 128u32);
+        let mut renderer = ForwardRenderer::new(&gpu, w, h);
+        renderer.upload_scene(&gpu, &scene);
+        // Camera on +Z looking at the quad (yaw 90, pitch 0).
+        let camera = OrbitCamera { radius: 5.0, yaw_deg: 90.0, pitch_deg: 0.0, ..OrbitCamera::default() };
+        renderer.render_to_pixels(&gpu, w, h, &camera).expect("headless render must succeed")
+    };
+
+    // Centre pixel of a green-vertex quad: green dominates both other channels.
+    let green = render([0.0, 1.0, 0.0, 1.0]);
+    let idx = ((64usize * 128) + 64) * 4;
+    let (r, g, b) = (green[idx] as i32, green[idx + 1] as i32, green[idx + 2] as i32);
+    assert!(
+        g > r + 40 && g > b + 40,
+        "green vertex colour did not tint the surface (got r={r} g={g} b={b}) - COLOR_0 dropped"
+    );
+
+    // Control: a white-vertex quad renders neutral (all channels close).
+    let white = render([1.0, 1.0, 1.0, 1.0]);
+    let (wr, wg, wb) = (white[idx] as i32, white[idx + 1] as i32, white[idx + 2] as i32);
+    assert!(
+        (wr - wg).abs() < 30 && (wg - wb).abs() < 30,
+        "white vertex colour should render neutral (got r={wr} g={wg} b={wb})"
     );
 }

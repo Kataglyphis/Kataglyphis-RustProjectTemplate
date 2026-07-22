@@ -61,13 +61,16 @@ struct VsIn {
     @location(3) tangent: vec4<f32>,
     @location(4) joints: vec4<f32>,
     @location(5) weights: vec4<f32>,
+    // glTF COLOR_0 (linear RGBA), (1,1,1,1) when absent.
+    @location(6) color: vec4<f32>,
     // Per-instance transform, four columns of a mat4. Every draw binds an
     // instance buffer - unbatched primitives get a single identity instance -
     // so there is one code path rather than two pipelines to keep in step.
-    @location(6) instance0: vec4<f32>,
-    @location(7) instance1: vec4<f32>,
-    @location(8) instance2: vec4<f32>,
-    @location(9) instance3: vec4<f32>,
+    // Locations 7-10: vertex colour took 6.
+    @location(7) instance0: vec4<f32>,
+    @location(8) instance1: vec4<f32>,
+    @location(9) instance2: vec4<f32>,
+    @location(10) instance3: vec4<f32>,
 };
 
 fn instance_matrix(in: VsIn) -> mat4x4<f32> {
@@ -134,6 +137,7 @@ struct VsOut {
     @location(3) world_tangent: vec4<f32>,
     @location(4) world_position: vec3<f32>,
     @location(5) view_depth: f32,
+    @location(6) vertex_color: vec4<f32>,
 };
 
 @vertex
@@ -169,6 +173,7 @@ fn vs_main(in: VsIn) -> VsOut {
     out.light_space_pos = uniforms.light_space * world_pos;
     out.world_position = world_pos.xyz;
     out.view_depth = distance(world_pos.xyz, uniforms.camera_position.xyz);
+    out.vertex_color = in.color;
     return out;
 }
 
@@ -440,7 +445,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let emissive_sample = textureSample(emissive_tex, emissive_sampler, in.uv);
     let occlusion_sample = textureSample(occlusion_tex, occlusion_sampler, in.uv);
 
-    let albedo = uniforms.base_color * base_sample;
+    // glTF: COLOR_0 multiplies the base color factor and texture.
+    let albedo = uniforms.base_color * base_sample * in.vertex_color;
     // MASK alpha mode: emissive_factor.w carries the cutoff (0 = keep all).
     if (albedo.a < uniforms.emissive_factor.w) {
         discard;

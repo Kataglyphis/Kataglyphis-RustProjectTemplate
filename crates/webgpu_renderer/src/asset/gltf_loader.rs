@@ -445,6 +445,13 @@ fn load_primitive(
         Some(iter) => iter.into_f32().collect(),
         None => vec![[0.0; 4]; positions.len()],
     };
+    // COLOR_0: vec3 or vec4 in the file, always vec4 here (rgb -> rgb, a=1).
+    // White when absent, so the multiply into albedo is a no-op for the
+    // common textured/factor-only case.
+    let colors: Vec<[f32; 4]> = match reader.read_colors(0) {
+        Some(iter) => iter.into_rgba_f32().collect(),
+        None => vec![[1.0, 1.0, 1.0, 1.0]; positions.len()],
+    };
 
     let tangents: Vec<[f32; 4]> = match reader.read_tangents() {
         Some(iter) => iter.collect(),
@@ -476,6 +483,7 @@ fn load_primitive(
             tangent: *tan,
             joints: joints.get(i).copied().unwrap_or([0.0; 4]),
             weights: weights.get(i).copied().unwrap_or([0.0; 4]),
+            color: colors.get(i).copied().unwrap_or([1.0, 1.0, 1.0, 1.0]),
         })
         .collect();
 
@@ -891,6 +899,7 @@ mod tests {
             tangent: [0.0; 4],
             joints: [0.0; 4],
             weights: [0.0; 4],
+            color: [1.0, 1.0, 1.0, 1.0],
         })
         .collect();
         let indices = [0u32, 1, 2, 0, 2, 3];
@@ -927,6 +936,7 @@ mod tests {
                 tangent: [0.0; 4],
                 joints: [0.0; 4],
                 weights: [0.0; 4],
+                color: [1.0, 1.0, 1.0, 1.0],
             })
             .collect();
         (vertices, [0u32, 1, 2, 0, 2, 3])

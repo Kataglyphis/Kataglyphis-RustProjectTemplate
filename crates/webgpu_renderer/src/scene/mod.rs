@@ -22,15 +22,23 @@ pub struct Vertex {
     pub joints: [f32; 4],
     /// Skin weights (glTF WEIGHTS_0); all zero = unskinned.
     pub weights: [f32; 4],
+    /// glTF COLOR_0 vertex colour, linear RGBA. (1,1,1,1) when the asset ships
+    /// no colours - the most common way texture-less assets (photogrammetry,
+    /// CAD, low-poly, baked-AO packs) carry colour, previously dropped so they
+    /// rendered uniformly white.
+    pub color: [f32; 4],
 }
 
 impl Vertex {
     pub const LAYOUT: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
         array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
         step_mode: wgpu::VertexStepMode::Vertex,
+        // location 6 is the vertex colour; the instance buffer starts at 7
+        // (@location is a single shader-global space across all bound vertex
+        // buffers, so the two must not collide).
         attributes: &wgpu::vertex_attr_array![
             0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4,
-            4 => Float32x4, 5 => Float32x4
+            4 => Float32x4, 5 => Float32x4, 6 => Float32x4
         ],
     };
 }
@@ -50,7 +58,8 @@ impl InstanceRaw {
         array_stride: std::mem::size_of::<InstanceRaw>() as wgpu::BufferAddress,
         // The whole point: advance once per INSTANCE, not per vertex.
         step_mode: wgpu::VertexStepMode::Instance,
-        attributes: &wgpu::vertex_attr_array![6 => Float32x4, 7 => Float32x4, 8 => Float32x4, 9 => Float32x4],
+        // Locations 7-10: vertex colour took 6 (single shader-global location space).
+        attributes: &wgpu::vertex_attr_array![7 => Float32x4, 8 => Float32x4, 9 => Float32x4, 10 => Float32x4],
     };
 
     pub const IDENTITY: Self = Self {
@@ -448,6 +457,7 @@ mod tests {
             tangent: [0.0; 4],
             joints: [0.0; 4],
             weights: [0.0; 4],
+            color: [1.0, 1.0, 1.0, 1.0],
         }
     }
 

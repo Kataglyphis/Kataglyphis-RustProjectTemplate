@@ -660,6 +660,12 @@ fn blend(a: &Vertex, b: &Vertex, t: f32) -> Vertex {
         },
         joints: nearer.joints,
         weights: nearer.weights,
+        color: [
+            a.color[0] + (b.color[0] - a.color[0]) * t,
+            a.color[1] + (b.color[1] - a.color[1]) * t,
+            a.color[2] + (b.color[2] - a.color[2]) * t,
+            a.color[3] + (b.color[3] - a.color[3]) * t,
+        ],
     }
 }
 
@@ -677,6 +683,7 @@ mod tests {
             tangent: [1.0, 0.0, 0.0, 1.0],
             joints: [0.0; 4],
             weights: [0.0; 4],
+            color: [1.0, 1.0, 1.0, 1.0],
         }
     }
 
