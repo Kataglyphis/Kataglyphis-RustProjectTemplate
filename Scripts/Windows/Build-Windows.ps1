@@ -78,6 +78,47 @@ function Resolve-Executable([string]$Name) {
   return $null
 }
 
+# Robocopy-backed tree sync. This script has always CALLED Sync-BuildArtifacts
+# but no ContainerHub module version has ever DEFINED it - the packaging path
+# simply never executed until the 2026-07-22 lane peel reached it, and it died
+# on the first call. Defined locally with the semantics the call sites assume.
+function Sync-BuildArtifacts {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] [object] $Context,
+    [Parameter(Mandatory = $true)] [string] $Source,
+    [Parameter(Mandatory = $true)] [string] $Destination,
+    [switch] $ExcludeCommonRustAndCppCache
+  )
+
+  if (-not (Test-Path $Destination)) {
+    New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+  }
+
+  # /E subdirs, /MT multithreaded, /R:1 /W:1 no retry-hangs on locked files,
+  # /FFT coarse timestamps (bind mounts), /NOOFFLOAD no copy-offload over the
+  # VM boundary - same rationale as Sync-FastLocalArtifactsToHost in
+  # WindowsFlutter.Common.psm1.
+  $robocopyArgs = @(
+    $Source, $Destination,
+    '/E', '/MT:16', '/R:1', '/W:1', '/FFT', '/NOOFFLOAD',
+    '/NFL', '/NDL', '/NJH', '/NJS', '/nc', '/ns', '/np'
+  )
+  if ($ExcludeCommonRustAndCppCache) {
+    $robocopyArgs += @('/XD', 'target', '.git', 'node_modules', 'build-clangcl-debug', 'build-clangcl-release', 'build-clangcl-profile')
+  }
+
+  & robocopy.exe @robocopyArgs > $null 2>&1
+  $robocopyExit = $LASTEXITCODE
+  # Robocopy semantics: 0-7 are success variants; >= 8 is a real failure.
+  if ($robocopyExit -ge 8) {
+    throw "Sync-BuildArtifacts failed (robocopy exit $robocopyExit): '$Source' -> '$Destination'"
+  }
+  # Do not leak robocopy's nonzero "files were copied" codes into callers
+  # that treat $LASTEXITCODE as pass/fail.
+  $global:LASTEXITCODE = 0
+}
+
 function Normalize-Version([string]$RawVersion) {
   $segments = $RawVersion.Split('.')
   if ($segments.Count -eq 3) { return "$RawVersion.0" }
