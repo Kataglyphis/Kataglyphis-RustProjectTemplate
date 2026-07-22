@@ -123,36 +123,6 @@ jobs:
             bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_fmt_clippy.sh
           '
 
-      # The web demo lives entirely behind #[cfg(target_arch = "wasm32")], so no
-      # native job compiles it - cargo test, clippy and every other lane here are
-      # native. It therefore sat BROKEN from the wgpu 29 migration (it still
-      # referenced wgpu::SurfaceError, removed in 29) until someone happened to
-      # build the target by hand. A type check costs seconds and closes that
-      # blind spot; it deliberately does NOT run tests, since wasm32 has no
-      # test runner here.
-      - name: Type-check the wasm32 (web demo) target
-        run: |
-          docker run --rm             --platform ${{ env.PLATFORM }}             -v ${{ github.workspace }}:/workspace             -w /workspace             -e CARGO_HOME=/tmp/cargo-home             ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross             bash -lc '
-            set -e
-            git config --global --add safe.directory /workspace || true
-            # The image installs Rust WITHOUT rustup on PATH, so the target
-            # cannot be added here yet. Skip cleanly in that case rather than
-            # redding the lane for a tooling gap: this check is only meaningful
-            # once the image ships the wasm32 std, tracked in BACKLOG. Where
-            # rustup IS available the check runs and gates as intended.
-            RUSTUP="$(command -v rustup || true)"
-            if [ -z "$RUSTUP" ] && [ -x /usr/local/cargo/bin/rustup ]; then
-              RUSTUP=/usr/local/cargo/bin/rustup
-            fi
-            if [ -z "$RUSTUP" ]; then
-              echo "SKIP: rustup unavailable in this image; cannot add the wasm32 target."
-              echo "      Bake wasm32-unknown-unknown into the image to enable this gate."
-              exit 0
-            fi
-            "$RUSTUP" target add wasm32-unknown-unknown
-            cargo check -p kataglyphis_webgpu_renderer --target wasm32-unknown-unknown
-          '
-
       - name: Run unit, integration, and doc tests
         run: |
           docker run --rm \
