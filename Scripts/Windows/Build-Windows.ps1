@@ -95,6 +95,17 @@ if (-not (Test-Path $buildModule)) {
 
 Import-Module $buildModule -Force
 
+# WindowsBuild.Common imports WindowsScripts.Shared for ITS OWN internals,
+# but nested module imports are module-private in PowerShell - the caller
+# never sees Resolve-WorkspacePath, and this script died on exactly that the
+# first time CI ever reached it (every earlier lane failure sat upstream).
+# Import the shared module directly.
+$sharedModule = Join-Path $containerHubModulesRoot 'WindowsScripts.Shared.psm1'
+if (-not (Test-Path $sharedModule)) {
+  throw "Required module not found: $sharedModule"
+}
+Import-Module $sharedModule -Force
+
 $defaultConfigPath = Join-Path $PSScriptRoot 'Build-Windows.config.psd1'
 $configPath = Get-OrDefault $env:BUILD_WINDOWS_CONFIG $defaultConfigPath
 if (-not (Test-Path $configPath)) {
