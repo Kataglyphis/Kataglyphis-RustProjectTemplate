@@ -278,6 +278,11 @@ jobs:
 
       - name: 📂 Sync files to domain
         if: matrix.docs
+        # Best-effort docs publish: a transient FTP control-socket timeout
+        # (observed 2026-07-22) must NOT red-light a lane whose build, test
+        # and package all passed. The step still shows as failed with a
+        # warning annotation - it just no longer fails the job.
+        continue-on-error: true
         uses: SamKirkland/FTP-Deploy-Action@v4.4.0
         with:
           server: ${{ secrets.SERVER }}
