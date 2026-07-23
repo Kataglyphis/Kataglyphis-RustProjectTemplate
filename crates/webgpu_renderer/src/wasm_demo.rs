@@ -23,10 +23,45 @@ use crate::scene::controller::OrbitController;
 
 const DEMO_SCENE: &[u8] = include_bytes!("../tests/assets/cube_on_plane.gltf");
 
+/// Feature-showcase scenes bundled into the wasm binary, selectable from the
+/// header dropdown. Each is self-contained (buffers/images embedded as `data:`
+/// URIs, no external `.bin`), so it loads from a single `include_bytes!` slice
+/// — the same single-file constraint drag-and-drop lives under. Index 0 is the
+/// startup scene and must stay `DEMO_SCENE` so the initial view is unchanged.
+/// The `<option>` order in web/index.html mirrors this array by index.
+const DEMO_SCENES: &[(&str, &[u8])] = &[
+    ("cube_on_plane (shadows)", DEMO_SCENE),
+    (
+        "cube_textured (PBR textures)",
+        include_bytes!("../tests/assets/cube_textured.gltf"),
+    ),
+    (
+        "cube_animated (animation)",
+        include_bytes!("../tests/assets/cube_animated.gltf"),
+    ),
+    (
+        "cube_morph (morph targets)",
+        include_bytes!("../tests/assets/cube_morph.gltf"),
+    ),
+    (
+        "cube_unlit (KHR_materials_unlit)",
+        include_bytes!("../tests/assets/cube_unlit.gltf"),
+    ),
+];
+
 /// A model dropped onto the page, parked here until the render loop picks it
 /// up: the File read is async, and the GPU state may not even exist yet when
 /// the drop happens.
 type DroppedScene = Rc<RefCell<Option<(String, Vec<u8>)>>>;
+
+thread_local! {
+    /// A clone of the render loop's drag-drop swap slot, published here so the
+    /// JS-callable [`select_demo_scene`] picker can feed an embedded scene
+    /// through the exact same upload + camera re-frame path a dropped file
+    /// uses. Set once the demo app initializes; wasm is single-threaded so a
+    /// thread-local is a plain global.
+    static SCENE_SLOT: RefCell<Option<DroppedScene>> = const { RefCell::new(None) };
+}
 
 /// Browser drag-and-drop model loading (the winit web backend never delivers
 /// `WindowEvent::DroppedFile`, so this goes through the DOM File API).
@@ -132,6 +167,11 @@ impl ApplicationHandler for DemoApp {
             .append_child(&canvas)
             .expect("failed to append canvas");
         install_drop_zone(&document, Rc::clone(&self.dropped_scene));
+        // Publish the same swap slot to the JS scene picker (see
+        // `select_demo_scene`), so the dropdown and drag-drop share one path.
+        SCENE_SLOT.with(|slot| {
+            slot.borrow_mut().replace(Rc::clone(&self.dropped_scene));
+        });
         let (initial_width, initial_height) = sync_canvas_backing_size(&canvas);
 
         // WebGPU init is async-only in browsers: fill the shared state slot
@@ -328,6 +368,29 @@ impl ApplicationHandler for DemoApp {
             _ => {}
         }
     }
+}
+
+/// Switch the live demo to one of the bundled feature-showcase scenes,
+/// selected by the header dropdown (see web/index.html). The chosen scene's
+/// bytes are parked in the *same* slot drag-and-drop uses, so the render loop
+/// performs the identical `load_gltf_slice` + `upload_scene` + camera re-frame
+/// on the next frame — no load/re-frame logic is duplicated here. Out-of-range
+/// indices are ignored; calls before the demo has initialized are a no-op.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn select_demo_scene(index: u32) {
+    let Some(&(name, bytes)) = DEMO_SCENES.get(index as usize) else {
+        log::warn!("select_demo_scene: scene index {index} out of range - ignored");
+        return;
+    };
+    SCENE_SLOT.with(|slot| match slot.borrow().as_ref() {
+        Some(scene_slot) => {
+            scene_slot
+                .borrow_mut()
+                .replace((name.to_string(), bytes.to_vec()));
+        }
+        None => log::warn!("select_demo_scene: called before the demo initialized - ignored"),
+    });
 }
 
 #[wasm_bindgen(start)]

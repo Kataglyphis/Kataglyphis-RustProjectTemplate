@@ -53,6 +53,18 @@
       white-space: nowrap;
     }
     header .hint code { font-size: 0.78rem; }
+    header #scene {
+      font-family: inherit;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: #06231a;
+      background: rgba(8, 37, 26, 0.18);
+      border: 1px solid rgba(8, 37, 26, 0.35);
+      border-radius: 999px;
+      padding: 0.2rem 0.6rem;
+      cursor: pointer;
+    }
+    header #scene:focus-visible { outline: 2px solid #06231a; outline-offset: 1px; }
     header #status {
       margin-left: auto;
       font-size: 0.82rem;
@@ -101,6 +113,13 @@
   <header>
     <span class="brand">Kataglyphis <span class="spark">&#9670;</span> WebGPU + glTF demo</span>
     <span class="hint">drop a self-contained <code>.glb</code> anywhere to view it</span>
+    <select id="scene" title="Switch the loaded showcase scene" disabled>
+      <option>Shadows (cube on plane)</option>
+      <option>PBR textures</option>
+      <option>Animation</option>
+      <option>Morph targets</option>
+      <option>Unlit</option>
+    </select>
     <span id="status">checking WebGPU support&#8230;</span>
   </header>
   <div id="unsupported" hidden>
@@ -135,8 +154,18 @@
       statusEl.textContent = 'unsupported browser';
     } else {
       statusEl.textContent = 'drag to orbit · wheel to zoom';
-      const init = (await import('./pkg/kataglyphis_webgpu_renderer.js')).default;
-      init().catch((err) => {
+      const module = await import('./pkg/kataglyphis_webgpu_renderer.js');
+      const init = module.default;
+      init().then(() => {
+        // The wasm is up: let the header dropdown feed embedded showcase
+        // scenes through the same swap path drag-and-drop uses. Option order
+        // matches the DEMO_SCENES array in wasm_demo.rs by index.
+        const select = document.getElementById('scene');
+        select.disabled = false;
+        select.addEventListener('change', () => {
+          module.select_demo_scene(select.selectedIndex);
+        });
+      }).catch((err) => {
         statusEl.textContent = 'failed to start: ' + err;
         console.error(err);
       });
