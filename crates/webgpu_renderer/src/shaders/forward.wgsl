@@ -8,39 +8,42 @@
 // the top of fs_main (Chrome's validator is strict); the shadow lookup uses
 // textureSampleCompareLevel, which is legal anywhere.
 
-struct Uniforms {
+struct FrameUniforms {
     view_proj: mat4x4<f32>,
-    model: mat4x4<f32>,
-    // Inverse-transpose of model (upper 3x3 meaningful).
-    normal_matrix: mat4x4<f32>,
     // World -> light clip space per cascade (CASCADE_COUNT used).
     light_space: mat4x4<f32>,
     light_space_1: mat4x4<f32>,
     light_space_2: mat4x4<f32>,
-    base_color: vec4<f32>,
     // xyz: direction TOWARDS the light, w: ambient strength
     light_dir_ambient: vec4<f32>,
     // rgb: light color, w: intensity multiplier
     light_color_intensity: vec4<f32>,
-    // x: metallic factor, y: roughness factor, z: occlusion strength, w: normal scale
-    material_factors: vec4<f32>,
-    // rgb: emissive factor, w: camera-space unused
-    emissive_factor: vec4<f32>,
     // xyz: world-space camera position, w: active punctual light count
     camera_position: vec4<f32>,
     // Per light: [pos.xyz, kind], [color*intensity.rgb, range],
     // [dir.xyz, cos_inner], [cos_outer, 0, 0, 0]. kind: 1=point 2=spot 3=dir.
     punctual_lights: array<vec4<f32>, 16>,
+    // x,y: cascade split distances (view depth), z: cascade count
+    cascade_splits: vec4<f32>,
+};
+
+struct PrimUniforms {
+    model: mat4x4<f32>,
+    // Inverse-transpose of model (upper 3x3 meaningful).
+    normal_matrix: mat4x4<f32>,
+    base_color: vec4<f32>,
+    // x: metallic factor, y: roughness factor, z: occlusion strength, w: normal scale
+    material_factors: vec4<f32>,
+    // rgb: emissive factor, w: MASK alpha cutoff (-1 = no discard, >=0 = threshold)
+    emissive_factor: vec4<f32>,
     // KHR_texture_transform affine rows for the base color UV.
     base_uv_row0: vec4<f32>,
     base_uv_row1: vec4<f32>,
-    // x,y: cascade split distances (view depth), z: cascade count
-    cascade_splits: vec4<f32>,
     // x: 1.0 when KHR_materials_unlit, else 0.0
     material_flags: vec4<f32>,
 };
 
-@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+@group(0) @binding(0) var<uniform> prim: PrimUniforms;
 @group(0) @binding(1) var shadow_map: texture_depth_2d_array;
 @group(0) @binding(2) var shadow_sampler: sampler_comparison;
 @group(0) @binding(3) var base_color_tex: texture_2d<f32>;
@@ -102,6 +105,11 @@ struct IblParams {
 @group(1) @binding(3) var brdf_lut: texture_2d<f32>;
 @group(1) @binding(4) var ibl_sampler: sampler;
 
+// Per-frame data shared by every primitive: view/projection, lights, camera.
+// Split from the per-primitive Uniforms so the ~576 bytes of identical data
+// are written ONCE per frame instead of per-primitive.
+@group(2) @binding(0) var<uniform> frame: FrameUniforms;
+
 /// Normal transform for the per-instance matrix: the COFACTOR of its upper 3x3.
 ///
 /// The cofactor equals det(M) * inverse-transpose, and the result is normalized
@@ -122,7 +130,7 @@ fn skin_matrix(in: VsIn) -> mat4x4<f32> {
     let w = in.weights;
     let total = w.x + w.y + w.z + w.w;
     if (total <= 0.0001) {
-        return uniforms.model;
+        return prim.model;
     }
     var m = joint_matrices[u32(in.joints.x)] * w.x;
     m += joint_matrices[u32(in.joints.y)] * w.y;
@@ -151,7 +159,7 @@ fn vs_main(in: VsIn) -> VsOut {
     // placed by the instance.
     let model = instance_matrix(in) * skin_matrix(in);
     let world_pos = model * vec4<f32>(in.position, 1.0);
-    out.clip_position = uniforms.view_proj * world_pos;
+    out.clip_position = frame.view_proj * world_pos;
     // Skinned normals use the skinning matrix (uniform scale assumed);
     // unskinned vertices keep the precomputed normal matrix.
     if (in.weights.x + in.weights.y + in.weights.z + in.weights.w > 0.0001) {
@@ -165,7 +173,7 @@ fn vs_main(in: VsIn) -> VsOut {
         // exactly the scattered/squashed foliage-and-debris case instancing
         // exists for. (The tangent path above IS right to use `model`: tangents
         // are direction vectors and do transform by the matrix.)
-        let n_model = (uniforms.normal_matrix * vec4<f32>(in.normal, 0.0)).xyz;
+        let n_model = (prim.normal_matrix * vec4<f32>(in.normal, 0.0)).xyz;
         out.world_normal = normalize(instance_cofactor(in) * n_model);
     }
     out.world_tangent = vec4<f32>(
@@ -173,9 +181,9 @@ fn vs_main(in: VsIn) -> VsOut {
         in.tangent.w,
     );
     out.uv = in.uv;
-    out.light_space_pos = uniforms.light_space * world_pos;
+    out.light_space_pos = frame.light_space * world_pos;
     out.world_position = world_pos.xyz;
-    out.view_depth = distance(world_pos.xyz, uniforms.camera_position.xyz);
+    out.view_depth = distance(world_pos.xyz, frame.camera_position.xyz);
     out.vertex_color = in.color;
     out.uv1 = in.uv1;
     return out;
@@ -199,12 +207,12 @@ fn vs_shadow(in: VsIn) -> @builtin(position) vec4<f32> {
     let world = instance_matrix(in) * skin_matrix(in) * vec4<f32>(in.position, 1.0);
     let cascade = shadow_cascade_index.x;
     if (cascade == 1u) {
-        return uniforms.light_space_1 * world;
+        return frame.light_space_1 * world;
     }
     if (cascade == 2u) {
-        return uniforms.light_space_2 * world;
+        return frame.light_space_2 * world;
     }
-    return uniforms.light_space * world;
+    return frame.light_space * world;
 }
 
 // Per-pixel alpha-tested shadow variant for MASK materials. The depth-only
@@ -224,11 +232,11 @@ fn vs_shadow_masked(in: VsIn) -> VsShadowMaskedOut {
     let world = instance_matrix(in) * skin_matrix(in) * vec4<f32>(in.position, 1.0);
     let cascade = shadow_cascade_index.x;
     if (cascade == 1u) {
-        out.pos = uniforms.light_space_1 * world;
+        out.pos = frame.light_space_1 * world;
     } else if (cascade == 2u) {
-        out.pos = uniforms.light_space_2 * world;
+        out.pos = frame.light_space_2 * world;
     } else {
-        out.pos = uniforms.light_space * world;
+        out.pos = frame.light_space * world;
     }
     out.uv = in.uv;
     return out;
@@ -238,13 +246,13 @@ fn vs_shadow_masked(in: VsIn) -> VsShadowMaskedOut {
 fn fs_shadow_masked(in: VsShadowMaskedOut) {
     // Same KHR_texture_transform the forward pass applies to this slot.
     let uv = vec2<f32>(
-        uniforms.base_uv_row0.x * in.uv.x + uniforms.base_uv_row0.y * in.uv.y + uniforms.base_uv_row0.z,
-        uniforms.base_uv_row1.x * in.uv.x + uniforms.base_uv_row1.y * in.uv.y + uniforms.base_uv_row1.z,
+        prim.base_uv_row0.x * in.uv.x + prim.base_uv_row0.y * in.uv.y + prim.base_uv_row0.z,
+        prim.base_uv_row1.x * in.uv.x + prim.base_uv_row1.y * in.uv.y + prim.base_uv_row1.z,
     );
     // emissive_factor.w carries the MASK cutoff (0 = never discard).
-    let alpha = uniforms.base_color.a
+    let alpha = prim.base_color.a
         * textureSampleLevel(base_color_tex, base_color_sampler, uv, 0.0).a;
-    if (alpha < uniforms.emissive_factor.w) {
+    if (alpha < prim.emissive_factor.w) {
         discard;
     }
 }
@@ -252,24 +260,24 @@ fn fs_shadow_masked(in: VsShadowMaskedOut) {
 fn shadow_factor(view_depth: f32, world_pos: vec3<f32>, n_dot_l: f32) -> f32 {
     // Cascade selection by view distance.
     var cascade = 0;
-    if (view_depth > uniforms.cascade_splits.x) {
+    if (view_depth > frame.cascade_splits.x) {
         cascade = 1;
     }
-    if (view_depth > uniforms.cascade_splits.y) {
+    if (view_depth > frame.cascade_splits.y) {
         cascade = 2;
     }
-    let count = i32(uniforms.cascade_splits.z);
+    let count = i32(frame.cascade_splits.z);
     if (cascade > count - 1) {
         cascade = count - 1;
     }
 
     var light_space_pos: vec4<f32>;
     if (cascade == 1) {
-        light_space_pos = uniforms.light_space_1 * vec4<f32>(world_pos, 1.0);
+        light_space_pos = frame.light_space_1 * vec4<f32>(world_pos, 1.0);
     } else if (cascade == 2) {
-        light_space_pos = uniforms.light_space_2 * vec4<f32>(world_pos, 1.0);
+        light_space_pos = frame.light_space_2 * vec4<f32>(world_pos, 1.0);
     } else {
-        light_space_pos = uniforms.light_space * vec4<f32>(world_pos, 1.0);
+        light_space_pos = frame.light_space * vec4<f32>(world_pos, 1.0);
     }
 
     let proj = light_space_pos.xyz / light_space_pos.w;
@@ -312,11 +320,11 @@ fn sky_radiance(dir: vec3<f32>, with_sun: bool) -> vec3<f32> {
         color = mix(SKY_HORIZON, SKY_GROUND, clamp(-dir.y * 3.0, 0.0, 1.0));
     }
     if (with_sun) {
-        let l = normalize(uniforms.light_dir_ambient.xyz);
+        let l = normalize(frame.light_dir_ambient.xyz);
         let cos_sun = max(dot(dir, l), 0.0);
         let sun = pow(cos_sun, 1200.0) * 24.0 + pow(cos_sun, 48.0) * 0.5;
         color += vec3<f32>(1.0, 0.95, 0.85) * sun
-            * (uniforms.light_color_intensity.w * 0.4);
+            * (frame.light_color_intensity.w * 0.4);
     }
     return color;
 }
@@ -393,15 +401,15 @@ fn punctual_lighting(
     f0: vec3<f32>,
 ) -> vec3<f32> {
     var total = vec3<f32>(0.0);
-    let count = i32(uniforms.camera_position.w);
+    let count = i32(frame.camera_position.w);
     for (var i = 0; i < 4; i = i + 1) {
         if (i >= count) {
             break;
         }
-        let a = uniforms.punctual_lights[i * 4];
-        let b = uniforms.punctual_lights[i * 4 + 1];
-        let cvec = uniforms.punctual_lights[i * 4 + 2];
-        let dvec = uniforms.punctual_lights[i * 4 + 3];
+        let a = frame.punctual_lights[i * 4];
+        let b = frame.punctual_lights[i * 4 + 1];
+        let cvec = frame.punctual_lights[i * 4 + 2];
+        let dvec = frame.punctual_lights[i * 4 + 3];
         let kind = a.w;
 
         var l: vec3<f32>;
@@ -438,7 +446,7 @@ fn punctual_lighting(
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Per-slot UV set: material_flags.y is a bitmask (bit 0 base .. 4 occlusion);
     // a set bit selects TEXCOORD_1 (baked AO on UV1 is the standard export).
-    let uv_mask = u32(uniforms.material_flags.y);
+    let uv_mask = u32(prim.material_flags.y);
     let base_in = select(in.uv, in.uv1, (uv_mask & 1u) != 0u);
     let mr_in = select(in.uv, in.uv1, (uv_mask & 2u) != 0u);
     let normal_in = select(in.uv, in.uv1, (uv_mask & 4u) != 0u);
@@ -448,10 +456,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // All implicit-derivative samples up front, in uniform control flow.
     // KHR_texture_transform applies to the base slot's chosen set.
     let base_uv = vec2<f32>(
-        uniforms.base_uv_row0.x * base_in.x + uniforms.base_uv_row0.y * base_in.y
-            + uniforms.base_uv_row0.z,
-        uniforms.base_uv_row1.x * base_in.x + uniforms.base_uv_row1.y * base_in.y
-            + uniforms.base_uv_row1.z,
+        prim.base_uv_row0.x * base_in.x + prim.base_uv_row0.y * base_in.y
+            + prim.base_uv_row0.z,
+        prim.base_uv_row1.x * base_in.x + prim.base_uv_row1.y * base_in.y
+            + prim.base_uv_row1.z,
     );
     let base_sample = textureSample(base_color_tex, base_color_sampler, base_uv);
     let mr_sample = textureSample(metal_rough_tex, metal_rough_sampler, mr_in);
@@ -460,9 +468,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let occlusion_sample = textureSample(occlusion_tex, occlusion_sampler, occlusion_in);
 
     // glTF: COLOR_0 multiplies the base color factor and texture.
-    let albedo = uniforms.base_color * base_sample * in.vertex_color;
+    let albedo = prim.base_color * base_sample * in.vertex_color;
     // MASK alpha mode: emissive_factor.w carries the cutoff (0 = keep all).
-    if (albedo.a < uniforms.emissive_factor.w) {
+    if (albedo.a < prim.emissive_factor.w) {
         discard;
     }
     // KHR_materials_unlit: emit the base color and stop. The spec defines the
@@ -470,25 +478,25 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // emissive contribution - which is the whole point of the extension, so
     // this returns BEFORE any of that is computed rather than multiplying it
     // out afterwards. The alpha cutoff above still applies.
-    if (uniforms.material_flags.x > 0.5) {
+    if (prim.material_flags.x > 0.5) {
         return albedo;
     }
     // glTF: metallic in B, roughness in G.
-    let metallic = clamp(uniforms.material_factors.x * mr_sample.b, 0.0, 1.0);
-    let roughness = clamp(uniforms.material_factors.y * mr_sample.g, 0.045, 1.0);
-    let occlusion = mix(1.0, occlusion_sample.r, uniforms.material_factors.z);
-    let emissive = uniforms.emissive_factor.rgb * emissive_sample.rgb;
+    let metallic = clamp(prim.material_factors.x * mr_sample.b, 0.0, 1.0);
+    let roughness = clamp(prim.material_factors.y * mr_sample.g, 0.045, 1.0);
+    let occlusion = mix(1.0, occlusion_sample.r, prim.material_factors.z);
+    let emissive = prim.emissive_factor.rgb * emissive_sample.rgb;
 
     // TBN normal mapping (glTF convention: +Z out of the surface).
     let n_geom = normalize(in.world_normal);
     let t = normalize(in.world_tangent.xyz - n_geom * dot(n_geom, in.world_tangent.xyz));
     let b = cross(n_geom, t) * in.world_tangent.w;
     var n_ts = normal_sample.xyz * 2.0 - 1.0;
-    n_ts = vec3<f32>(n_ts.xy * uniforms.material_factors.w, n_ts.z);
+    n_ts = vec3<f32>(n_ts.xy * prim.material_factors.w, n_ts.z);
     let n = normalize(mat3x3<f32>(t, b, n_geom) * n_ts);
 
-    let l = normalize(uniforms.light_dir_ambient.xyz);
-    let v = normalize(uniforms.camera_position.xyz - in.world_position);
+    let l = normalize(frame.light_dir_ambient.xyz);
+    let v = normalize(frame.camera_position.xyz - in.world_position);
     let h = normalize(l + v);
 
     let n_dot_l = max(dot(n, l), 0.0);
@@ -506,7 +514,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let diffuse = k_d * albedo.rgb / PI;
 
     let shadow = shadow_factor(in.view_depth, in.world_position, n_dot_l);
-    let radiance = uniforms.light_color_intensity.rgb * uniforms.light_color_intensity.w;
+    let radiance = frame.light_color_intensity.rgb * frame.light_color_intensity.w;
 
     // IBL. Two paths: a prefiltered environment when one is bound, and the
     // analytic sky/ground approximation otherwise.
@@ -523,7 +531,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // uniform control flow around the samples (they use explicit LODs, so it
     // is legal, but Chrome's validator has historically been strict about
     // cube samples in divergent flow) or a second pipeline.
-    let ibl_strength = uniforms.light_dir_ambient.w;
+    let ibl_strength = frame.light_dir_ambient.w;
     let k_s_ibl = fresnel_schlick(n_dot_v, f0);
     let reflected = reflect(-v, n);
 

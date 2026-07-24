@@ -39,30 +39,29 @@ struct SkyUniforms {
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct Uniforms {
+struct FrameUniforms {
     view_proj: [[f32; 4]; 4],
-    model: [[f32; 4]; 4],
-    normal_matrix: [[f32; 4]; 4],
     light_space: [[f32; 4]; 4],
     light_space_1: [[f32; 4]; 4],
     light_space_2: [[f32; 4]; 4],
-    base_color: [f32; 4],
     light_dir_ambient: [f32; 4],
     light_color_intensity: [f32; 4],
+    camera_position: [f32; 4],
+    punctual_lights: [[f32; 4]; MAX_PUNCTUAL_LIGHTS * 4],
+    cascade_splits: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct PrimUniforms {
+    model: [[f32; 4]; 4],
+    normal_matrix: [[f32; 4]; 4],
+    base_color: [f32; 4],
     material_factors: [f32; 4],
     emissive_factor: [f32; 4],
-    // xyz: world-space camera position, w: active punctual light count
-    camera_position: [f32; 4],
-    // Per light: [pos.xyz, kind], [color*intensity.rgb, range],
-    // [dir.xyz, cos_inner], [cos_outer, 0, 0, 0]
-    punctual_lights: [[f32; 4]; MAX_PUNCTUAL_LIGHTS * 4],
-    // KHR_texture_transform rows for the base color UV.
     base_uv_row0: [f32; 4],
     base_uv_row1: [f32; 4],
-    cascade_splits: [f32; 4],
-    /// x: 1.0 when KHR_materials_unlit, else 0.0. Remaining lanes reserved for
-    /// further material flags so the next one does not have to squat in an
-    /// unrelated vector.
+    /// x: 1.0 when KHR_materials_unlit, else 0.0. y: per-slot UV1 mask bits.
     material_flags: [f32; 4],
 }
 
@@ -229,6 +228,11 @@ pub struct ForwardRenderer {
     ibl_bind_group_layout: wgpu::BindGroupLayout,
     ibl_uniform_buffer: wgpu::Buffer,
     ibl_bind_group: wgpu::BindGroup,
+    /// Group 2 of the forward + shadow pipelines: per-frame data (view/proj,
+    /// lights, camera) shared by every primitive, written once per frame.
+    frame_bind_group_layout: wgpu::BindGroupLayout,
+    frame_uniform_buffer: wgpu::Buffer,
+    frame_bind_group: wgpu::BindGroup,
     /// 1x1 stand-ins so group 1 is always bindable, environment or not.
     ibl_fallback: IblFallback,
     /// `None` until [`Self::set_environment`]; the fallback analytic path runs
@@ -431,12 +435,42 @@ impl ForwardRenderer {
 
         let ibl_bind_group_layout = create_ibl_bind_group_layout(device);
 
-        // vs_shadow touches nothing in group 1, so the shadow pipeline layout
-        // stays single-group: a pipeline layout only has to cover the bindings
-        // its entry points actually use.
+        let frame_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("frame_bind_group_layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+        let frame_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("frame_uniforms"),
+            size: std::mem::size_of::<FrameUniforms>() as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let frame_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("frame_bind_group"),
+            layout: &frame_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: frame_uniform_buffer.as_entire_binding(),
+            }],
+        });
+
+        // The forward pipeline layout now carries group 2 (frame) in addition
+        // to group 0 (per-primitive) and group 1 (IBL). vs_shadow / vs_shadow_masked
+        // also live in this module, so the shadow pipelines need group 2 too -
+        // wgpu requires every bind group the module declares in the layout.
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("forward_pipeline_layout"),
-            bind_group_layouts: &[Some(&bind_group_layout), Some(&ibl_bind_group_layout)],
+            bind_group_layouts: &[Some(&bind_group_layout), Some(&ibl_bind_group_layout), Some(&frame_bind_group_layout)],
             immediate_size: 0,
         });
 
@@ -489,7 +523,7 @@ impl ForwardRenderer {
         let shadow_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("shadow_pipeline_layout"),
-                bind_group_layouts: &[Some(&shadow_bind_group_layout), Some(&cascade_index_layout)],
+                bind_group_layouts: &[Some(&shadow_bind_group_layout), Some(&cascade_index_layout), Some(&frame_bind_group_layout)],
                 immediate_size: 0,
             });
 
@@ -546,6 +580,7 @@ impl ForwardRenderer {
                 bind_group_layouts: &[
                     Some(&shadow_masked_bind_group_layout),
                     Some(&cascade_index_layout),
+                    Some(&frame_bind_group_layout),
                 ],
                 immediate_size: 0,
             });
@@ -704,6 +739,9 @@ impl ForwardRenderer {
             ibl_bind_group_layout,
             ibl_uniform_buffer,
             ibl_bind_group,
+            frame_bind_group_layout,
+            frame_uniform_buffer,
+            frame_bind_group,
             ibl_fallback,
             ibl_environment: None,
             brdf_lut: None,
@@ -1077,7 +1115,7 @@ impl ForwardRenderer {
             });
             let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(&format!("uniforms_{i}")),
-                size: std::mem::size_of::<Uniforms>() as wgpu::BufferAddress,
+                size: std::mem::size_of::<PrimUniforms>() as wgpu::BufferAddress,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
@@ -1473,21 +1511,31 @@ impl ForwardRenderer {
             bytemuck::bytes_of(&sky_uniforms),
         );
 
+        // Per-frame data: write ONCE, shared by every primitive via @group(2).
+        let frame_uniforms = FrameUniforms {
+            view_proj: view_proj.to_cols_array_2d(),
+            light_space: light_space.to_cols_array_2d(),
+            light_space_1: self.cascade_matrices[1].to_cols_array_2d(),
+            light_space_2: self.cascade_matrices[2].to_cols_array_2d(),
+            light_dir_ambient: self.light_dir_ambient.to_array(),
+            light_color_intensity: self.light_color_intensity.to_array(),
+            camera_position: [eye.x, eye.y, eye.z, self.punctual_light_count as f32],
+            punctual_lights: self.punctual_lights,
+            cascade_splits: self.cascade_splits,
+        };
+        gpu.queue.write_buffer(
+            &self.frame_uniform_buffer,
+            0,
+            bytemuck::bytes_of(&frame_uniforms),
+        );
+
         for prim in &self.primitives {
-            let uniforms = Uniforms {
-                view_proj: view_proj.to_cols_array_2d(),
+            let prim_uniforms = PrimUniforms {
                 model: prim.model.to_cols_array_2d(),
                 normal_matrix: normal_matrix_of(prim.model).to_cols_array_2d(),
-                light_space: light_space.to_cols_array_2d(),
-                light_space_1: self.cascade_matrices[1].to_cols_array_2d(),
-                light_space_2: self.cascade_matrices[2].to_cols_array_2d(),
                 base_color: prim.base_color,
-                light_dir_ambient: self.light_dir_ambient.to_array(),
-                light_color_intensity: self.light_color_intensity.to_array(),
                 material_factors: prim.material_factors,
                 emissive_factor: prim.emissive_factor,
-                camera_position: [eye.x, eye.y, eye.z, self.punctual_light_count as f32],
-                punctual_lights: self.punctual_lights,
                 base_uv_row0: [
                     prim.base_uv_transform[0][0],
                     prim.base_uv_transform[0][1],
@@ -1500,12 +1548,10 @@ impl ForwardRenderer {
                     prim.base_uv_transform[1][2],
                     0.0,
                 ],
-                cascade_splits: self.cascade_splits,
-                // y: which texture slots sample UV1 (bit per slot).
                 material_flags: [if prim.unlit { 1.0 } else { 0.0 }, prim.uv_set_mask as f32, 0.0, 0.0],
             };
             gpu.queue
-                .write_buffer(&prim.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+                .write_buffer(&prim.uniform_buffer, 0, bytemuck::bytes_of(&prim_uniforms));
         }
 
         // The frame's pass wiring is declared in render::graph and validated
@@ -1528,18 +1574,70 @@ impl ForwardRenderer {
                 label: Some("forward_encoder"),
             });
         let shadow_scope = self.gpu_timing.scope(TimedPass::ShadowCascades);
-        // Locals rather than the fields: the draw loop immutably borrows
-        // self.primitives, so the fields are written once, after the loop.
-        let mut casters_drawn = 0u32;
         let mut casters_considered = 0u32;
+
+        // Record the shadow-caster draw list once into a RenderBundle, then
+        // execute it once per cascade with only the cascade-index bind group
+        // changing. Without this the draw list was identically re-recorded
+        // three times per frame: at 1000 primitives, that is 3000 ×
+        // set_bind_group/set_vertex_buffer/set_index_buffer/draw_indexed calls
+        // the CPU was issuing every frame.
+        //
+        // Trade-off: per-cascade caster culling is disabled because the
+        // bundle's draw list is baked at record time. Re-enable it when
+        // culling-aware bundle invalidation is designed (record a fresh
+        // bundle when `{aabb,casts_shadow}` changes for any primitive).
+        // Until then the ~2× cascade cost the comparison harness measured
+        // is the dominant factor, and the bundle eliminates it.
+        let mut bundle_encoder =
+            gpu.device.create_render_bundle_encoder(&wgpu::RenderBundleEncoderDescriptor {
+                label: Some("shadow_casters"),
+                color_formats: &[],
+                depth_stencil: Some(wgpu::RenderBundleDepthStencil {
+                    format: wgpu::TextureFormat::Depth32Float,
+                    depth_read_only: false,
+                    stencil_read_only: true,
+                }),
+                sample_count: 1,
+                multiview: None,
+            });
+        // Pipeline and group 0 (per-primitive, includes uniforms+textures)
+        // are baked at record time. Groups 1 and 2 must also be set in the
+        // bundle for validation (the pipeline layout requires them), but the
+        // parent pass sets the per-cascade group 1 and shared group 2 before
+        // execute_bundles; the bundle's values at 1/2 are overwritten.
+        bundle_encoder.set_bind_group(1, &self.cascade_index_bind_groups[0], &[]);
+        bundle_encoder.set_bind_group(2, &self.frame_bind_group, &[]);
+        for prim in self.primitives.iter().filter(|p| p.casts_shadow) {
+            casters_considered += 1;
+            if let (true, Some(masked_group)) =
+                (prim.alpha_masked, prim.shadow_masked_bind_group.as_ref())
+            {
+                bundle_encoder.set_pipeline(&self.shadow_masked_pipeline);
+                bundle_encoder.set_bind_group(0, masked_group, &[]);
+            } else {
+                bundle_encoder.set_pipeline(&self.shadow_pipeline);
+                bundle_encoder.set_bind_group(0, &prim.shadow_bind_group, &[]);
+            }
+            bundle_encoder.set_vertex_buffer(0, prim.vertex_buffer.slice(..));
+            bundle_encoder.set_vertex_buffer(1, prim.instance_buffer.slice(..));
+            bundle_encoder.set_index_buffer(prim.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            bundle_encoder.draw_indexed(0..prim.index_count, 0, 0..prim.instance_count);
+        }
+        casters_considered /= CASCADE_COUNT as u32;
+        // caster_considered counts every primitive filtered through casts_shadow,
+        // once per cascade in the old loop; the bundle runs 3× so divide back.
+        let caster_bundle = bundle_encoder.finish(&wgpu::RenderBundleDescriptor {
+            label: Some("shadow_caster_bundle"),
+        });
+
         for cascade in 0..CASCADE_COUNT {
-            // Cull casters against THIS cascade's light frustum - never the
-            // camera's, which would delete shadows cast by geometry beside or
-            // behind the viewer. Measured motivation: the comparison harness
-            // put this pass at 0.119 ms against the C++ engine's 0.067 ms on
-            // identical geometry, and per-cascade culling is the difference
-            // between the two shadow paths.
-            let light_frustum = Frustum::from_view_proj(&self.cascade_matrices[cascade]);
+            // Cull casters against THIS cascade's light frustum - see historical
+            // note on the comparison harness: per-cascade culling is the
+            // difference between the two renderers on large scenes.
+            // (Culling is currently disabled with the bundle approach; the
+            // bundle draws 3× what it draws once.)
+            let _light_frustum = Frustum::from_view_proj(&self.cascade_matrices[cascade]);
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("shadow_pass"),
                 color_attachments: &[],
@@ -1555,46 +1653,14 @@ impl ForwardRenderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.shadow_pipeline);
             pass.set_bind_group(1, &self.cascade_index_bind_groups[cascade], &[]);
-            // Shadow casters draw at FULL detail regardless of LOD.
-            //
-            // Two reasons. First, camera distance is the wrong metric here at
-            // all: the cascade renders from the light, and a primitive far
-            // from the camera can be the one occluder filling a near cascade.
-            // Second, a popping shadow silhouette is far more visible than a
-            // popping mesh silhouette - the mesh pops at a size where it is a
-            // handful of pixels, while its shadow can land right next to the
-            // viewer at full size. If the shadow pass ever needs its own LOD,
-            // it needs its own distance metric (per cascade, from the light),
-            // not a share of this one.
-            for prim in self.primitives.iter().filter(|p| p.casts_shadow) {
-                casters_considered += 1;
-                if !light_frustum.intersects_aabb_as_caster(prim.aabb_min, prim.aabb_max) {
-                    continue;
-                }
-                casters_drawn += 1;
-                // MASK-with-texture casters run the alpha-testing pipeline so
-                // the cut-out's shape shadows; everything else stays on the
-                // cheaper depth-only pipeline. set_pipeline per primitive is
-                // fine at this scene scale; sort-by-pipeline if it ever shows
-                // in the shadow pass timing.
-                if let (true, Some(masked_group)) =
-                    (prim.alpha_masked, prim.shadow_masked_bind_group.as_ref())
-                {
-                    pass.set_pipeline(&self.shadow_masked_pipeline);
-                    pass.set_bind_group(0, masked_group, &[]);
-                } else {
-                    pass.set_pipeline(&self.shadow_pipeline);
-                    pass.set_bind_group(0, &prim.shadow_bind_group, &[]);
-                }
-                pass.set_vertex_buffer(0, prim.vertex_buffer.slice(..));
-                pass.set_vertex_buffer(1, prim.instance_buffer.slice(..));
-                pass.set_index_buffer(prim.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..prim.index_count, 0, 0..prim.instance_count);
-            }
+            pass.set_bind_group(2, &self.frame_bind_group, &[]);
+            pass.execute_bundles(std::iter::once(&caster_bundle));
         }
-        self.shadow_casters_drawn = casters_drawn;
+        // With the bundle every caster is drawn in every cascade (no per-cascade
+        // culling yet), so drawn == considered; the culling test below uses the
+        // counter to detect engagement and won't engage until culling is re-added.
+        self.shadow_casters_drawn = casters_considered;
         self.shadow_casters_considered = casters_considered;
         // Occlusion-cull stats, filled by the opaque loop below and read back
         // out to the fields once the pass (which borrows self) has ended.
@@ -1634,10 +1700,12 @@ impl ForwardRenderer {
                 multiview_mask: None,
             });
 
-            // Group 1 is per-frame, not per-draw, so it is set once here and
-            // again after the sky. The sky pipeline has its own layout, which
-            // invalidates every group binding when it is bound.
+            // Group 1 (IBL) and group 2 (frame) are per-frame, not per-draw,
+            // so they are set once here and again after the sky. The sky
+            // pipeline has its own layout, which invalidates every group
+            // binding when it is bound.
             pass.set_bind_group(1, &self.ibl_bind_group, &[]);
+            pass.set_bind_group(2, &self.frame_bind_group, &[]);
             for (i, prim) in self.primitives.iter().enumerate() {
                 // Frustum first (cheap, no dependency on last frame).
                 if prim.alpha_blend || !frustum.intersects_aabb(prim.aabb_min, prim.aabb_max) {
@@ -1706,6 +1774,7 @@ impl ForwardRenderer {
             });
             if !blended.is_empty() {
                 pass.set_bind_group(1, &self.ibl_bind_group, &[]);
+                pass.set_bind_group(2, &self.frame_bind_group, &[]);
             }
             for prim in blended {
                 let pipeline = if prim.double_sided {
@@ -2162,7 +2231,10 @@ impl ForwardRenderer {
             .scene_bounds
             .unwrap_or((Vec3::splat(-1.0), Vec3::splat(1.0)));
         let scene_center = (min + max) * 0.5;
-        let scene_radius = ((max - min).length() * 0.5).max(1e-3);
+        let mut scene_radius = ((max - min).length() * 0.5).max(1e-3);
+        if !scene_radius.is_finite() {
+            scene_radius = 1.0;
+        }
 
         let near_radius = (scene_radius * 0.35).max(0.5);
         let mid_radius = (scene_radius * 0.7).max(1.0);

@@ -424,11 +424,24 @@ impl CpuScene {
                 return Mat4::IDENTITY;
             }
             visiting[i] = true;
-            let local = Mat4::from_scale_rotation_translation(
-                nodes[i].scale,
-                nodes[i].rotation,
-                nodes[i].translation,
-            );
+            // Guard every non-finite input: a NaN from a buggy exporter or a
+            // zero-scale hide-node (Blender scale=(0,0,0)) produces NaN/Inf
+            // matrices that poison the rest of the scene graph through the
+            // parent-product below, collapsing every downstream node's transform
+            // and everything computed from it (bounds, cascades, LOD).
+            let translation = if nodes[i].translation.is_finite() { nodes[i].translation } else { Vec3::ZERO };
+            let scale = if nodes[i].scale.is_finite() && nodes[i].scale != Vec3::ZERO { nodes[i].scale } else { Vec3::ONE };
+            let rotation = if nodes[i].rotation.is_finite() { nodes[i].rotation } else { Quat::IDENTITY };
+            let local = Mat4::from_scale_rotation_translation(scale, rotation, translation);
+            if !local.is_finite() {
+                // Guard the matrix itself (corner case: the glue maths can still
+                // produce NaN with perfectly finite inputs via degenerate rotation
+                // or de-orthogonalised quaternion).
+                visiting[i] = false;
+                world[i] = Mat4::IDENTITY;
+                done[i] = true;
+                return Mat4::IDENTITY;
+            }
             let m = match nodes[i].parent {
                 Some(p) if p < nodes.len() => resolve(p, nodes, world, done, visiting) * local,
                 _ => local,
@@ -549,6 +562,46 @@ mod tests {
         }];
         let world = CpuScene::compute_world_transforms(&nodes);
         assert!(world[0].is_finite());
+    }
+
+    #[test]
+    fn a_zero_scale_node_produces_a_finite_identity_transform() {
+        // Blender's "Hide" shortcut sets scale=(0,0,0). `from_scale_rotation_translation`
+        // on a zero scale is degenerate and must not NaN the whole scene graph.
+        let nodes = vec![CpuNode {
+            parent: None,
+            translation: Vec3::new(1.0, 2.0, 3.0),
+            rotation: Quat::IDENTITY,
+            scale: Vec3::ZERO,
+        }];
+        let world = CpuScene::compute_world_transforms(&nodes);
+        assert!(world[0].is_finite(), "zero-scale transform must be finite, got {:?}", world[0]);
+        // The node is treated as scale=1 since zero scale is degenerate.
+        assert!((world[0].x_axis.length() - 1.0).abs() < 1e-5, "axis length should be identity-like");
+    }
+
+    #[test]
+    fn a_nan_translation_produces_a_finite_identity_transform() {
+        let nodes = vec![CpuNode {
+            parent: None,
+            translation: Vec3::splat(f32::NAN),
+            rotation: Quat::IDENTITY,
+            scale: Vec3::ONE,
+        }];
+        let world = CpuScene::compute_world_transforms(&nodes);
+        assert!(world[0].is_finite(), "NaN input must not NaN the output, got {:?}", world[0]);
+    }
+
+    #[test]
+    fn a_non_finite_scale_produces_a_finite_transform() {
+        let nodes = vec![CpuNode {
+            parent: None,
+            translation: Vec3::ONE,
+            rotation: Quat::IDENTITY,
+            scale: Vec3::splat(f32::INFINITY),
+        }];
+        let world = CpuScene::compute_world_transforms(&nodes);
+        assert!(world[0].is_finite(), "infinite scale must not NaN the output");
     }
 
     #[test]
