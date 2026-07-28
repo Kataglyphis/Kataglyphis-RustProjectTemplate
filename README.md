@@ -238,17 +238,17 @@ cargo run --features gui_windows -- gui --backend primary
 
 The workspace builds and tests inside the [Kataglyphis ContainerHub](https://github.com/Kataglyphis/kataglyphis-containerhub) Windows developer image (`ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64`) using [Stevedore](https://github.com/slonopotamus/stevedore)'s `docker.exe`. One driver does everything — build all three profiles (`dev`/debug, `profile` = release + debuginfo, `release` = fat LTO) and optionally the full debug test suite:
 
-```powershell
+```pwsh
 # build debug + profile + release in the container
-powershell -ExecutionPolicy Bypass -File .\Scripts\Windows\Container\Invoke-StevedoreBuild.ps1
+pwsh -ExecutionPolicy Bypass -File .\Scripts\Windows\Container\Invoke-StevedoreBuild.ps1
 
 # build AND run cargo test --workspace (unit + integration + proptest fuzz + doc)
-powershell -ExecutionPolicy Bypass -File .\Scripts\Windows\Container\Invoke-StevedoreBuild.ps1 -Test
+pwsh -ExecutionPolicy Bypass -File .\Scripts\Windows\Container\Invoke-StevedoreBuild.ps1 -Test
 ```
 
 Artifacts land in `target\container\{debug,profile,release}` and are mirrored to the (gitignored) repo-root `debug\`, `profile\`, `release\` folders; each contains the CLI exe, cdylib (`.dll` + import lib), staticlib (`.lib`) and pdb. Latest verified run (2026-07-17): all three profiles built (debug 1m11s, profile 1m31s, release 1m08s) and the binaries run on the host, e.g.:
 
-```powershell
+```pwsh
 .\release\kataglyphis_rustprojecttemplate.exe stats --path .\README.md
 ```
 
@@ -267,22 +267,22 @@ Voraussetzungen:
 
 MSIX bauen (inkl. Release-Build):
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\windows\New-MsixPackage.ps1
+```pwsh
+pwsh -ExecutionPolicy Bypass -File .\scripts\windows\New-MsixPackage.ps1
 ```
 
 MSIX bauen und mit einer vorhandenen PFX signieren:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\windows\New-MsixPackage.ps1 `
+```pwsh
+pwsh -ExecutionPolicy Bypass -File .\scripts\windows\New-MsixPackage.ps1 `
   -CertificatePath .\certs\my-signing-cert.pfx `
   -CertificatePassword "<PASSWORD>"
 ```
 
 MSIX bauen und Testzertifikat automatisch erzeugen:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\windows\New-MsixPackage.ps1 `
+```pwsh
+pwsh -ExecutionPolicy Bypass -File .\scripts\windows\New-MsixPackage.ps1 `
   -CreateTestCertificate `
   -CertificatePassword "<TEST_CERT_PASSWORD>"
 ```
@@ -304,7 +304,7 @@ MSIX installieren (mit Testzertifikat):
 2. Zertifikat in vertrauenswürdige Stores importieren.
 3. Paket installieren.
 
-```powershell
+```pwsh
 $certPath = "C:\\GitHub\\Kataglyphis-Inference-Engine\\ExternalLib\\Kataglyphis-RustProjectTemplate\\dist\\msix\\Kataglyphis.RustProjectTemplate.testcert.pfx"
 $msixPath = "C:\\GitHub\\Kataglyphis-Inference-Engine\\ExternalLib\\Kataglyphis-RustProjectTemplate\\dist\\msix\\Kataglyphis.RustProjectTemplate_0.1.0.0_x64.msix"
 $pwd = ConvertTo-SecureString "<TEST_CERT_PASSWORD>" -AsPlainText -Force
@@ -317,7 +317,7 @@ Add-AppxPackage -Path $msixPath
 
 Installationsprüfung:
 
-```powershell
+```pwsh
 Get-AppxPackage -Name "Kataglyphis.RustProjectTemplate" | Select-Object Name, PackageFullName, Status
 ```
 
@@ -326,7 +326,7 @@ Troubleshooting:
 - `Import-PfxCertificate: Zugriff verweigert`: PowerShell nicht als Administrator gestartet.
 - Details zum letzten Deploy-Fehler anzeigen:
 
-```powershell
+```pwsh
 Get-AppxLog -ActivityID <ACTIVITY_ID>
 ```
 
@@ -335,7 +335,7 @@ App nach Installation starten:
 - Über das Startmenü nach `Kataglyphis RustProjectTemplate` suchen und starten.
 - Oder per PowerShell:
 
-```powershell
+```pwsh
 $pkg = Get-AppxPackage -Name "Kataglyphis.RustProjectTemplate"
 Start-Process "shell:AppsFolder\$($pkg.PackageFamilyName)!App"
 ```
@@ -345,13 +345,13 @@ MSIX Update / Reinstall:
 - Neue Version mit höherer `-Version` bauen und signieren.
 - Dann erneut installieren:
 
-```powershell
+```pwsh
 Add-AppxPackage -Path "C:\\GitHub\\Kataglyphis-Inference-Engine\\ExternalLib\\Kataglyphis-RustProjectTemplate\\dist\\msix\\Kataglyphis.RustProjectTemplate_<NEW_VERSION>_x64.msix"
 ```
 
 MSIX deinstallieren:
 
-```powershell
+```pwsh
 Get-AppxPackage -Name "Kataglyphis.RustProjectTemplate" | Remove-AppxPackage
 ```
 

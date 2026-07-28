@@ -34,7 +34,7 @@
     Restrict to one phase (default: build; add -Test for both).
 
 .EXAMPLE
-    powershell -ExecutionPolicy Bypass -File .\Scripts\Windows\Container\Invoke-StevedoreBuild.ps1 -Test
+    pwsh -ExecutionPolicy Bypass -File .\Scripts\Windows\Container\Invoke-StevedoreBuild.ps1 -Test
 #>
 param(
 #requires -Version 7.0
@@ -82,7 +82,7 @@ function Invoke-ContainerScript {
     & $Docker run --name $ContainerName --isolation process --memory "${MemoryGb}g" `
         --mount "type=bind,source=$ws,target=C:\ws-mnt" `
         --mount "type=bind,source=$scratch,target=C:\host-scratch" `
-        $Image powershell -NoProfile -ExecutionPolicy Bypass -File "C:\host-scratch\$Script"
+        $Image pwsh -NoProfile -ExecutionPolicy Bypass -File "C:\host-scratch\$Script"
     $clientExit = $LASTEXITCODE
     # The docker CLI pipe can drop while the container keeps running -- trust
     # the container state, not the client exit code.

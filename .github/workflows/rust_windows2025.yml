@@ -101,7 +101,7 @@ jobs:
             --mount "type=bind,source=D:\ws,target=C:\ws" `
             -w "C:\ws" `
             ${{ env.WINDOWS_CONTAINER_IMAGE }} `
-            powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+            pwsh -NoProfile -ExecutionPolicy Bypass -File `
             "C:\ws\Scripts\Windows\Invoke-DebugTests.ps1"
 
       - name: Build and run all Windows app configs
@@ -117,7 +117,7 @@ jobs:
             --mount "type=bind,source=D:\ws,target=C:\ws" `
             -w "C:\ws" `
             ${{ env.WINDOWS_CONTAINER_IMAGE }} `
-            powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+            pwsh -NoProfile -ExecutionPolicy Bypass -File `
             "C:\ws\Scripts\Windows\Invoke-WindowsConfigMatrix.ps1"
 
       - name: Build, lint, and package MSIX/MSI
@@ -145,7 +145,7 @@ jobs:
             --mount "type=bind,source=D:\ws,target=C:\ws" `
             -w "C:\ws" `
             ${{ env.WINDOWS_CONTAINER_IMAGE }} `
-            powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+            pwsh -NoProfile -ExecutionPolicy Bypass -File `
             "C:\ws\Scripts\Windows\Build-Windows.ps1" `
             -SkipTests
 
@@ -176,7 +176,7 @@ jobs:
             -e "ARCH=x64" `
             -e "CARGO_BUILD_JOBS=${{ env.WINDOWS_DOCKER_CPUS }}" `
             ${{ env.WINDOWS_CONTAINER_IMAGE }} `
-            powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+            pwsh -NoProfile -ExecutionPolicy Bypass -File `
             "C:\ws\ExternalLib\Kataglyphis-ContainerHub\windows\scripts\rust\New-Archive.ps1"
 
       - name: Upload build artifact
@@ -196,3 +196,5 @@ jobs:
         with:
           name: ${{ env.BINARY }}-${{ steps.vars.outputs.version }}-x64-msi
           path: D:/ws/dist/msi/*.msi
+
+
