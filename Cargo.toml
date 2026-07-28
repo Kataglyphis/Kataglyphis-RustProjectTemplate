@@ -26,7 +26,7 @@ tokio = "1"
 clap = { version = "4", features = ["derive"] }
 burn = { version = "0.20.1", default-features = false }
 burn-autodiff = { version = "0.20.1" }
-burn-ndarray = { version = "0.20.1" }
+burn-ndarray = { version = "0.21.0" }
 ndarray = { version = "0.17" }
 plotters = { version = "0.3" }
 tempfile = { version = "3" }
