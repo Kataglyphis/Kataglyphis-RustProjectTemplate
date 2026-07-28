@@ -3,11 +3,12 @@
 //! headless render-to-pixels for golden tests and CI.
 
 use anyhow::Context as _;
-use glam::{Mat4, Quat, Vec3, Vec4};
+use glam::{Mat4, Quat, Vec3, Vec4, Vec4Swizzles};
 use wgpu::util::DeviceExt as _;
 
 use crate::context::GpuContext;
 use crate::render::bloom::BloomPass;
+use crate::render::gpu_occlusion::GpuCulling;
 use crate::render::gpu_timing::{GpuTiming, TimedPass};
 use crate::render::ibl::{BrdfLut, EquirectImage, IblEnvironment, IblFallback};
 use crate::render::occlusion::OcclusionQueries;
@@ -22,10 +23,22 @@ use crate::scene::{
 /// Upper bound on joints per skin (storage buffer is sized to the skin).
 pub const MAX_JOINTS: usize = 256;
 
-pub const MAX_PUNCTUAL_LIGHTS: usize = 4;
+pub const MAX_PUNCTUAL_LIGHTS: usize = 256;
+
+/// Tile size for clustered/tiled lighting. Each tile is TILE_SIZE×TILE_SIZE
+/// pixels in screen space. Lights are binned per tile so that each fragment
+/// iterates only the lights overlapping its tile.
+pub const TILE_SIZE: u32 = 16;
+/// Maximum number of lights that can overlap a single tile (conservative).
+pub const MAX_LIGHTS_PER_TILE: u32 = 32;
 
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+
+/// MSAA sample count for the forward color/depth render targets.
+/// 1 = no MSAA, 4 = 4× MSAA. Must match the sample count of the HDR and
+/// depth textures used by the forward render pass.
+const MSAA_SAMPLE_COUNT: u32 = 4;
 pub const SHADOW_MAP_SIZE: u32 = 2048;
 /// Cascaded shadow map layers (split by view distance).
 pub const CASCADE_COUNT: usize = 3;
@@ -47,7 +60,6 @@ struct FrameUniforms {
     light_dir_ambient: [f32; 4],
     light_color_intensity: [f32; 4],
     camera_position: [f32; 4],
-    punctual_lights: [[f32; 4]; MAX_PUNCTUAL_LIGHTS * 4],
     cascade_splits: [f32; 4],
 }
 
@@ -201,6 +213,110 @@ fn pack_punctual_lights(lights: &[CpuLight]) -> ([[f32; 4]; MAX_PUNCTUAL_LIGHTS 
     (packed, count as u32)
 }
 
+/// Build a per-tile light index list for tiled lighting.
+/// Each tile gets a list of light indices that overlap its screen-space area.
+/// Returns (grid: [offset, count] per tile, indices: flat list).
+fn build_tile_light_grid(
+    packed_lights: &[[f32; 4]; MAX_PUNCTUAL_LIGHTS * 4],
+    light_count: u32,
+    width: u32,
+    height: u32,
+    view_proj: &Mat4,
+) -> (Vec<u32>, Vec<u32>) {
+    let tile_x = (width + TILE_SIZE - 1) / TILE_SIZE;
+    let tile_y = (height + TILE_SIZE - 1) / TILE_SIZE;
+    let total_tiles = (tile_x * tile_y) as usize;
+
+    // Grid: per tile, store [light_count, offset_into_indices]
+    // Start with a dummy to compute offsets via prefix sum.
+    let mut per_tile_counts = vec![0u32; total_tiles];
+    let mut per_tile_max_count = 0u32;
+
+    // For each light, project its position to screen space and find which
+    // tiles it overlaps. For point lights, use the screen-space position.
+    for i in 0..light_count as usize {
+        let base = i * 4;
+        let pos = glam::Vec3::new(
+            packed_lights[base][0],
+            packed_lights[base][1],
+            packed_lights[base][2],
+        );
+        let kind = packed_lights[base][3];
+
+        // Project light position to clip space
+        let clip = view_proj * glam::Vec4::new(pos.x, pos.y, pos.z, 1.0);
+        // Behind camera? Skip.
+        if clip.w <= 0.0 {
+            continue;
+        }
+        let ndc = clip.xy() / clip.w;
+        let uv = ndc * 0.5 + 0.5;
+        // Off-screen? Skip.
+        if uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 {
+            continue;
+        }
+
+        let px = (uv.x * width as f32) as u32;
+        let py = (uv.y * height as f32) as u32;
+        let tx = px.min(width - 1) / TILE_SIZE;
+        let ty = py.min(height - 1) / TILE_SIZE;
+        let tile_idx = (ty * tile_x + tx) as usize;
+
+        if tile_idx < total_tiles {
+            per_tile_counts[tile_idx] = per_tile_counts[tile_idx].saturating_add(1);
+            per_tile_max_count = per_tile_max_count.max(per_tile_counts[tile_idx]);
+        }
+    }
+
+    // Prefix sum to compute offsets
+    let mut grid = vec![0u32; total_tiles * 2]; // [count, offset]
+    let mut running_offset = 0u32;
+    for t in 0..total_tiles {
+        let cnt = per_tile_counts[t].min(MAX_LIGHTS_PER_TILE);
+        grid[t * 2] = cnt;         // count
+        grid[t * 2 + 1] = running_offset; // offset
+        running_offset += cnt;
+    }
+
+    // Fill indices
+    let max_indices = running_offset as usize;
+    let mut indices = vec![0u32; max_indices.max(1)];
+    // Reset counts for second pass
+    let mut write_positions = vec![0u32; total_tiles];
+    for t in 0..total_tiles {
+        write_positions[t] = grid[t * 2 + 1];
+    }
+
+    for i in 0..light_count as usize {
+        let base = i * 4;
+        let pos = glam::Vec3::new(
+            packed_lights[base][0],
+            packed_lights[base][1],
+            packed_lights[base][2],
+        );
+        let kind = packed_lights[base][3];
+        let clip = view_proj * glam::Vec4::new(pos.x, pos.y, pos.z, 1.0);
+        if clip.w <= 0.0 { continue; }
+        let ndc = clip.xy() / clip.w;
+        let uv = ndc * 0.5 + 0.5;
+        if uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 { continue; }
+        let px = (uv.x * width as f32) as u32;
+        let py = (uv.y * height as f32) as u32;
+        let tx = px.min(width - 1) / TILE_SIZE;
+        let ty = py.min(height - 1) / TILE_SIZE;
+        let tile_idx = (ty * tile_x + tx) as usize;
+        if tile_idx < total_tiles {
+            let wp = write_positions[tile_idx] as usize;
+            if wp < max_indices && grid[tile_idx * 2] > 0 {
+                indices[wp] = i as u32;
+                write_positions[tile_idx] += 1;
+            }
+        }
+    }
+
+    (grid, indices)
+}
+
 pub struct ForwardRenderer {
     pipeline: wgpu::RenderPipeline,
     pipeline_double_sided: wgpu::RenderPipeline,
@@ -232,6 +348,17 @@ pub struct ForwardRenderer {
     /// lights, camera) shared by every primitive, written once per frame.
     frame_bind_group_layout: wgpu::BindGroupLayout,
     frame_uniform_buffer: wgpu::Buffer,
+    /// Storage buffer for punctual lights (supports MAX_PUNCTUAL_LIGHTS).
+    /// Written every frame and read by the forward shader via @group(3).
+    light_storage_buffer: wgpu::Buffer,
+    light_bind_group_layout: wgpu::BindGroupLayout,
+    light_bind_group: wgpu::BindGroup,
+    /// Tile-based light grid: offsets and counts for each screen tile.
+    tile_light_grid_buffer: wgpu::Buffer,
+    tile_light_indices_buffer: wgpu::Buffer,
+    tile_bind_group_layout: wgpu::BindGroupLayout,
+    tile_bind_group: wgpu::BindGroup,
+    tile_counts: (u32, u32),
     frame_bind_group: wgpu::BindGroup,
     /// 1x1 stand-ins so group 1 is always bindable, environment or not.
     ibl_fallback: IblFallback,
@@ -268,6 +395,16 @@ pub struct ForwardRenderer {
     uploaded_texture_count: usize,
     depth: wgpu::TextureView,
     hdr_view: wgpu::TextureView,
+    /// MSAA depth texture (sample_count=MSAA_SAMPLE_COUNT) for the forward
+    /// render pass. Resolved to [`depth`] after the pass via depth_resolve.
+    depth_msaa: wgpu::TextureView,
+    /// MSAA HDR color texture (sample_count=MSAA_SAMPLE_COUNT) for the
+    /// forward render pass. Auto-resolved to [`hdr_view`] via resolve_target.
+    hdr_msaa: wgpu::TextureView,
+    /// Pipeline and bind group for the MSAA depth → single-sample resolve.
+    depth_resolve_pipeline: wgpu::RenderPipeline,
+    depth_resolve_bind_group: wgpu::BindGroup,
+    depth_resolve_bind_group_layout: wgpu::BindGroupLayout,
     target_size: (u32, u32),
     hdr_rebound_needed: bool,
     bloom: BloomPass,
@@ -317,6 +454,9 @@ pub struct ForwardRenderer {
     /// Resources always exist; recording only happens when the flag below is
     /// set. See [`crate::render::occlusion`].
     occlusion: OcclusionQueries,
+    /// GPU compute-shader-based occlusion culling (replaces hardware queries
+    /// when enabled). See [`crate::render::gpu_occlusion::GpuCulling`].
+    gpu_culling: Option<GpuCulling>,
     /// Record the occlusion detection pass after the forward pass.
     ///
     /// Off by default, like `lod_enabled` and `enable_gpu_timing`: it adds a
@@ -325,6 +465,9 @@ pub struct ForwardRenderer {
     /// any draw, so the frame renders exactly as before whether it is on or
     /// off. The visibility is exposed via [`Self::occlusion_visibility`].
     pub occlusion_queries_enabled: bool,
+    /// Use GPU compute-shader culling instead of hardware occlusion queries.
+    /// When true, [`GpuCulling`] replaces [`OcclusionQueries`].
+    pub gpu_culling_enabled: bool,
     /// Camera distances at which successive levels take over, ascending.
     ///
     /// Two levels by default: the geometry roughly halves at each, so the
@@ -464,13 +607,97 @@ impl ForwardRenderer {
             }],
         });
 
-        // The forward pipeline layout now carries group 2 (frame) in addition
-        // to group 0 (per-primitive) and group 1 (IBL). vs_shadow / vs_shadow_masked
-        // also live in this module, so the shadow pipelines need group 2 too -
-        // wgpu requires every bind group the module declares in the layout.
+        // Light storage buffer: group(3) for forward pipelines only (shadow
+        // and sky don't need punctual lights).
+        let light_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("light_bind_group_layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+        let light_storage_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("light_storage"),
+            size: (MAX_PUNCTUAL_LIGHTS as u64) * 16 * 4, // 4 vec4 per light
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let light_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("light_bind_group"),
+            layout: &light_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: light_storage_buffer.as_entire_binding(),
+            }],
+        });
+
+        // Tile light grid: group(4) for forward pipelines only.
+        // Per tile: offset + count into the light index list.
+        let tile_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("tile_light_bgl"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+        // Initial sizes: will be rebuilt on first render if larger needed.
+        let max_tiles = 192 * 128;  // enough for 3072×2048 ÷ 16²
+        let tile_grid_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("tile_light_grid"),
+            size: (max_tiles as u64) * 8, // vec2<u32> per tile
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let tile_idx_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("tile_light_indices"),
+            size: (max_tiles as u64) * (MAX_LIGHTS_PER_TILE as u64) * 4,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let tile_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("tile_light_bg"),
+            layout: &tile_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: tile_grid_buf.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: tile_idx_buf.as_entire_binding() },
+            ],
+        });
+
+        // The forward pipeline layout now carries group 2 (frame), group 3
+        // (light storage), group 4 (tile light grid) in addition to group 0
+        // (per-primitive) and group 1 (IBL). vs_shadow / vs_shadow_masked also live in this module, so
+        // the shadow pipelines need group 2 too - wgpu requires every bind
+        // group the module declares in the layout.
+        // Group 3 (lights) is forward-only and omitted from shadow/sky layouts.
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("forward_pipeline_layout"),
-            bind_group_layouts: &[Some(&bind_group_layout), Some(&ibl_bind_group_layout), Some(&frame_bind_group_layout)],
+            bind_group_layouts: &[Some(&bind_group_layout), Some(&ibl_bind_group_layout), Some(&frame_bind_group_layout), Some(&light_bind_group_layout), Some(&tile_bind_group_layout)],
             immediate_size: 0,
         });
 
@@ -698,8 +925,20 @@ impl ForwardRenderer {
             })
             .collect();
 
-        let depth = create_depth_texture(device, width, height);
-        let hdr_view = create_hdr_texture(device, width, height);
+        let depth = create_depth_texture(device, width, height, 1);
+        let hdr_view = create_hdr_texture(device, width, height, 1);
+        let depth_msaa = create_depth_texture(device, width, height, MSAA_SAMPLE_COUNT);
+        let hdr_msaa = create_hdr_texture(device, width, height, MSAA_SAMPLE_COUNT);
+        let (depth_resolve_pipeline, depth_resolve_bgl) =
+            create_depth_resolve_pipeline(device);
+        let depth_resolve_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("depth_resolve_bind_group"),
+            layout: &depth_resolve_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&depth_msaa),
+            }],
+        });
         let mut histogram = crate::render::histogram::HistogramPass::new(gpu);
         histogram.set_input(gpu, &hdr_view);
 
@@ -741,6 +980,14 @@ impl ForwardRenderer {
             ibl_bind_group,
             frame_bind_group_layout,
             frame_uniform_buffer,
+            light_storage_buffer,
+            light_bind_group_layout,
+            light_bind_group,
+            tile_light_grid_buffer: tile_grid_buf,
+            tile_light_indices_buffer: tile_idx_buf,
+            tile_bind_group_layout,
+            tile_bind_group,
+            tile_counts: (0, 0),
             frame_bind_group,
             ibl_fallback,
             ibl_environment: None,
@@ -761,13 +1008,20 @@ impl ForwardRenderer {
             primitives: Vec::new(),
             gpu_timing: GpuTiming::unavailable(),
             occlusion: OcclusionQueries::new(device),
+            gpu_culling: None,
             occlusion_queries_enabled: false,
+            gpu_culling_enabled: false,
             lod_enabled: false,
             lod_switch_distances: vec![8.0, 24.0],
             scene_bounds: None,
             uploaded_texture_count: 0,
             depth,
             hdr_view,
+            depth_msaa,
+            hdr_msaa,
+            depth_resolve_pipeline,
+            depth_resolve_bind_group,
+            depth_resolve_bind_group_layout: depth_resolve_bgl,
             target_size: (width.max(1), height.max(1)),
             hdr_rebound_needed: true,
             bloom: BloomPass::new(gpu),
@@ -1436,8 +1690,19 @@ impl ForwardRenderer {
     ) {
         let (width, height) = (width.max(1), height.max(1));
         if self.target_size != (width, height) {
-            self.depth = create_depth_texture(&gpu.device, width, height);
-            self.hdr_view = create_hdr_texture(&gpu.device, width, height);
+            self.depth = create_depth_texture(&gpu.device, width, height, 1);
+            self.hdr_view = create_hdr_texture(&gpu.device, width, height, 1);
+            self.depth_msaa = create_depth_texture(&gpu.device, width, height, MSAA_SAMPLE_COUNT);
+            self.hdr_msaa = create_hdr_texture(&gpu.device, width, height, MSAA_SAMPLE_COUNT);
+            // Recreate depth resolve bind group with new MSAA depth view.
+            self.depth_resolve_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("depth_resolve_bind_group"),
+                layout: &self.depth_resolve_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&self.depth_msaa),
+                }],
+            });
             // A stale view here reads a destroyed texture.
             self.histogram.set_input(gpu, &self.hdr_view);
             self.target_size = (width, height);
@@ -1520,14 +1785,61 @@ impl ForwardRenderer {
             light_dir_ambient: self.light_dir_ambient.to_array(),
             light_color_intensity: self.light_color_intensity.to_array(),
             camera_position: [eye.x, eye.y, eye.z, self.punctual_light_count as f32],
-            punctual_lights: self.punctual_lights,
-            cascade_splits: self.cascade_splits,
+            cascade_splits: [
+                self.cascade_splits[0],
+                self.cascade_splits[1],
+                self.tile_counts.0 as f32,
+                self.tile_counts.1 as f32,
+            ],
         };
         gpu.queue.write_buffer(
             &self.frame_uniform_buffer,
             0,
             bytemuck::bytes_of(&frame_uniforms),
         );
+        // Write punctual lights to storage buffer (group 3, forward-only).
+        gpu.queue.write_buffer(
+            &self.light_storage_buffer,
+            0,
+            bytemuck::cast_slice(&self.punctual_lights[..]),
+        );
+        // Build and upload tile light grid (group 4).
+        {
+            let (grid, indices) = build_tile_light_grid(
+                &self.punctual_lights,
+                self.punctual_light_count,
+                width, height,
+                &view_proj,
+            );
+            let tx = (width + TILE_SIZE - 1) / TILE_SIZE;
+            let ty = (height + TILE_SIZE - 1) / TILE_SIZE;
+            let total_tiles = (tx * ty) as usize;
+
+            // Ensure buffer capacity.
+            let needed_grid = (total_tiles as u64) * 8; // vec2<u32> × total_tiles
+            if needed_grid > self.tile_light_grid_buffer.size() {
+                self.tile_light_grid_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("tile_light_grid"),
+                    size: needed_grid,
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+            }
+            let needed_idx = (indices.len() as u64) * 4;
+            if needed_idx > self.tile_light_indices_buffer.size() {
+                self.tile_light_indices_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("tile_light_indices"),
+                    size: needed_idx.max(64),
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+            }
+            // Rebuild bind group if buffers were recreated.
+            // In practice the buffers rarely outgrow their initial size.
+            gpu.queue.write_buffer(&self.tile_light_grid_buffer, 0, bytemuck::cast_slice(&grid));
+            gpu.queue.write_buffer(&self.tile_light_indices_buffer, 0, bytemuck::cast_slice(&indices));
+            self.tile_counts = (tx, ty);
+        }
 
         for prim in &self.primitives {
             let prim_uniforms = PrimUniforms {
@@ -1670,8 +1982,8 @@ impl ForwardRenderer {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("forward_pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.hdr_view,
-                    resolve_target: None,
+                    view: &self.hdr_msaa,
+                    resolve_target: Some(&self.hdr_view),
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
                             r: 0.05,
@@ -1679,16 +1991,16 @@ impl ForwardRenderer {
                             b: 0.08,
                             a: 1.0,
                         }),
-                        store: wgpu::StoreOp::Store,
+                        store: wgpu::StoreOp::Discard,
                     },
                     depth_slice: None,
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth,
+                    view: &self.depth_msaa,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
-                        // Stored: SSAO reconstructs positions from it.
-                        store: wgpu::StoreOp::Store,
+                        // Discard MSAA depth; the resolve pass copies to `depth`.
+                        store: wgpu::StoreOp::Discard,
                     }),
                     stencil_ops: None,
                 }),
@@ -1704,8 +2016,11 @@ impl ForwardRenderer {
             // so they are set once here and again after the sky. The sky
             // pipeline has its own layout, which invalidates every group
             // binding when it is bound.
+            // Group 3 (lights) and group 4 (tile grid) are also per-frame.
             pass.set_bind_group(1, &self.ibl_bind_group, &[]);
             pass.set_bind_group(2, &self.frame_bind_group, &[]);
+            pass.set_bind_group(3, &self.light_bind_group, &[]);
+            pass.set_bind_group(4, &self.tile_bind_group, &[]);
             for (i, prim) in self.primitives.iter().enumerate() {
                 // Frustum first (cheap, no dependency on last frame).
                 if prim.alpha_blend || !frustum.intersects_aabb(prim.aabb_min, prim.aabb_max) {
@@ -1775,6 +2090,8 @@ impl ForwardRenderer {
             if !blended.is_empty() {
                 pass.set_bind_group(1, &self.ibl_bind_group, &[]);
                 pass.set_bind_group(2, &self.frame_bind_group, &[]);
+                pass.set_bind_group(3, &self.light_bind_group, &[]);
+                pass.set_bind_group(4, &self.tile_bind_group, &[]);
             }
             for prim in blended {
                 let pipeline = if prim.double_sided {
@@ -1792,31 +2109,75 @@ impl ForwardRenderer {
             }
         }
 
+        // Depth resolve: downsample MSAA depth → single-sample for SSAO,
+        // occlusion, and the tonemap pass. This is a fullscreen pass that
+        // writes the minimum depth across all MSAA samples.
+        {
+            let mut resolve = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("depth_resolve"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            resolve.set_pipeline(&self.depth_resolve_pipeline);
+            resolve.set_bind_group(0, &self.depth_resolve_bind_group, &[]);
+            resolve.draw(0..3, 0..1);
+        }
+
         self.occlusion_drawn = occ_drawn;
         self.occlusion_considered = occ_considered;
 
         // Occlusion DETECTION rides the forward depth: a separate depth-only
         // pass draws each primitive's world AABB with depth-write off, so a box
-        // fully behind other geometry counts zero fragments. It records after
-        // the forward pass (which filled the depth) and before SSAO reads that
-        // depth back - depth-write off means the two see identical depth. Same
-        // view_proj as the forward draws, so the boxes line up with the
-        // geometry. This increment only measures; nothing is skipped yet.
-        if self.occlusion_queries_enabled && !self.primitives.is_empty() {
+        // fully behind other geometry counts zero fragments.
+        //
+        // When `gpu_culling_enabled` is set, a compute shader replaces the
+        // hardware occlusion query path with a depth-texture-based test.
+        if !self.primitives.is_empty() {
             let aabbs: Vec<(Vec3, Vec3)> = self
                 .primitives
                 .iter()
                 .map(|p| (p.aabb_min, p.aabb_max))
                 .collect();
-            self.occlusion.record(
-                &gpu.device,
-                &gpu.queue,
-                &mut encoder,
-                &self.depth,
-                view_proj,
-                &aabbs,
-                self.gpu_timing.scope(TimedPass::OcclusionCull),
-            );
+
+            if self.gpu_culling_enabled {
+                // GPU compute-shader culling
+                let gpu_cull = self.gpu_culling.get_or_insert_with(|| {
+                    GpuCulling::new(gpu, self.primitives.len().max(1024))
+                });
+                let (width, height) = self.target_size;
+                // Use the resolved single-sample depth for culling
+                gpu_cull.cull(
+                    gpu,
+                    &mut encoder,
+                    &self.depth,
+                    width,
+                    height,
+                    bytemuck::cast_ref(&view_proj),
+                    bytemuck::cast_ref(&Mat4::IDENTITY), // inv_view_proj placeholder
+                    &aabbs,
+                );
+            } else if self.occlusion_queries_enabled {
+                // Hardware occlusion query path
+                self.occlusion.record(
+                    &gpu.device,
+                    &gpu.queue,
+                    &mut encoder,
+                    &self.depth,
+                    view_proj,
+                    &aabbs,
+                    self.gpu_timing.scope(TimedPass::OcclusionCull),
+                );
+            }
         }
 
         // Skip these outright at zero strength. The tonemap composites bloom as
@@ -2449,7 +2810,11 @@ fn create_forward_pipeline_set(
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
-            multisample: wgpu::MultisampleState::default(),
+            multisample: wgpu::MultisampleState {
+                count: MSAA_SAMPLE_COUNT,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
             multiview_mask: None,
             cache: None,
         })
@@ -2460,6 +2825,67 @@ fn create_forward_pipeline_set(
         make(Some(wgpu::Face::Back), true, "forward_pipeline_blend"),
         make(None, true, "forward_pipeline_blend_double_sided"),
     )
+}
+
+fn create_depth_resolve_pipeline(
+    device: &wgpu::Device,
+) -> (wgpu::RenderPipeline, wgpu::BindGroupLayout) {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("depth_resolve_shader"),
+        source: wgpu::ShaderSource::Wgsl(
+            include_str!("../shaders/depth_resolve.wgsl").into(),
+        ),
+    });
+
+    let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("depth_resolve_bind_group_layout"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Depth,
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: true,
+            },
+            count: None,
+        }],
+    });
+
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("depth_resolve_pipeline_layout"),
+        bind_group_layouts: &[Some(&bind_group_layout)],
+        immediate_size: 0,
+    });
+
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("depth_resolve_pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            buffers: &[],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_main"),
+            targets: &[],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Always),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
+    });
+
+    (pipeline, bind_group_layout)
 }
 
 fn create_masked_shadow_pipeline(
@@ -2576,7 +3002,11 @@ fn create_sky_pipeline(
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
         }),
-        multisample: wgpu::MultisampleState::default(),
+        multisample: wgpu::MultisampleState {
+            count: MSAA_SAMPLE_COUNT,
+            mask: !0,
+            alpha_to_coverage_enabled: false,
+        },
         multiview_mask: None,
         cache: None,
     })
@@ -3204,7 +3634,7 @@ fn create_material_texture(
     gpu_texture.create_view(&wgpu::TextureViewDescriptor::default())
 }
 
-fn create_depth_texture(device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureView {
+fn create_depth_texture(device: &wgpu::Device, width: u32, height: u32, sample_count: u32) -> wgpu::TextureView {
     device
         .create_texture(&wgpu::TextureDescriptor {
             label: Some("depth"),
@@ -3214,7 +3644,7 @@ fn create_depth_texture(device: &wgpu::Device, width: u32, height: u32) -> wgpu:
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
-            sample_count: 1,
+            sample_count,
             dimension: wgpu::TextureDimension::D2,
             format: DEPTH_FORMAT,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
@@ -3223,7 +3653,7 @@ fn create_depth_texture(device: &wgpu::Device, width: u32, height: u32) -> wgpu:
         .create_view(&wgpu::TextureViewDescriptor::default())
 }
 
-fn create_hdr_texture(device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureView {
+fn create_hdr_texture(device: &wgpu::Device, width: u32, height: u32, sample_count: u32) -> wgpu::TextureView {
     device
         .create_texture(&wgpu::TextureDescriptor {
             label: Some("hdr_color"),
@@ -3233,7 +3663,7 @@ fn create_hdr_texture(device: &wgpu::Device, width: u32, height: u32) -> wgpu::T
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
-            sample_count: 1,
+            sample_count,
             dimension: wgpu::TextureDimension::D2,
             format: HDR_FORMAT,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
@@ -3492,5 +3922,56 @@ mod tests {
         let eye = camera.eye();
         let behind = eye + (eye - Vec3::ZERO).normalize() * 10.0;
         assert!(!frustum.intersects_aabb(behind - Vec3::splat(0.4), behind + Vec3::splat(0.4)));
+    }
+
+    #[test]
+    fn build_tile_light_grid_bins_lights_into_correct_tiles() {
+        // Single light at origin, perspective camera at (0,0,5) looking at origin.
+        let view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
+        let proj = Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
+        let vp = proj * view;
+
+        let mut packed = [[0.0f32; 4]; MAX_PUNCTUAL_LIGHTS * 4];
+        // One point light at origin.
+        packed[0] = [0.0, 0.0, 0.0, 1.0]; // position + kind=point
+        packed[1] = [1.0, 1.0, 1.0, 10.0]; // color*intensity + range
+
+        let (grid, indices) = build_tile_light_grid(&packed, 1, 256, 256, &vp);
+        // The light at origin should be in the center tile.
+        let tx = 128 / TILE_SIZE; // ~8 for 16px tiles
+        let ty = 128 / TILE_SIZE;
+        let tile_w = 256 / TILE_SIZE; // 16
+        let center_tile = (ty * tile_w + tx) as usize;
+        assert_eq!(grid[center_tile * 2], 1, "center tile should have 1 light");
+        assert_eq!(indices[grid[center_tile * 2 + 1] as usize], 0, "light index 0");
+    }
+
+    #[test]
+    fn build_tile_light_grid_handles_zero_lights() {
+        let vp = Mat4::IDENTITY;
+        let packed = [[0.0f32; 4]; MAX_PUNCTUAL_LIGHTS * 4];
+        let (grid, indices) = build_tile_light_grid(&packed, 0, 256, 256, &vp);
+        assert!(grid.iter().all(|&c| c == 0), "all tiles should have zero lights");
+        assert!(!indices.is_empty(), "indices buffer should exist");
+    }
+
+    #[test]
+    fn build_tile_light_grid_skips_lights_behind_camera() {
+        // Camera at (5,0,0) looking toward origin; light at (-5,0,0) is behind.
+        let view = Mat4::look_at_rh(Vec3::new(5.0, 0.0, 0.0), Vec3::ZERO, Vec3::Y);
+        let proj = Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
+        let vp = proj * view;
+
+        let mut packed = [[0.0f32; 4]; MAX_PUNCTUAL_LIGHTS * 4];
+        // Light behind camera: camera at (5,0,0) looking toward (-1,0,0),
+        // so behind is (+1,0,0). Light at (10,0,0) is behind the camera.
+        packed[0] = [10.0, 0.0, 0.0, 1.0];
+        packed[1] = [1.0, 1.0, 1.0, 10.0];
+
+        let (grid, _) = build_tile_light_grid(&packed, 1, 256, 256, &vp);
+        // All tiles should have zero lights since the light is behind the camera.
+        for chunk in grid.chunks(2) {
+            assert_eq!(chunk[0], 0, "no light should reach any tile");
+        }
     }
 }

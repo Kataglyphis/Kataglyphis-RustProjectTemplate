@@ -20,12 +20,23 @@ struct FrameUniforms {
     light_color_intensity: vec4<f32>,
     // xyz: world-space camera position, w: active punctual light count
     camera_position: vec4<f32>,
-    // Per light: [pos.xyz, kind], [color*intensity.rgb, range],
-    // [dir.xyz, cos_inner], [cos_outer, 0, 0, 0]. kind: 1=point 2=spot 3=dir.
-    punctual_lights: array<vec4<f32>, 16>,
     // x,y: cascade split distances (view depth), z: cascade count
     cascade_splits: vec4<f32>,
 };
+
+// Punctual lights in a storage buffer (group 3, forward-only).
+// Each light is packed as 4 × vec4<f32>:
+//   [0]: position.xyz, kind (1=point, 2=spot, 3=directional)
+//   [1]: color*intensity.rgb, range
+//   [2]: direction.xyz, cos_inner
+//   [3]: cos_outer, 0, 0, 0
+@group(3) @binding(0) var<storage, read> punctual_lights: array<vec4<f32>>;
+
+// Tile light grid (group 4): per-tile [count, offset] + light index list.
+// Screen is divided into TILE_SIZE×TILE_SIZE tiles; each fragment reads its
+// tile's light list and iterates only overlapping lights.
+@group(4) @binding(0) var<storage, read> tile_light_grid: array<vec2<u32>>;
+@group(4) @binding(1) var<storage, read> tile_light_indices: array<u32>;
 
 struct PrimUniforms {
     model: mat4x4<f32>,
@@ -399,17 +410,44 @@ fn punctual_lighting(
     metallic: f32,
     roughness: f32,
     f0: vec3<f32>,
+    @builtin(position) frag_coord: vec4<f32>,
 ) -> vec3<f32> {
     var total = vec3<f32>(0.0);
-    let count = i32(frame.camera_position.w);
-    for (var i = 0; i < 4; i = i + 1) {
-        if (i >= count) {
-            break;
-        }
-        let a = frame.punctual_lights[i * 4];
-        let b = frame.punctual_lights[i * 4 + 1];
-        let cvec = frame.punctual_lights[i * 4 + 2];
-        let dvec = frame.punctual_lights[i * 4 + 3];
+
+    // Determine tile for this fragment and read per-tile light list.
+    let tile_x = u32(frag_coord.x) / 16u;
+    let tile_y = u32(frag_coord.y) / 16u;
+    // tile_counts (width, height) are in frame.cascade_splits.zw.
+    // Fallback: use all lights when tile grid is unavailable.
+    let tile_w = u32(frame.cascade_splits.z);
+    let tile_h = u32(frame.cascade_splits.w);
+    var tile_count = 0i32;
+    var tile_offset = 0u;
+
+    // Clamp tile index to valid range.
+    let tx = min(tile_x, max(tile_w, 1u) - 1u);
+    let ty = min(tile_y, max(tile_h, 1u) - 1u);
+    let tile_index = ty * tile_w + tx;
+
+    let grid_entry = tile_light_grid[tile_index];
+    let count = i32(grid_entry.x);
+    tile_offset = grid_entry.y;
+
+    let total_lights = i32(frame.camera_position.w);
+    // If tile grid is empty or invalid, iterate all lights as fallback.
+    if (count <= 0 || tile_w == 0u) {
+        // Full iteration fallback uses the global count.
+        tile_count = total_lights;
+    } else {
+        tile_count = count;
+    }
+
+    for (var j = 0u; j < u32(abs(tile_count)); j = j + 1u) {
+        let light_idx = select(j, tile_light_indices[tile_offset + j], count > 0);
+        let a = punctual_lights[light_idx * 4u];
+        let b = punctual_lights[light_idx * 4u + 1u];
+        let cvec = punctual_lights[light_idx * 4u + 2u];
+        let dvec = punctual_lights[light_idx * 4u + 3u];
         let kind = a.w;
 
         var l: vec3<f32>;
@@ -567,7 +605,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let ambient = ibl_strength * occlusion * (diffuse_ibl + specular_ibl);
 
     let punctual =
-        punctual_lighting(in.world_position, n, v, albedo.rgb, metallic, roughness, f0);
+        punctual_lighting(in.world_position, n, v, albedo.rgb, metallic, roughness, f0, in.position);
 
     let color =
         (diffuse + specular) * radiance * n_dot_l * shadow + punctual + ambient + emissive;
