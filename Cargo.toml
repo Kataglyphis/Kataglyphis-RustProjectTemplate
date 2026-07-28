@@ -33,7 +33,7 @@ tempfile = { version = "3" }
 ort = { version = "=2.0.0-rc.12", default-features = false }
 gstreamer = "0.24"
 gstreamer-app = "0.24"
-gstreamer-video = "0.24"
+gstreamer-video = "0.25"
 libloading = "0.9"
 sysinfo = "0.38"
 flutter_rust_bridge = "=2.12.0"
