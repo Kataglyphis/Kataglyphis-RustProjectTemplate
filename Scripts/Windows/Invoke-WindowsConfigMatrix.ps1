@@ -1,4 +1,6 @@
 param(
+#requires -Version 7.0
+
   [string[]]$Configurations = @('all'),
   [string[]]$Profiles = @('debug', 'profile', 'release'),
   [string[]]$AppArgs = @('stats', '--path', 'README.md')
@@ -81,3 +83,4 @@ foreach ($configuration in $resolvedConfigurations) {
     throw "Configuration '$($configuration.Name)' failed."
   }
 }
+

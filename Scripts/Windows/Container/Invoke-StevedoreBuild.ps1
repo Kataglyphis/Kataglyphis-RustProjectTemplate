@@ -37,6 +37,8 @@
     powershell -ExecutionPolicy Bypass -File .\Scripts\Windows\Container\Invoke-StevedoreBuild.ps1 -Test
 #>
 param(
+#requires -Version 7.0
+
     [string]$Docker = '',
     [string]$Image = 'ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64',
     # Non-Dev-Drive staging root for sources + logs (bind-mount source).
@@ -110,3 +112,4 @@ if ($Test -or $TestOnly) {
     Invoke-ContainerScript -Script 'rust-test-all.ps1' -Label 'test'
 }
 Write-Host "`nDone. Logs: $scratch\in-container-*.log"
+

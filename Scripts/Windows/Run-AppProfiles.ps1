@@ -1,4 +1,6 @@
 param(
+#requires -Version 7.0
+
   [string[]]$Profiles = @('debug', 'profile', 'release'),
   [string]$Features = '',
   [string[]]$AppArgs = @('stats', '--path', 'README.md'),
@@ -92,3 +94,4 @@ foreach ($profile in $resolvedProfiles) {
     throw "Run failed for profile '$profile' and features '$featureLabel' (exit $LASTEXITCODE)."
   }
 }
+

@@ -1,4 +1,6 @@
 param(
+#requires -Version 7.0
+
   [string]$Package = 'kataglyphis_rustprojecttemplate'
 )
 
@@ -32,3 +34,4 @@ foreach ($step in $testSteps) {
     throw "$($step.Name) failed with exit code $LASTEXITCODE."
   }
 }
+

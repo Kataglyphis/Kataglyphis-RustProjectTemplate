@@ -3,6 +3,8 @@
 # proptest fuzz suite (tests/fuzz_test.rs), plus doc tests.
 # Same wcifs-safe layout as rust-build-all.ps1: writes only to C:\ct / C:\ch,
 # everything logged to the mounted C:\host-scratch.
+#requires -Version 7.0
+
 $ProgressPreference = 'SilentlyContinue'
 $log = 'C:\host-scratch\in-container-test.log'
 Remove-Item $log -Force -ErrorAction SilentlyContinue
@@ -25,3 +27,4 @@ $code = Run-Logged 'cargo test --workspace --locked'
 if ($code -ne 0) { Say "TESTS FAILED (exit $code)"; exit $code }
 Say 'ALL TESTS PASSED'
 exit 0
+

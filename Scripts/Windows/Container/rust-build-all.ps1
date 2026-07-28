@@ -3,6 +3,8 @@
 # back to the bind-mounted repo. All build writes go to fresh container-local dirs
 # (C:\ct, C:\ch) to dodge the wcifs/bindFlt rename bugs on this host/base skew
 # (see Kataglyphis-ContainerHub docs/windows-builds.md, run-side wcifs symptoms).
+#requires -Version 7.0
+
 # NB: EAP stays 'Continue' -- PS 5.1 + native stderr under 'Stop' is a known trap.
 $ProgressPreference = 'SilentlyContinue'
 
@@ -59,3 +61,4 @@ foreach ($p in $profiles) {
 
 Write-Host "`nALL BUILDS SUCCEEDED"
 exit 0
+
