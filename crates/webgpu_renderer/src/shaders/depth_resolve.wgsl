@@ -1,37 +1,56 @@
-// Depth resolve: downsamples MSAA depth → single-sample via nearest-sample
-// selection (minimum depth, which is the nearest fragment).
-// Used after the forward MSAA render pass so that SSAO, occlusion culling
-// and other single-sample consumers can read a non-MSAA depth texture.
+@binding(0) @group(0) var msaaDepth_0 : texture_multisampled_2d<f32>;
 
-@group(0) @binding(0) var msaa_depth: texture_depth_2d_multisampled;
-
-struct Varyings {
-    @builtin(position) position: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-}
+struct FullscreenVsOut_0
+{
+    @builtin(position) svPosition_0 : vec4<f32>,
+    @location(0) uv_0 : vec2<f32>,
+};
 
 @vertex
-fn vs_main(@builtin(vertex_index) idx: u32) -> Varyings {
-    // Fullscreen triangle: indices 0,1,2 → (-1,-1), (3,-1), (-1,3)
-    let uv = vec2<f32>(f32(idx & 1u) * 2.0, f32((idx >> 1u) & 1u) * 2.0);
-    var out: Varyings;
-    out.position = vec4<f32>(uv * 2.0 - 1.0, 0.0, 1.0);
-    out.uv = uv;
-    return out;
+fn vs_main(@builtin(vertex_index) vid_0 : u32) -> FullscreenVsOut_0
+{
+    var uv_1 : vec2<f32> = vec2<f32>(f32((vid_0 & (u32(1)))) * 2.0f, f32((((vid_0 >> (u32(1)))) & (u32(1)))) * 2.0f);
+    var o_0 : FullscreenVsOut_0;
+    o_0.svPosition_0 = vec4<f32>(uv_1 * vec2<f32>(2.0f) - vec2<f32>(1.0f), 0.0f, 1.0f);
+    o_0.uv_0 = uv_1;
+    return o_0;
 }
+
+struct pixelOutput_0
+{
+    @location(0) output_0 : f32,
+};
+
+struct pixelInput_0
+{
+    @location(0) uv_2 : vec2<f32>,
+};
 
 @fragment
-fn fs_main(@location(0) uv: vec2<f32>) -> @builtin(frag_depth) f32 {
-    let dims = vec2<f32>(textureDimensions(msaa_depth));
-    let coords = vec2<i32>(uv * dims);
-
-    // Take the minimum depth across all samples (nearest fragment wins).
-    // This preserves the front-most surface, which is correct for SSAO,
-    // occlusion queries, and any consumer expecting a standard depth buffer.
-    var min_depth = 1.0;
-    for (var i = 0u; i < 4u; i++) {
-        let d = textureLoad(msaa_depth, coords, i);
-        min_depth = min(min_depth, d);
+fn fs_main( _S1 : pixelInput_0, @builtin(position) svPosition_1 : vec4<f32>) -> pixelOutput_0
+{
+    var w_0 : u32;
+    var h_0 : u32;
+    var samples_0 : u32;
+    {var dim = textureDimensions((msaaDepth_0));((w_0)) = dim.x;((h_0)) = dim.y;((samples_0)) = textureNumSamples((msaaDepth_0));};
+    var _S2 : vec2<i32> = vec2<i32>(_S1.uv_2 * vec2<f32>(f32(w_0), f32(h_0)));
+    var minDepth_0 : f32 = 1.0f;
+    var i_0 : u32 = u32(0);
+    for(;;)
+    {
+        if(i_0 < u32(4))
+        {
+        }
+        else
+        {
+            break;
+        }
+        var _S3 : f32 = min(minDepth_0, (textureLoad((msaaDepth_0), (_S2), (i32(i_0))).x));
+        var _S4 : u32 = i_0 + u32(1);
+        minDepth_0 = _S3;
+        i_0 = _S4;
     }
-    return min_depth;
+    var _S5 : pixelOutput_0 = pixelOutput_0( minDepth_0 );
+    return _S5;
 }
+

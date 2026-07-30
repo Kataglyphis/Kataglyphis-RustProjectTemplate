@@ -1,71 +1,103 @@
-// GPU occlusion culling: tests each primitive's projected AABB against the
-// depth buffer. Writes 1 (visible) or 0 (occluded) to a storage buffer.
-//
-// The test: project the AABB's center to UV+depth, sample depth buffer at
-// that UV, compare. If the primitive's depth > sampled depth (behind surface)
-// it's occluded. Conservative - favors visible when uncertain.
-//
-// Dispatch: NUM_PRIMITIVES workgroups of size 64, each WG processes 64 prims.
+struct _MatrixStorage_float4x4_ColMajorstd140_0
+{
+    @align(16) data_0 : array<vec4<f32>, i32(4)>,
+};
 
-@group(0) @binding(0) var depth_tex: texture_depth_2d;
-@group(0) @binding(1) var<uniform> params: CullParams;
-@group(0) @binding(2) var<storage, read> aabb_data: array<Aabb>;
-@group(0) @binding(3) var<storage, read_write> visibility: array<u32>;
+struct CullParams_std140_0
+{
+    @align(16) view_proj_0 : _MatrixStorage_float4x4_ColMajorstd140_0,
+    @align(16) inv_view_proj_0 : _MatrixStorage_float4x4_ColMajorstd140_0,
+    @align(16) width_0 : f32,
+    @align(4) height_0 : f32,
+    @align(8) primitive_count_0 : u32,
+};
 
-struct CullParams {
-    view_proj: mat4x4<f32>,
-    inv_view_proj: mat4x4<f32>,
-    width: f32,
-    height: f32,
-    primitive_count: u32,
-}
+@binding(1) @group(0) var<uniform> params_0 : CullParams_std140_0;
+struct Aabb_std430_0
+{
+    @align(16) min_0 : vec4<f32>,
+    @align(16) max_0 : vec4<f32>,
+};
 
-struct Aabb {
-    min: vec4<f32>,
-    max: vec4<f32>,
-}
+@binding(2) @group(0) var<storage, read> aabbData_0 : array<Aabb_std430_0>;
 
-fn project_center(min: vec3<f32>, max: vec3<f32>, vp: mat4x4<f32>) -> (vec2<f32>, f32) {
-    let center = (min + max) * 0.5;
-    let clip = vp * vec4<f32>(center, 1.0);
-    let ndc = clip.xy / clip.w;
-    let depth = clip.z / clip.w;
-    let uv = ndc * 0.5 + 0.5;
-    return (uv, depth);
-}
+@binding(3) @group(0) var<storage, read_write> visibility_0 : array<u32>;
 
-@compute @workgroup_size(64)
-fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let idx = gid.x;
-    if idx >= params.primitive_count {
+@binding(0) @group(0) var depthTex_0 : texture_2d<f32>;
+
+@compute
+@workgroup_size(64, 1, 1)
+fn cs_main(@builtin(global_invocation_id) gid_0 : vec3<u32>)
+{
+    var idx_0 : u32 = gid_0.x;
+    if(idx_0 >= (params_0.primitive_count_0))
+    {
         return;
     }
-
-    let aabb = aabb_data[idx];
-    let (uv, prim_depth) = project_center(aabb.min.xyz, aabb.max.xyz, params.view_proj);
-
-    // Behind camera or beyond far plane → not visible
-    if prim_depth < 0.0 || prim_depth > 1.0 {
-        visibility[idx] = 0u;
+    var aabb_0 : Aabb_std430_0 = aabbData_0[idx_0];
+    var clip_0 : vec4<f32> = (((vec4<f32>((aabb_0.min_0.xyz + aabb_0.max_0.xyz) * vec3<f32>(0.5f), 1.0f)) * (mat4x4<f32>(params_0.view_proj_0.data_0[i32(0)][i32(0)], params_0.view_proj_0.data_0[i32(1)][i32(0)], params_0.view_proj_0.data_0[i32(2)][i32(0)], params_0.view_proj_0.data_0[i32(3)][i32(0)], params_0.view_proj_0.data_0[i32(0)][i32(1)], params_0.view_proj_0.data_0[i32(1)][i32(1)], params_0.view_proj_0.data_0[i32(2)][i32(1)], params_0.view_proj_0.data_0[i32(3)][i32(1)], params_0.view_proj_0.data_0[i32(0)][i32(2)], params_0.view_proj_0.data_0[i32(1)][i32(2)], params_0.view_proj_0.data_0[i32(2)][i32(2)], params_0.view_proj_0.data_0[i32(3)][i32(2)], params_0.view_proj_0.data_0[i32(0)][i32(3)], params_0.view_proj_0.data_0[i32(1)][i32(3)], params_0.view_proj_0.data_0[i32(2)][i32(3)], params_0.view_proj_0.data_0[i32(3)][i32(3)]))));
+    var _S1 : f32 = clip_0.w;
+    var depth_0 : f32 = clip_0.z / _S1;
+    var _S2 : vec2<f32> = vec2<f32>(0.5f);
+    var uv_0 : vec2<f32> = clip_0.xy / vec2<f32>(_S1) * _S2 + _S2;
+    var _S3 : bool;
+    if(depth_0 < 0.0f)
+    {
+        _S3 = true;
+    }
+    else
+    {
+        _S3 = depth_0 > 1.0f;
+    }
+    if(_S3)
+    {
+        visibility_0[idx_0] = u32(0);
         return;
     }
-
-    // Off-screen → not drawn
-    if uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 {
-        visibility[idx] = 0u;
+    var _S4 : f32 = uv_0.x;
+    if(_S4 < 0.0f)
+    {
+        _S3 = true;
+    }
+    else
+    {
+        _S3 = _S4 > 1.0f;
+    }
+    if(_S3)
+    {
+        _S3 = true;
+    }
+    else
+    {
+        _S3 = (uv_0.y) < 0.0f;
+    }
+    if(_S3)
+    {
+        _S3 = true;
+    }
+    else
+    {
+        _S3 = (uv_0.y) > 1.0f;
+    }
+    if(_S3)
+    {
+        visibility_0[idx_0] = u32(0);
         return;
     }
-
-    // Sample depth buffer at projected UV
-    let dims = vec2<f32>(textureDimensions(depth_tex));
-    let coords = vec2<i32>(uv * dims);
-    let sampled_depth = textureLoad(depth_tex, coords, 0);
-
-    // If the primitive's nearest point is behind the sampled depth → occluded
-    // Add a small bias to avoid z-fighting
-    if prim_depth > sampled_depth + 0.001 {
-        visibility[idx] = 0u;
-    } else {
-        visibility[idx] = 1u;
+    var w_0 : u32;
+    var h_0 : u32;
+    {var dim = textureDimensions((depthTex_0));((w_0)) = dim.x;((h_0)) = dim.y;};
+    var _S5 : vec3<i32> = vec3<i32>(vec2<i32>(uv_0 * vec2<f32>(f32(w_0), f32(h_0))), i32(0));
+    var _S6 : u32;
+    if(depth_0 <= (textureLoad((depthTex_0), ((_S5)).xy, ((_S5)).z).x))
+    {
+        _S6 = u32(1);
     }
+    else
+    {
+        _S6 = u32(0);
+    }
+    visibility_0[idx_0] = _S6;
+    return;
 }
+

@@ -1,53 +1,63 @@
-// Procedural sky: horizon/zenith gradient + analytic sun disk derived from
-// the directional light, so the overlay's light sliders move the sun.
-// Drawn as a fullscreen triangle at far depth (z = 1) with LessEqual
-// compare and no depth writes — only background pixels survive.
-
-struct SkyUniforms {
-    inv_view_proj: mat4x4<f32>,
-    // xyz: direction TOWARDS the light/sun, w: light intensity
-    light_dir_intensity: vec4<f32>,
+struct _MatrixStorage_float4x4_ColMajorstd140_0
+{
+    @align(16) data_0 : array<vec4<f32>, i32(4)>,
 };
 
-@group(0) @binding(0) var<uniform> sky: SkyUniforms;
+struct SkyUniforms_std140_0
+{
+    @align(16) inv_view_proj_0 : _MatrixStorage_float4x4_ColMajorstd140_0,
+    @align(16) light_dir_intensity_0 : vec4<f32>,
+};
 
-struct VsOut {
-    @builtin(position) clip_position: vec4<f32>,
-    @location(0) ndc: vec2<f32>,
+@binding(0) @group(0) var<uniform> sky_0 : SkyUniforms_std140_0;
+struct SkyVsOut_0
+{
+    @builtin(position) svPosition_0 : vec4<f32>,
+    @location(0) ndc_0 : vec2<f32>,
 };
 
 @vertex
-fn vs_main(@builtin(vertex_index) index: u32) -> VsOut {
-    var out: VsOut;
-    let x = f32(i32(index) / 2) * 4.0 - 1.0;
-    let y = f32(i32(index) % 2) * 4.0 - 1.0;
-    out.clip_position = vec4<f32>(x, y, 1.0, 1.0);
-    out.ndc = vec2<f32>(x, y);
-    return out;
+fn vs_main(@builtin(vertex_index) vid_0 : u32) -> SkyVsOut_0
+{
+    var x_0 : f32 = f32(vid_0 / u32(2)) * 4.0f - 1.0f;
+    var y_0 : f32 = f32(vid_0 % u32(2)) * 4.0f - 1.0f;
+    var o_0 : SkyVsOut_0;
+    o_0.svPosition_0 = vec4<f32>(x_0, y_0, 1.0f, 1.0f);
+    o_0.ndc_0 = vec2<f32>(x_0, y_0);
+    return o_0;
 }
+
+struct pixelOutput_0
+{
+    @location(0) output_0 : vec4<f32>,
+};
+
+struct pixelInput_0
+{
+    @location(0) ndc_1 : vec2<f32>,
+};
 
 @fragment
-fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    let near = sky.inv_view_proj * vec4<f32>(in.ndc, 0.0, 1.0);
-    let far = sky.inv_view_proj * vec4<f32>(in.ndc, 1.0, 1.0);
-    let dir = normalize(far.xyz / far.w - near.xyz / near.w);
-
-    let zenith = vec3<f32>(0.09, 0.16, 0.35);
-    let horizon = vec3<f32>(0.55, 0.62, 0.72);
-    let ground = vec3<f32>(0.18, 0.16, 0.15);
-
-    var color: vec3<f32>;
-    if (dir.y >= 0.0) {
-        color = mix(horizon, zenith, pow(clamp(dir.y, 0.0, 1.0), 0.7));
-    } else {
-        color = mix(horizon, ground, clamp(-dir.y * 3.0, 0.0, 1.0));
+fn fs_main( _S1 : pixelInput_0, @builtin(position) svPosition_1 : vec4<f32>) -> pixelOutput_0
+{
+    var nearP_0 : vec4<f32> = (((vec4<f32>(_S1.ndc_1, 0.0f, 1.0f)) * (mat4x4<f32>(sky_0.inv_view_proj_0.data_0[i32(0)][i32(0)], sky_0.inv_view_proj_0.data_0[i32(1)][i32(0)], sky_0.inv_view_proj_0.data_0[i32(2)][i32(0)], sky_0.inv_view_proj_0.data_0[i32(3)][i32(0)], sky_0.inv_view_proj_0.data_0[i32(0)][i32(1)], sky_0.inv_view_proj_0.data_0[i32(1)][i32(1)], sky_0.inv_view_proj_0.data_0[i32(2)][i32(1)], sky_0.inv_view_proj_0.data_0[i32(3)][i32(1)], sky_0.inv_view_proj_0.data_0[i32(0)][i32(2)], sky_0.inv_view_proj_0.data_0[i32(1)][i32(2)], sky_0.inv_view_proj_0.data_0[i32(2)][i32(2)], sky_0.inv_view_proj_0.data_0[i32(3)][i32(2)], sky_0.inv_view_proj_0.data_0[i32(0)][i32(3)], sky_0.inv_view_proj_0.data_0[i32(1)][i32(3)], sky_0.inv_view_proj_0.data_0[i32(2)][i32(3)], sky_0.inv_view_proj_0.data_0[i32(3)][i32(3)]))));
+    var farP_0 : vec4<f32> = (((vec4<f32>(_S1.ndc_1, 1.0f, 1.0f)) * (mat4x4<f32>(sky_0.inv_view_proj_0.data_0[i32(0)][i32(0)], sky_0.inv_view_proj_0.data_0[i32(1)][i32(0)], sky_0.inv_view_proj_0.data_0[i32(2)][i32(0)], sky_0.inv_view_proj_0.data_0[i32(3)][i32(0)], sky_0.inv_view_proj_0.data_0[i32(0)][i32(1)], sky_0.inv_view_proj_0.data_0[i32(1)][i32(1)], sky_0.inv_view_proj_0.data_0[i32(2)][i32(1)], sky_0.inv_view_proj_0.data_0[i32(3)][i32(1)], sky_0.inv_view_proj_0.data_0[i32(0)][i32(2)], sky_0.inv_view_proj_0.data_0[i32(1)][i32(2)], sky_0.inv_view_proj_0.data_0[i32(2)][i32(2)], sky_0.inv_view_proj_0.data_0[i32(3)][i32(2)], sky_0.inv_view_proj_0.data_0[i32(0)][i32(3)], sky_0.inv_view_proj_0.data_0[i32(1)][i32(3)], sky_0.inv_view_proj_0.data_0[i32(2)][i32(3)], sky_0.inv_view_proj_0.data_0[i32(3)][i32(3)]))));
+    var dir_0 : vec3<f32> = normalize(farP_0.xyz / vec3<f32>(farP_0.w) - nearP_0.xyz / vec3<f32>(nearP_0.w));
+    const zenith_0 : vec3<f32> = vec3<f32>(0.09000000357627869f, 0.15999999642372131f, 0.34999999403953552f);
+    const horizon_0 : vec3<f32> = vec3<f32>(0.55000001192092896f, 0.62000000476837158f, 0.72000002861022949f);
+    const ground_0 : vec3<f32> = vec3<f32>(0.18000000715255737f, 0.15999999642372131f, 0.15000000596046448f);
+    var _S2 : f32 = dir_0.y;
+    var color_0 : vec3<f32>;
+    if(_S2 >= 0.0f)
+    {
+        color_0 = mix(horizon_0, zenith_0, vec3<f32>(pow(clamp(_S2, 0.0f, 1.0f), 0.69999998807907104f)));
     }
-
-    let l = normalize(sky.light_dir_intensity.xyz);
-    let cos_sun = max(dot(dir, l), 0.0);
-    // Sharp HDR sun disk + soft haze around it.
-    let sun = pow(cos_sun, 1200.0) * 24.0 + pow(cos_sun, 48.0) * 0.5;
-    color += vec3<f32>(1.0, 0.95, 0.85) * sun * (sky.light_dir_intensity.w * 0.4);
-
-    return vec4<f32>(color, 1.0);
+    else
+    {
+        color_0 = mix(horizon_0, ground_0, vec3<f32>(clamp(- _S2 * 3.0f, 0.0f, 1.0f)));
+    }
+    var _S3 : f32 = max(dot(dir_0, normalize(sky_0.light_dir_intensity_0.xyz)), 0.0f);
+    var _S4 : pixelOutput_0 = pixelOutput_0( vec4<f32>(color_0 + vec3<f32>(1.0f, 0.94999998807907104f, 0.85000002384185791f) * vec3<f32>((pow(_S3, 1200.0f) * 24.0f + pow(_S3, 48.0f) * 0.5f)) * vec3<f32>((sky_0.light_dir_intensity_0.w * 0.40000000596046448f)), 1.0f) );
+    return _S4;
 }
+
