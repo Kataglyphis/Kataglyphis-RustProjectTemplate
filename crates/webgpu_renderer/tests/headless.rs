@@ -671,14 +671,70 @@ fn reads_gltf_cameras() {
     assert_eq!(scene.cameras.len(), 1);
     let camera = &scene.cameras[0];
     assert_eq!(camera.name.as_deref(), Some("demo_cam"));
-    // The asset authors yfov as 0.7854 rad (45 deg).
-    assert!((camera.yfov_rad - std::f32::consts::FRAC_PI_4).abs() < 1e-3);
-    assert!((camera.znear - 0.1).abs() < 1e-6);
-    assert_eq!(camera.zfar, Some(100.0));
+    match camera.projection {
+        kataglyphis_webgpu_renderer::scene::CpuCameraProjection::Perspective {
+            yfov_rad,
+            znear,
+            zfar,
+        } => {
+            // The asset authors yfov as 0.7854 rad (45 deg).
+            assert!((yfov_rad - std::f32::consts::FRAC_PI_4).abs() < 1e-3);
+            assert!((znear - 0.1).abs() < 1e-6);
+            assert_eq!(zfar, Some(100.0));
+        }
+        other => panic!("expected a perspective camera, got {other:?}"),
+    }
     // Its node must exist and sit where the asset places it.
     let world = kataglyphis_webgpu_renderer::CpuScene::compute_world_transforms(&scene.nodes);
     let position = world[camera.node].transform_point3(glam::Vec3::ZERO);
     assert!((position - glam::Vec3::new(0.0, 1.0, 5.0)).length() < 1e-4);
+}
+
+#[test]
+fn reads_orthographic_gltf_cameras() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/assets/cube_ortho_camera.gltf");
+    let scene = load_gltf(&path).expect("cube_ortho_camera.gltf must load");
+    assert_eq!(scene.cameras.len(), 1);
+    let camera = &scene.cameras[0];
+    assert_eq!(camera.name.as_deref(), Some("demo_ortho_cam"));
+    match camera.projection {
+        kataglyphis_webgpu_renderer::scene::CpuCameraProjection::Orthographic {
+            xmag,
+            ymag,
+            znear,
+            zfar,
+        } => {
+            assert!((xmag - 2.5).abs() < 1e-6);
+            assert!((ymag - 1.5).abs() < 1e-6);
+            assert!((znear - 0.1).abs() < 1e-6);
+            assert!((zfar - 100.0).abs() < 1e-6);
+        }
+        other => panic!("expected an orthographic camera, got {other:?}"),
+    }
+    let world = kataglyphis_webgpu_renderer::CpuScene::compute_world_transforms(&scene.nodes);
+    let position = world[camera.node].transform_point3(glam::Vec3::ZERO);
+    assert!((position - glam::Vec3::new(0.0, 1.0, 5.0)).length() < 1e-4);
+}
+
+#[test]
+fn orthographic_projection_matrix_is_finite_and_maps_near_far_to_expected_depth() {
+    use kataglyphis_webgpu_renderer::scene::CpuCameraProjection;
+
+    let projection = CpuCameraProjection::Orthographic {
+        xmag: 2.5,
+        ymag: 1.5,
+        znear: 0.1,
+        zfar: 100.0,
+    };
+    let matrix = projection.matrix(1.777);
+    assert!(matrix.to_cols_array().iter().all(|v| v.is_finite()));
+
+    // WebGPU/wgpu clip space: near maps to NDC z=0, far maps to NDC z=1.
+    let near_ndc = matrix.project_point3(glam::Vec3::new(0.0, 0.0, -0.1));
+    let far_ndc = matrix.project_point3(glam::Vec3::new(0.0, 0.0, -100.0));
+    assert!((near_ndc.z - 0.0).abs() < 1e-4);
+    assert!((far_ndc.z - 1.0).abs() < 1e-4);
 }
 
 #[test]

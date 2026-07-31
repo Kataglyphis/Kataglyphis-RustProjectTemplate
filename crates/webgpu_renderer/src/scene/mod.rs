@@ -276,16 +276,55 @@ pub struct CpuAnimation {
     pub channels: Vec<CpuAnimationChannel>,
 }
 
+/// A camera's projection, exactly as glTF 2.0 §5.16 defines it. Kept as an
+/// enum rather than a shared perspective-shaped struct so an orthographic
+/// camera cannot be represented as a fake perspective one.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CpuCameraProjection {
+    Perspective {
+        yfov_rad: f32,
+        znear: f32,
+        /// `None` for an infinite projection.
+        zfar: Option<f32>,
+    },
+    Orthographic {
+        xmag: f32,
+        ymag: f32,
+        znear: f32,
+        zfar: f32,
+    },
+}
+
+impl CpuCameraProjection {
+    /// Right-handed, `[0,1]`-depth-range projection matrix matching the
+    /// WebGPU clip space `OrbitCamera::projection` already produces.
+    pub fn matrix(&self, aspect_ratio: f32) -> Mat4 {
+        match *self {
+            CpuCameraProjection::Perspective {
+                yfov_rad,
+                znear,
+                zfar,
+            } => match zfar {
+                Some(zfar) => Mat4::perspective_rh(yfov_rad, aspect_ratio, znear, zfar),
+                None => Mat4::perspective_infinite_rh(yfov_rad, aspect_ratio, znear),
+            },
+            CpuCameraProjection::Orthographic {
+                xmag,
+                ymag,
+                znear,
+                zfar,
+            } => Mat4::orthographic_rh(-xmag, xmag, -ymag, ymag, znear, zfar),
+        }
+    }
+}
+
 /// A camera authored in the glTF file.
 #[derive(Clone, Debug)]
 pub struct CpuCamera {
     pub name: Option<String>,
     /// Index into `CpuScene::nodes` (its world transform is the camera pose).
     pub node: usize,
-    pub yfov_rad: f32,
-    pub znear: f32,
-    /// `None` for an infinite projection.
-    pub zfar: Option<f32>,
+    pub projection: CpuCameraProjection,
 }
 
 /// A glTF skin: joint nodes plus their inverse bind matrices.
