@@ -117,6 +117,10 @@ struct GpuPrimitive {
     /// skinned/morphed pose.
     pre_instance_aabb: (Vec3, Vec3),
     model: Mat4,
+    /// Cached `normal_matrix_of(model)`. Recomputed only at the sites that
+    /// change `model` (upload, `set_animation_time`) instead of once per
+    /// primitive per frame in the uniform-write loop.
+    normal_matrix: Mat4,
     base_color: [f32; 4],
     material_factors: [f32; 4],
     emissive_factor: [f32; 4],
@@ -156,6 +160,11 @@ struct GpuPrimitive {
     /// Set when `morph_weights` changed and the vertex buffer needs re-blending
     /// on the next render. Starts true so non-zero default weights apply once.
     morph_dirty: bool,
+    /// Set when `model`/`normal_matrix` or any other `PrimUniforms` field
+    /// changed and the uniform buffer needs re-uploading. Starts true so the
+    /// first frame always writes. `set_instances` does NOT set this: instance
+    /// transforms live in a separate per-instance buffer, not `PrimUniforms`.
+    uniforms_dirty: bool,
 }
 
 impl GpuPrimitive {
@@ -1612,6 +1621,7 @@ impl ForwardRenderer {
                 instance_transforms: Vec::new(),
                 pre_instance_aabb: prim_bounds,
                 model: prim.transform,
+                normal_matrix: normal_matrix_of(prim.transform),
                 base_color: material.base_color,
                 material_factors: [
                     material.metallic_factor,
@@ -1672,6 +1682,7 @@ impl ForwardRenderer {
                 // Apply once up front so non-zero mesh default weights show
                 // even before any animation channel drives them.
                 morph_dirty: has_morph && prim.morph_weights.iter().any(|w| *w != 0.0),
+                uniforms_dirty: true,
             });
         }
         self.uploaded_texture_count = uploaded_textures;
@@ -1841,10 +1852,13 @@ impl ForwardRenderer {
             self.tile_counts = (tx, ty);
         }
 
-        for prim in &self.primitives {
+        for prim in &mut self.primitives {
+            if !prim.uniforms_dirty {
+                continue;
+            }
             let prim_uniforms = PrimUniforms {
                 model: prim.model.to_cols_array_2d(),
-                normal_matrix: normal_matrix_of(prim.model).to_cols_array_2d(),
+                normal_matrix: prim.normal_matrix.to_cols_array_2d(),
                 base_color: prim.base_color,
                 material_factors: prim.material_factors,
                 emissive_factor: prim.emissive_factor,
@@ -1864,6 +1878,7 @@ impl ForwardRenderer {
             };
             gpu.queue
                 .write_buffer(&prim.uniform_buffer, 0, bytemuck::bytes_of(&prim_uniforms));
+            prim.uniforms_dirty = false;
         }
 
         // The frame's pass wiring is declared in render::graph and validated
@@ -2541,6 +2556,8 @@ impl ForwardRenderer {
             if let Some(node) = prim.node_index {
                 if let Some(m) = world.get(node) {
                     prim.model = *m;
+                    prim.normal_matrix = normal_matrix_of(*m);
+                    prim.uniforms_dirty = true;
                     let mut bounds =
                         transform_aabb(*m, prim.local_aabb_min, prim.local_aabb_max);
                     if let Some(skin) = prim.skin_index.and_then(|s| self.skins.get(s)) {
@@ -3778,6 +3795,48 @@ mod tests {
         let ok = Mat4::from_scale(Vec3::new(2.0, 1.0, 1.0));
         let expected = ok.inverse().transpose();
         assert!((normal_matrix_of(ok) - expected).abs_diff_eq(Mat4::ZERO, 1e-6));
+    }
+
+    #[test]
+    fn set_animation_time_recomputes_and_dirties_the_cached_normal_matrix() {
+        let Ok(gpu) = GpuContext::new_headless() else {
+            eprintln!("SKIP: no GPU adapter available in this environment");
+            return;
+        };
+
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/assets/cube_animated.gltf");
+        let scene = crate::load_gltf(&path).expect("cube_animated.gltf must load");
+        let mut renderer = ForwardRenderer::new(&gpu, 4, 4);
+        renderer.upload_scene(&gpu, &scene);
+        assert!(
+            renderer.primitives.iter().any(|p| p.node_index.is_some()),
+            "cube_animated.gltf must have at least one node-driven primitive"
+        );
+
+        // Simulate "already uploaded this frame": the next set_animation_time
+        // call is then the only thing that can re-dirty the flag.
+        for prim in &mut renderer.primitives {
+            prim.uniforms_dirty = false;
+        }
+
+        renderer.set_animation_time(1.0);
+
+        for prim in &renderer.primitives {
+            if prim.node_index.is_none() {
+                continue;
+            }
+            assert!(
+                prim.uniforms_dirty,
+                "an animated primitive's model changed, so its uniforms must be re-marked dirty"
+            );
+            let expected = normal_matrix_of(prim.model);
+            assert!(prim.normal_matrix.is_finite(), "cached normal matrix must stay finite");
+            assert!(
+                (prim.normal_matrix - expected).abs_diff_eq(Mat4::ZERO, 1e-6),
+                "cached normal matrix must match a fresh computation from the current model"
+            );
+        }
     }
 
     #[test]
