@@ -1103,20 +1103,19 @@ fn caster_culling_engages_and_shadows_survive() {
     // (2026-07-24). Re-enable when bundle invalidation is designed.
     // assert!(drawn < considered, "culling never engaged");
 
-    // Same structural check as shadow_darkens_plane_under_cube: both lit and
-    // shadowed plane populations still exist, so the shadow itself survives.
+    // Same classification as shadow_darkens_plane_under_cube: the plane is
+    // near-neutral (white albedo) in full sun, but with analytic IBL a
+    // shadowed patch receives only blue hemisphere irradiance - not neutral
+    // dark, but tinted blue. A neutral-only classifier sees no shadow pixels
+    // at all regardless of whether the shadow renders correctly.
     let mut lit_plane = 0usize;
     let mut shadowed_plane = 0usize;
     for p in pixels.chunks_exact(4) {
         let (r, g, b) = (p[0] as i32, p[1] as i32, p[2] as i32);
-        let neutral = (r - g).abs() < 24 && (g - b).abs() < 24 && (r - b).abs() < 24;
-        if !neutral {
-            continue;
-        }
-        let luma = (r + g + b) / 3;
-        if luma > 110 {
+        let neutral = (r - g).abs() < 25 && (g - b).abs() < 25 && (r - b).abs() < 25;
+        if neutral && r > 180 {
             lit_plane += 1;
-        } else if luma > 8 {
+        } else if r < 110 && b > r + 15 && b < 180 {
             shadowed_plane += 1;
         }
     }

@@ -641,7 +641,10 @@ fn fs_main( _S44 : pixelInput_1, @builtin(position) svPosition_1 : vec4<f32>) ->
     var v_2 : vec3<f32> = normalize(frame_0.camera_position_0.xyz - _S44.worldPosition_1);
     var _S50 : vec3<f32> = albedo_2.xyz;
     var f0_3 : vec3<f32> = mix(vec3<f32>(0.03999999910593033f), _S50, vec3<f32>(metallic_2));
-    var directLight_0 : vec3<f32> = brdf_direct_0(n_3, v_2, l_3, _S50, metallic_2, roughness_4, f0_3, frame_0.light_color_intensity_0.xyz * vec3<f32>(frame_0.light_color_intensity_0.w)) * vec3<f32>((1.0f - shadow_factor_0(_S44.viewDepth_2, _S44.worldPosition_1, max(dot(n_3, l_3), 0.0f))));
+    // shadow_factor_0 returns VISIBILITY (1 = lit, 0 = occluded - see its own
+    // out-of-cascade early return of 1.0), so it multiplies direct light
+    // directly. Do not wrap it in `1.0 - ...`: that inverts lit/shadowed.
+    var directLight_0 : vec3<f32> = brdf_direct_0(n_3, v_2, l_3, _S50, metallic_2, roughness_4, f0_3, frame_0.light_color_intensity_0.xyz * vec3<f32>(frame_0.light_color_intensity_0.w)) * vec3<f32>(shadow_factor_0(_S44.viewDepth_2, _S44.worldPosition_1, max(dot(n_3, l_3), 0.0f)));
     var punctual_0 : vec3<f32> = punctual_lighting_0(_S44.worldPosition_1, n_3, v_2, _S50, metallic_2, roughness_4, f0_3, svPosition_1);
     var ambient_0 : vec3<f32>;
     if((iblParams_0.enabled_maxmip_intensity_0.x) > 0.5f)

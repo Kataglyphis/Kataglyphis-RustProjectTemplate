@@ -37,12 +37,17 @@ impl Vertex {
     pub const LAYOUT: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
         array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
         step_mode: wgpu::VertexStepMode::Vertex,
-        // Vertex attrs 0-7 (6 = colour, 7 = uv1); the instance buffer starts
-        // at 8 (@location is a single shader-global space across all bound
-        // vertex buffers, so the two must not collide).
+        // These @location numbers must match forward.wgsl's vertexInput_0/1/2
+        // structs exactly (position=0, uv1=1, normal=4, uv=5, tangent=6,
+        // joints=7, weights=8, color=9) - that layout comes from the Slang
+        // WGSL backend's own attribute assignment, not the field order below.
+        // The entries here must stay in FIELD order (position, normal, uv,
+        // tangent, joints, weights, color, uv1) since vertex_attr_array
+        // derives each attribute's byte offset from its position in this
+        // list, not from the @location number attached to it.
         attributes: &wgpu::vertex_attr_array![
-            0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4,
-            4 => Float32x4, 5 => Float32x4, 6 => Float32x4, 7 => Float32x2
+            0 => Float32x3, 4 => Float32x3, 5 => Float32x2, 6 => Float32x4,
+            7 => Float32x4, 8 => Float32x4, 9 => Float32x4, 1 => Float32x2
         ],
     };
 }
@@ -62,8 +67,10 @@ impl InstanceRaw {
         array_stride: std::mem::size_of::<InstanceRaw>() as wgpu::BufferAddress,
         // The whole point: advance once per INSTANCE, not per vertex.
         step_mode: wgpu::VertexStepMode::Instance,
-        // Locations 8-11: vertex attrs occupy 0-7 (colour 6, uv1 7).
-        attributes: &wgpu::vertex_attr_array![8 => Float32x4, 9 => Float32x4, 10 => Float32x4, 11 => Float32x4],
+        // forward.wgsl assigns the four instance-matrix columns locations
+        // 10, 11, 2, 3 (in that order) - see the Vertex::LAYOUT comment above
+        // for why these numbers don't run sequentially.
+        attributes: &wgpu::vertex_attr_array![10 => Float32x4, 11 => Float32x4, 2 => Float32x4, 3 => Float32x4],
     };
 
     pub const IDENTITY: Self = Self {
