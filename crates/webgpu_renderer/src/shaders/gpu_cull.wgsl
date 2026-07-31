@@ -23,7 +23,7 @@ struct Aabb_std430_0
 
 @binding(3) @group(0) var<storage, read_write> visibility_0 : array<u32>;
 
-@binding(0) @group(0) var depthTex_0 : texture_2d<f32>;
+@binding(0) @group(0) var depthTex_0 : texture_depth_2d;
 
 @compute
 @workgroup_size(64, 1, 1)
@@ -89,7 +89,7 @@ fn cs_main(@builtin(global_invocation_id) gid_0 : vec3<u32>)
     {var dim = textureDimensions((depthTex_0));((w_0)) = dim.x;((h_0)) = dim.y;};
     var _S5 : vec3<i32> = vec3<i32>(vec2<i32>(uv_0 * vec2<f32>(f32(w_0), f32(h_0))), i32(0));
     var _S6 : u32;
-    if(depth_0 <= (textureLoad((depthTex_0), ((_S5)).xy, ((_S5)).z).x))
+    if(depth_0 <= (textureLoad((depthTex_0), ((_S5)).xy, ((_S5)).z)))
     {
         _S6 = u32(1);
     }

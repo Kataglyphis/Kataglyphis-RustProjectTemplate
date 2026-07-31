@@ -1,4 +1,4 @@
-@binding(0) @group(0) var msaaDepth_0 : texture_multisampled_2d<f32>;
+@binding(0) @group(0) var msaaDepth_0 : texture_depth_multisampled_2d;
 
 struct FullscreenVsOut_0
 {
@@ -45,7 +45,7 @@ fn fs_main( _S1 : pixelInput_0, @builtin(position) svPosition_1 : vec4<f32>) -> 
         {
             break;
         }
-        var _S3 : f32 = min(minDepth_0, (textureLoad((msaaDepth_0), (_S2), (i32(i_0))).x));
+        var _S3 : f32 = min(minDepth_0, (textureLoad((msaaDepth_0), (_S2), (i32(i_0)))));
         var _S4 : u32 = i_0 + u32(1);
         minDepth_0 = _S3;
         i_0 = _S4;

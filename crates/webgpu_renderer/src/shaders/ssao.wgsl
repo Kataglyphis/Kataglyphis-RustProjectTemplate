@@ -1,4 +1,4 @@
-@binding(0) @group(0) var depthTex_0 : texture_2d<f32>;
+@binding(0) @group(0) var depthTex_0 : texture_depth_2d;
 
 struct _MatrixStorage_float4x4_ColMajorstd140_0
 {
@@ -44,7 +44,7 @@ fn load_depth_0( uv_1 : vec2<f32>) -> f32
     var h_0 : u32;
     {var dim = textureDimensions((depthTex_0));((w_0)) = dim.x;((h_0)) = dim.y;};
     var _S1 : vec3<i32> = vec3<i32>(clamp(vec2<i32>(uv_1 * vec2<f32>(f32(w_0), f32(h_0))), vec2<i32>(i32(0), i32(0)), vec2<i32>(i32(w_0), i32(h_0)) - vec2<i32>(i32(1))), i32(0));
-    return (textureLoad((depthTex_0), ((_S1)).xy, ((_S1)).z).x);
+    return (textureLoad((depthTex_0), ((_S1)).xy, ((_S1)).z));
 }
 
 fn view_pos_at_0( uv_2 : vec2<f32>,  depth_0 : f32) -> vec3<f32>

@@ -24,7 +24,14 @@ struct vertexInput_0
 @vertex
 fn vs_main( _S1 : vertexInput_0, @builtin(vertex_index) vertexIndex_0 : u32) -> vertexOutput_0
 {
-    var _S2 : vertexOutput_0 = vertexOutput_0( (((vec4<f32>(mix(_S1.aabb_min_0, _S1.aabb_max_0, vec3<f32>(f32(((corners_0[vertexIndex_0]) & (u32(1)))), f32(((((corners_0[vertexIndex_0]) >> (u32(1)))) & (u32(1)))), f32(((((corners_0[vertexIndex_0]) >> (u32(2)))) & (u32(1)))))), 1.0f)) * (mat4x4<f32>(uniforms_0.view_proj_0.data_0[i32(0)][i32(0)], uniforms_0.view_proj_0.data_0[i32(1)][i32(0)], uniforms_0.view_proj_0.data_0[i32(2)][i32(0)], uniforms_0.view_proj_0.data_0[i32(3)][i32(0)], uniforms_0.view_proj_0.data_0[i32(0)][i32(1)], uniforms_0.view_proj_0.data_0[i32(1)][i32(1)], uniforms_0.view_proj_0.data_0[i32(2)][i32(1)], uniforms_0.view_proj_0.data_0[i32(3)][i32(1)], uniforms_0.view_proj_0.data_0[i32(0)][i32(2)], uniforms_0.view_proj_0.data_0[i32(1)][i32(2)], uniforms_0.view_proj_0.data_0[i32(2)][i32(2)], uniforms_0.view_proj_0.data_0[i32(3)][i32(2)], uniforms_0.view_proj_0.data_0[i32(0)][i32(3)], uniforms_0.view_proj_0.data_0[i32(1)][i32(3)], uniforms_0.view_proj_0.data_0[i32(2)][i32(3)], uniforms_0.view_proj_0.data_0[i32(3)][i32(3)])))) );
+    var margin_0 : vec3<f32> = (_S1.aabb_max_0 - _S1.aabb_min_0) * vec3<f32>(0.5f) * vec3<f32>(0.01999999955296516f) + vec3<f32>(0.00999999977648258f);
+    var _S2 : vertexOutput_0 = vertexOutput_0( (((vec4<f32>(mix(_S1.aabb_min_0 - margin_0, _S1.aabb_max_0 + margin_0, vec3<f32>(f32(((corners_0[vertexIndex_0]) & (u32(1)))), f32(((((corners_0[vertexIndex_0]) >> (u32(1)))) & (u32(1)))), f32(((((corners_0[vertexIndex_0]) >> (u32(2)))) & (u32(1)))))), 1.0f)) * (mat4x4<f32>(uniforms_0.view_proj_0.data_0[i32(0)][i32(0)], uniforms_0.view_proj_0.data_0[i32(1)][i32(0)], uniforms_0.view_proj_0.data_0[i32(2)][i32(0)], uniforms_0.view_proj_0.data_0[i32(3)][i32(0)], uniforms_0.view_proj_0.data_0[i32(0)][i32(1)], uniforms_0.view_proj_0.data_0[i32(1)][i32(1)], uniforms_0.view_proj_0.data_0[i32(2)][i32(1)], uniforms_0.view_proj_0.data_0[i32(3)][i32(1)], uniforms_0.view_proj_0.data_0[i32(0)][i32(2)], uniforms_0.view_proj_0.data_0[i32(1)][i32(2)], uniforms_0.view_proj_0.data_0[i32(2)][i32(2)], uniforms_0.view_proj_0.data_0[i32(3)][i32(2)], uniforms_0.view_proj_0.data_0[i32(0)][i32(3)], uniforms_0.view_proj_0.data_0[i32(1)][i32(3)], uniforms_0.view_proj_0.data_0[i32(2)][i32(3)], uniforms_0.view_proj_0.data_0[i32(3)][i32(3)])))) );
     return _S2;
+}
+
+@fragment
+fn fs_main()
+{
+    return;
 }
 

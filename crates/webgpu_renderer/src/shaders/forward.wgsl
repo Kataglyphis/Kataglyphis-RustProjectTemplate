@@ -57,7 +57,7 @@ struct FrameUniforms_std140_0
 
 @binding(12) @group(0) var occlusionSampler_0 : sampler;
 
-@binding(1) @group(0) var shadowMap_0 : texture_2d_array<f32>;
+@binding(1) @group(0) var shadowMap_0 : texture_depth_2d_array;
 
 @binding(2) @group(0) var shadowSampler_0 : sampler_comparison;
 
@@ -563,7 +563,7 @@ struct pixelInput_1
 };
 
 @fragment
-fn fs_main( _S44 : pixelInput_1, @builtin(position) fragCoord_1 : vec4<f32>, @builtin(position) svPosition_1 : vec4<f32>) -> pixelOutput_0
+fn fs_main( _S44 : pixelInput_1, @builtin(position) svPosition_1 : vec4<f32>) -> pixelOutput_0
 {
     var uvMask_0 : u32 = u32(prim_0.material_flags_0.y);
     var baseIn_0 : vec2<f32>;
@@ -642,7 +642,7 @@ fn fs_main( _S44 : pixelInput_1, @builtin(position) fragCoord_1 : vec4<f32>, @bu
     var _S50 : vec3<f32> = albedo_2.xyz;
     var f0_3 : vec3<f32> = mix(vec3<f32>(0.03999999910593033f), _S50, vec3<f32>(metallic_2));
     var directLight_0 : vec3<f32> = brdf_direct_0(n_3, v_2, l_3, _S50, metallic_2, roughness_4, f0_3, frame_0.light_color_intensity_0.xyz * vec3<f32>(frame_0.light_color_intensity_0.w)) * vec3<f32>((1.0f - shadow_factor_0(_S44.viewDepth_2, _S44.worldPosition_1, max(dot(n_3, l_3), 0.0f))));
-    var punctual_0 : vec3<f32> = punctual_lighting_0(_S44.worldPosition_1, n_3, v_2, _S50, metallic_2, roughness_4, f0_3, fragCoord_1);
+    var punctual_0 : vec3<f32> = punctual_lighting_0(_S44.worldPosition_1, n_3, v_2, _S50, metallic_2, roughness_4, f0_3, svPosition_1);
     var ambient_0 : vec3<f32>;
     if((iblParams_0.enabled_maxmip_intensity_0.x) > 0.5f)
     {

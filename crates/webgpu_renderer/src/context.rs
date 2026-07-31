@@ -193,11 +193,29 @@ async fn request_device(
     if supports_timestamps {
         required_features |= wgpu::Features::TIMESTAMP_QUERY;
     }
+
+    // forward.wgsl binds 5 distinct groups (material, IBL, frame, punctual
+    // lights, tiled light grid), one past wgpu::Limits::default()'s
+    // max_bind_groups of 4 - create_shader_module rejects the module outright
+    // ("uses a group index 4 that exceeds the max_bind_groups limit of 4")
+    // before any pipeline is built. Native desktop adapters report far more
+    // (8+); request what the adapter actually offers there. The WebGPU spec
+    // caps browsers at 4 regardless of what is requested, so wasm32 keeps the
+    // spec default and stays exactly as constrained as before.
+    let mut required_limits = wgpu::Limits::default();
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        // Request exactly what the adapter reports so this can never itself
+        // cause request_device to fail (a value above the adapter's own
+        // maximum is rejected).
+        required_limits.max_bind_groups = adapter.limits().max_bind_groups;
+    }
+
     adapter
         .request_device(&wgpu::DeviceDescriptor {
             label: Some("webgpu_renderer_device"),
             required_features,
-            required_limits: wgpu::Limits::default(),
+            required_limits,
             memory_hints: wgpu::MemoryHints::default(),
             trace: wgpu::Trace::default(),
             experimental_features: wgpu::ExperimentalFeatures::default(),
