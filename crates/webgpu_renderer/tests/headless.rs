@@ -1000,10 +1000,14 @@ fn growing_the_instance_count_reallocates_correctly() {
 /// outside every cascade (culling actually engaged - without this, an inert
 /// cull test would pass forever).
 ///
-/// DISABLED assertion 2026-07-24: the shadow pass now records a single
-/// RenderBundle and replays it 3×. Per-cascade caster culling is disabled
-/// during this transition and will be re-enabled with bundle-invalidation
-/// logic (see forward.rs shadow pass). Until then, drawn == considered.
+/// DISABLED assertion 2026-07-24: the shadow pass records a single
+/// RenderBundle (now cached across frames, not just across cascades within
+/// one - see `shadow_caster_bundle_is_cached_across_frames` below) and
+/// replays it once per cascade. Per-cascade caster culling stays disabled: a
+/// culled draw set differs per cascade and per camera move, which the single
+/// cached bundle can't represent. Re-enabling it (per-cascade bundles, or
+/// union-frustum culling with camera-move invalidation) is a follow-up
+/// decision, not this change. Until then, drawn == considered.
 /// The structural shadow check below still proves the shadow itself survives.
 #[test]
 fn caster_culling_engages_and_shadows_survive() {
@@ -1064,6 +1068,53 @@ fn caster_culling_engages_and_shadows_survive() {
     assert!(
         shadowed_plane > 50,
         "the cube's shadow vanished - culling ate a visible caster ({shadowed_plane} shadowed px)"
+    );
+}
+
+/// The shadow-caster `RenderBundle` is cached across frames, not rebuilt
+/// every frame: `None` right after `upload_scene`, `Some` after the first
+/// frame records it, and STILL `Some` (not rebuilt) after `set_animation_time`
+/// - an animated pose only rewrites vertex/uniform buffer contents via
+/// `write_buffer`, which a bundle already captures by reference, so it must
+/// not invalidate the cache. If a future change accidentally cleared the
+/// cache on every frame, this test would still pass on the `None` check but
+/// fail the "still `Some`" one; if invalidation broke and animation changes
+/// were never picked up, `animation_moves_the_cube` above would catch that.
+#[test]
+fn shadow_caster_bundle_is_cached_across_frames() {
+    let Ok(gpu) = GpuContext::new_headless() else {
+        eprintln!("SKIP: no GPU adapter available in this environment");
+        return;
+    };
+
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_animated.gltf");
+    let scene = load_gltf(&path).expect("cube_animated.gltf must load");
+
+    let (width, height) = (64, 64);
+    let mut renderer = ForwardRenderer::new(&gpu, width, height);
+    renderer.upload_scene(&gpu, &scene);
+    assert!(
+        !renderer.shadow_caster_bundle_is_cached(),
+        "upload_scene must invalidate any previously cached bundle"
+    );
+
+    renderer
+        .render_to_pixels(&gpu, width, height, &OrbitCamera::default())
+        .expect("first render must succeed");
+    assert!(
+        renderer.shadow_caster_bundle_is_cached(),
+        "the first frame after upload_scene must record and cache the bundle"
+    );
+
+    renderer.set_animation_time(1.0);
+    renderer
+        .render_to_pixels(&gpu, width, height, &OrbitCamera::default())
+        .expect("render after set_animation_time must succeed");
+    assert!(
+        renderer.shadow_caster_bundle_is_cached(),
+        "set_animation_time only rewrites buffer contents, not identity - \
+         the cached bundle must survive it"
     );
 }
 

@@ -397,6 +397,22 @@ pub struct ForwardRenderer {
     occlusion_considered: u32,
     shadow_casters_drawn: u32,
     shadow_casters_considered: u32,
+    /// The shadow-caster draw list, recorded once and replayed for every
+    /// cascade. `None` means the next frame must re-record it; invalidated
+    /// wherever the draw set or a captured buffer's identity can change
+    /// (`upload_scene`, an `instance_buffer` reallocation in `set_instances`).
+    /// A per-frame `write_buffer` into an already-captured buffer (animation,
+    /// morph targets, `PrimUniforms`) does NOT invalidate: bundles capture
+    /// buffer references, not contents, so those updates flow through
+    /// unchanged. LOD level switches don't invalidate either: the shadow pass
+    /// always draws the full-resolution `vertex_buffer`/`index_buffer`
+    /// (`geometry_for`'s LOD selection is only read by the camera pass), so a
+    /// LOD switch never changes what this bundle references.
+    shadow_caster_bundle: Option<wgpu::RenderBundle>,
+    /// Caster count baked into `shadow_caster_bundle`, cached alongside it so
+    /// the stat counters stay correct on frames that reuse the bundle instead
+    /// of re-walking `primitives`.
+    shadow_caster_count: u32,
     primitives: Vec<GpuPrimitive>,
     scene_bounds: Option<(Vec3, Vec3)>,
     /// GPU textures actually created by the last `upload_scene` (shared images
@@ -1013,6 +1029,8 @@ impl ForwardRenderer {
             occlusion_considered: 0,
             shadow_casters_drawn: 0,
             shadow_casters_considered: 0,
+            shadow_caster_bundle: None,
+            shadow_caster_count: 0,
             cascade_splits: [10.0, 30.0, CASCADE_COUNT as f32, 0.0],
             primitives: Vec::new(),
             gpu_timing: GpuTiming::unavailable(),
@@ -1105,6 +1123,10 @@ impl ForwardRenderer {
                         contents: bytes,
                         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                     });
+            // The bundle captured the old instance_buffer by reference; a
+            // same-size update above just writes into it and stays valid, but
+            // this replaced the buffer object outright.
+            self.shadow_caster_bundle = None;
         }
         primitive.instance_count = raw.len() as u32;
         // Culling bounds must span every instance, not just the base position.
@@ -1208,6 +1230,15 @@ impl ForwardRenderer {
     /// per-cascade culling actually engaged.
     pub fn shadow_caster_stats(&self) -> (u32, u32) {
         (self.shadow_casters_drawn, self.shadow_casters_considered)
+    }
+
+    /// Whether the shadow-caster `RenderBundle` is currently cached. `false`
+    /// right after construction/`upload_scene`/an `instance_buffer`
+    /// reallocation; `true` again once a frame has rebuilt it. Exposed so
+    /// tests can pin the cache/invalidate contract directly instead of
+    /// inferring it from render output.
+    pub fn shadow_caster_bundle_is_cached(&self) -> bool {
+        self.shadow_caster_bundle.is_some()
     }
 
     /// Opaque primitives drawn / considered by the camera pass last frame.
@@ -1320,6 +1351,9 @@ impl ForwardRenderer {
     pub fn upload_scene(&mut self, gpu: &GpuContext, scene: &CpuScene) {
         let device = &gpu.device;
         self.primitives.clear();
+        // The whole draw set is being replaced; any cached bundle references
+        // buffers that are about to be dropped.
+        self.shadow_caster_bundle = None;
         // Per-index occlusion visibility is only valid for the primitive list it
         // was measured against; a new scene must not inherit it (a smaller scene
         // would see stale culls at shared indices).
@@ -1901,70 +1935,82 @@ impl ForwardRenderer {
                 label: Some("forward_encoder"),
             });
         let shadow_scope = self.gpu_timing.scope(TimedPass::ShadowCascades);
-        let mut casters_considered = 0u32;
 
-        // Record the shadow-caster draw list once into a RenderBundle, then
-        // execute it once per cascade with only the cascade-index bind group
-        // changing. Without this the draw list was identically re-recorded
-        // three times per frame: at 1000 primitives, that is 3000 ×
-        // set_bind_group/set_vertex_buffer/set_index_buffer/draw_indexed calls
-        // the CPU was issuing every frame.
+        // Record the shadow-caster draw list once into a RenderBundle, cache
+        // it on `self`, and replay it for every cascade with only the
+        // cascade-index bind group changing. Without this the draw list was
+        // identically re-recorded three times per frame: at 1000 primitives,
+        // that is 3000 × set_bind_group/set_vertex_buffer/set_index_buffer/
+        // draw_indexed calls the CPU was issuing every frame. Caching across
+        // frames (not just across cascades within one frame) removes the
+        // re-record entirely on every frame that does not invalidate it - see
+        // the field doc on `shadow_caster_bundle` for exactly what does.
         //
         // Trade-off: per-cascade caster culling is disabled because the
         // bundle's draw list is baked at record time. Re-enable it when
         // culling-aware bundle invalidation is designed (record a fresh
-        // bundle when `{aabb,casts_shadow}` changes for any primitive).
-        // Until then the ~2× cascade cost the comparison harness measured
-        // is the dominant factor, and the bundle eliminates it.
-        let mut bundle_encoder =
-            gpu.device.create_render_bundle_encoder(&wgpu::RenderBundleEncoderDescriptor {
-                label: Some("shadow_casters"),
-                color_formats: &[],
-                depth_stencil: Some(wgpu::RenderBundleDepthStencil {
-                    format: wgpu::TextureFormat::Depth32Float,
-                    depth_read_only: false,
-                    stencil_read_only: true,
-                }),
-                sample_count: 1,
-                multiview: None,
-            });
-        // Pipeline and group 0 (per-primitive, includes uniforms+textures)
-        // are baked at record time. Groups 1 and 2 must also be set in the
-        // bundle for validation (the pipeline layout requires them), but the
-        // parent pass sets the per-cascade group 1 and shared group 2 before
-        // execute_bundles; the bundle's values at 1/2 are overwritten.
-        bundle_encoder.set_bind_group(1, &self.cascade_index_bind_groups[0], &[]);
-        bundle_encoder.set_bind_group(2, &self.frame_bind_group, &[]);
-        for prim in self.primitives.iter().filter(|p| p.casts_shadow) {
-            casters_considered += 1;
-            if let (true, Some(masked_group)) =
-                (prim.alpha_masked, prim.shadow_masked_bind_group.as_ref())
-            {
-                bundle_encoder.set_pipeline(&self.shadow_masked_pipeline);
-                bundle_encoder.set_bind_group(0, masked_group, &[]);
-            } else {
-                bundle_encoder.set_pipeline(&self.shadow_pipeline);
-                bundle_encoder.set_bind_group(0, &prim.shadow_bind_group, &[]);
+        // bundle when `{aabb,casts_shadow}` changes for any primitive, or when
+        // the camera moves far enough to change a union-frustum cull) - a
+        // follow-up decision, not this change. Until then the ~2× cascade
+        // cost the comparison harness measured is the dominant factor, and
+        // the bundle eliminates it.
+        if self.shadow_caster_bundle.is_none() {
+            let mut bundle_encoder =
+                gpu.device
+                    .create_render_bundle_encoder(&wgpu::RenderBundleEncoderDescriptor {
+                        label: Some("shadow_casters"),
+                        color_formats: &[],
+                        depth_stencil: Some(wgpu::RenderBundleDepthStencil {
+                            format: wgpu::TextureFormat::Depth32Float,
+                            depth_read_only: false,
+                            stencil_read_only: true,
+                        }),
+                        sample_count: 1,
+                        multiview: None,
+                    });
+            // Pipeline and group 0 (per-primitive, includes uniforms+textures)
+            // are baked at record time. Groups 1 and 2 must also be set in the
+            // bundle for validation (the pipeline layout requires them), but the
+            // parent pass sets the per-cascade group 1 and shared group 2 before
+            // execute_bundles; the bundle's values at 1/2 are overwritten.
+            bundle_encoder.set_bind_group(1, &self.cascade_index_bind_groups[0], &[]);
+            bundle_encoder.set_bind_group(2, &self.frame_bind_group, &[]);
+            let mut caster_count = 0u32;
+            for prim in self.primitives.iter().filter(|p| p.casts_shadow) {
+                caster_count += 1;
+                if let (true, Some(masked_group)) =
+                    (prim.alpha_masked, prim.shadow_masked_bind_group.as_ref())
+                {
+                    bundle_encoder.set_pipeline(&self.shadow_masked_pipeline);
+                    bundle_encoder.set_bind_group(0, masked_group, &[]);
+                } else {
+                    bundle_encoder.set_pipeline(&self.shadow_pipeline);
+                    bundle_encoder.set_bind_group(0, &prim.shadow_bind_group, &[]);
+                }
+                bundle_encoder.set_vertex_buffer(0, prim.vertex_buffer.slice(..));
+                bundle_encoder.set_vertex_buffer(1, prim.instance_buffer.slice(..));
+                bundle_encoder
+                    .set_index_buffer(prim.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                bundle_encoder.draw_indexed(0..prim.index_count, 0, 0..prim.instance_count);
             }
-            bundle_encoder.set_vertex_buffer(0, prim.vertex_buffer.slice(..));
-            bundle_encoder.set_vertex_buffer(1, prim.instance_buffer.slice(..));
-            bundle_encoder.set_index_buffer(prim.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            bundle_encoder.draw_indexed(0..prim.index_count, 0, 0..prim.instance_count);
+            self.shadow_caster_bundle =
+                Some(bundle_encoder.finish(&wgpu::RenderBundleDescriptor {
+                    label: Some("shadow_caster_bundle"),
+                }));
+            self.shadow_caster_count = caster_count;
         }
-        casters_considered /= CASCADE_COUNT as u32;
-        // caster_considered counts every primitive filtered through casts_shadow,
-        // once per cascade in the old loop; the bundle runs 3× so divide back.
-        let caster_bundle = bundle_encoder.finish(&wgpu::RenderBundleDescriptor {
-            label: Some("shadow_caster_bundle"),
-        });
+        let caster_bundle = self
+            .shadow_caster_bundle
+            .as_ref()
+            .expect("just built above when absent");
 
         for cascade in 0..CASCADE_COUNT {
-            // Cull casters against THIS cascade's light frustum - see historical
-            // note on the comparison harness: per-cascade culling is the
-            // difference between the two renderers on large scenes.
-            // (Culling is currently disabled with the bundle approach; the
-            // bundle draws 3× what it draws once.)
-            let _light_frustum = Frustum::from_view_proj(&self.cascade_matrices[cascade]);
+            // Per-cascade culling against this cascade's light frustum is
+            // deliberately NOT applied here: a culled draw set differs per
+            // cascade and per camera move, which is incompatible with one
+            // bundle cached across frames. Re-adding it (per-cascade bundles,
+            // or union-frustum culling with camera-move invalidation) is the
+            // follow-up decision noted above.
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("shadow_pass"),
                 color_attachments: &[],
@@ -1982,13 +2028,15 @@ impl ForwardRenderer {
             });
             pass.set_bind_group(1, &self.cascade_index_bind_groups[cascade], &[]);
             pass.set_bind_group(2, &self.frame_bind_group, &[]);
-            pass.execute_bundles(std::iter::once(&caster_bundle));
+            pass.execute_bundles(std::iter::once(caster_bundle));
         }
-        // With the bundle every caster is drawn in every cascade (no per-cascade
-        // culling yet), so drawn == considered; the culling test below uses the
-        // counter to detect engagement and won't engage until culling is re-added.
-        self.shadow_casters_drawn = casters_considered;
-        self.shadow_casters_considered = casters_considered;
+        // The bundle draws every caster it was built with in every cascade
+        // (no per-cascade culling), so drawn == considered by construction -
+        // that is now a true statement, not the divide-by-CASCADE_COUNT fudge
+        // this replaced. The culling test below uses the counter to detect
+        // engagement and won't engage until culling is re-added.
+        self.shadow_casters_drawn = self.shadow_caster_count;
+        self.shadow_casters_considered = self.shadow_caster_count;
         // Occlusion-cull stats, filled by the opaque loop below and read back
         // out to the fields once the pass (which borrows self) has ended.
         let mut occ_drawn = 0u32;
