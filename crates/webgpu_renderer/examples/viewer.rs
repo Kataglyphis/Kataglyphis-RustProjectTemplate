@@ -14,8 +14,8 @@ use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
 
 use kataglyphis_webgpu_renderer::{
-    load_gltf, ForwardRenderer, GpuContext, OrbitCamera, OrbitController, Overlay, OverlayControls,
-    TonemapPass,
+    ForwardRenderer, FrameClock, GpuContext, OrbitCamera, OrbitController, Overlay,
+    OverlayControls, TonemapPass, load_gltf,
 };
 
 struct Viewer {
@@ -29,6 +29,7 @@ struct Viewer {
     controller: OrbitController,
     camera: OrbitCamera,
     started: Instant,
+    frame_clock: FrameClock,
     frame: u64,
     shader_mtimes: Vec<(PathBuf, std::time::SystemTime)>,
 }
@@ -61,6 +62,7 @@ impl Viewer {
             controller: OrbitController::default(),
             camera: OrbitCamera::default(),
             started: Instant::now(),
+            frame_clock: FrameClock::new(),
             frame: 0,
             shader_mtimes: shader_mtimes(),
         }
@@ -173,6 +175,9 @@ impl Viewer {
         if renderer.has_animations() {
             renderer.set_animation_time(self.started.elapsed().as_secs_f32());
         }
+        renderer.frame_delta_seconds = self
+            .frame_clock
+            .tick_at(self.started.elapsed().as_secs_f64());
 
         // wgpu 29: get_current_texture returns a CurrentSurfaceTexture enum
         // instead of Result<_, SurfaceError>.

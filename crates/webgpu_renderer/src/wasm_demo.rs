@@ -16,6 +16,7 @@ use winit::window::{Window, WindowId};
 use crate::asset::gltf_loader::load_gltf_slice;
 use crate::context::GpuContext;
 use crate::render::forward::ForwardRenderer;
+use crate::render::frame_clock::FrameClock;
 use crate::render::overlay::{Overlay, OverlayControls};
 use crate::render::tonemap::TonemapPass;
 use crate::scene::camera::OrbitCamera;
@@ -101,6 +102,17 @@ fn install_drop_zone(document: &web_sys::Document, slot: DroppedScene) {
     on_drop.forget();
 }
 
+/// Monotonic wall-clock reading in seconds, for [`FrameClock::tick_at`].
+/// `std::time::Instant` panics on wasm32-unknown-unknown; `Performance::now()`
+/// (already available via the `web-sys` dependency) is the browser's
+/// equivalent, in milliseconds since the navigation start.
+fn performance_now_seconds() -> f64 {
+    web_sys::window()
+        .and_then(|w| w.performance())
+        .map(|p| p.now() / 1000.0)
+        .unwrap_or(0.0)
+}
+
 /// Syncs the canvas backing store to its CSS layout size x devicePixelRatio
 /// and returns the backing size. winit does not do this on web — an unsized
 /// canvas leads to an invisible ~1x1 surface.
@@ -135,6 +147,7 @@ struct DemoApp {
     controller: OrbitController,
     camera: OrbitCamera,
     frame: u64,
+    frame_clock: FrameClock,
 }
 
 impl ApplicationHandler for DemoApp {
@@ -295,6 +308,11 @@ impl ApplicationHandler for DemoApp {
                     self.camera.radius = 6.0;
                     self.camera.pitch_deg = 35.0;
                 }
+                // Unlike Instant, Performance::now() works on wasm32 - the rAF
+                // rate here is the display refresh rate (often 120/144 Hz), so
+                // without this auto-exposure adaptation would run 2x+ too fast.
+                state.renderer.frame_delta_seconds =
+                    self.frame_clock.tick_at(performance_now_seconds());
 
                 // wgpu 29: get_current_texture returns a CurrentSurfaceTexture
                 // enum instead of Result<_, SurfaceError>. This mirrors the

@@ -1,6 +1,7 @@
 pub mod auto_exposure;
 pub mod bloom;
 pub mod forward;
+pub mod frame_clock;
 pub mod gpu_occlusion;
 pub mod gpu_timing;
 pub mod graph;
