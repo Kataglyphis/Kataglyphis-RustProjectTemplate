@@ -41,6 +41,28 @@ pub(crate) struct TileLightGridScratch {
 /// taking the screen-space AABB of whichever of those seven land in front of
 /// the camera (`clip.w > 0.0`) — a conservative bound, not an exact
 /// cone/sphere-vs-frustum test, which is not worth it at this light count.
+/// If some candidates are in front of the camera and others are behind
+/// (the light straddles the near plane), the AABB of the in-front subset is
+/// not a valid bound — a sphere crossing `w == 0` can cover the whole screen
+/// near that singularity — so the whole grid is returned instead.
+///
+/// **This AABB is not actually conservative in general**, even when every
+/// candidate is in front of the camera: the sphere's true screen-space
+/// silhouette is bounded by tangent points that combine a lateral and a
+/// depth-axis offset, not by any single `pos ± range * axis` candidate, so
+/// the true footprint can extend beyond this AABB (confirmed by direct
+/// calculation: for a sphere at eye-distance `D` with radius `r`, the true
+/// tangent extent exceeds the naive axis-candidate extent by a factor of
+/// `D / sqrt(D² - r²)`, worse the larger `r` is relative to `D`). A
+/// brute-force sphere-surface-sampling test reproduced this as an actual
+/// missed tile, not just a theoretical gap. Fixing it rigorously needs a
+/// projection-matrix-aware sphere bound (see Mara & McGuire, "2D Polyhedral
+/// Bounds of a Clipped, Perspective-Projected 3D Sphere", 2013), not a
+/// uniform scalar inflation - the correct bound is direction-dependent once
+/// the light is off the view axis or the projection is not symmetric. Until
+/// that lands, the shader's `count <= 0` per-tile fallback (iterate every
+/// light) MUST stay in place as the safety net for this gap; see
+/// `forward.slang`'s `punctual_lighting`.
 ///
 /// Screen fractions are **framebuffer-oriented** (y down, `0.0` = top) to
 /// match `@builtin(position)` in the consuming shader, not NDC-oriented (y up).
@@ -71,10 +93,12 @@ fn tile_rect_for_light(
     let mut min_uv = glam::Vec2::splat(f32::MAX);
     let mut max_uv = glam::Vec2::splat(f32::MIN);
     let mut any_in_front = false;
+    let mut any_behind = false;
 
     for c in candidates {
         let clip = *view_proj * glam::Vec4::new(c.x, c.y, c.z, 1.0);
         if clip.w <= 0.0 {
+            any_behind = true;
             continue;
         }
         any_in_front = true;
@@ -88,6 +112,15 @@ fn tile_rect_for_light(
 
     if !any_in_front {
         return None;
+    }
+
+    if any_behind {
+        // The light straddles the near plane: the AABB of only the in-front
+        // candidates does not bound its true screen footprint (a sphere
+        // crossing w == 0 can cover the whole screen near that singularity).
+        // Fall back to the whole grid, the same conservative answer the
+        // directional branch already gives.
+        return Some((0, 0, tile_x.saturating_sub(1), tile_y.saturating_sub(1)));
     }
 
     let min_uv = min_uv.clamp(glam::Vec2::ZERO, glam::Vec2::ONE);
@@ -443,4 +476,29 @@ mod tests {
             "a light whose range reaches the screen must light at least one tile even though its centre is off-screen"
         );
     }
+
+    #[test]
+    fn a_light_straddling_the_near_plane_covers_the_whole_grid() {
+        // Camera at (0,0,5) looking at the origin. A point light at
+        // (0.0, 0.0, 4.9) with range 2.0 has a sphere spanning both sides of
+        // the camera's eye plane (its +Z candidate reaches world z = 6.9,
+        // behind the camera at z = 5, while its centre and other candidates
+        // are in front) - the AABB-of-in-front-candidates approach silently
+        // under-covered this case before the straddle fix.
+        let view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
+        let proj = Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
+        let vp = proj * view;
+
+        let mut packed = [[0.0f32; 4]; MAX_PUNCTUAL_LIGHTS * 4];
+        packed[0] = [0.0, 0.0, 4.9, 1.0]; // position + kind=point
+        packed[1] = [1.0, 1.0, 1.0, 2.0]; // color*intensity + range
+
+        let mut scratch = TileLightGridScratch::default();
+        build_tile_light_grid(&mut scratch, &packed, 1, 256, 256, &vp);
+
+        for chunk in scratch.grid.chunks(2) {
+            assert!(chunk[0] >= 1, "every tile should list the near-plane-straddling light");
+        }
+    }
+
 }
