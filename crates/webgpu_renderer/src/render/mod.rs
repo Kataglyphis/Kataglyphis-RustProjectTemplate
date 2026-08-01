@@ -13,5 +13,6 @@ pub mod ibl;
 pub mod occlusion;
 pub mod overlay;
 pub mod ssao;
+pub mod texture;
 pub mod tile_grid;
 pub mod tonemap;
