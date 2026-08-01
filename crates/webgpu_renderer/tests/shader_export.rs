@@ -19,6 +19,8 @@ const SHADERS: &[(&str, &str)] = &[
         "depth_resolve",
         include_str!("../src/shaders/depth_resolve.wgsl"),
     ),
+    ("gpu_cull", include_str!("../src/shaders/gpu_cull.wgsl")),
+    ("histogram", include_str!("../src/shaders/histogram.wgsl")),
 ];
 
 #[test]
@@ -41,6 +43,40 @@ fn all_shaders_export_to_spirv() {
             "{name}: no entry points exported"
         );
     }
+}
+
+/// `SHADERS` above is a hand-maintained list; nothing previously enforced that
+/// every `.wgsl` file in `src/shaders/` actually appears in it, which is
+/// exactly how `depth_resolve` (and `gpu_cull`/`histogram`) went unchecked.
+/// `histogram.wgsl` is deliberately hand-written rather than Slang-generated
+/// (see `compile-slang-shaders.ps1:105-109`), so it belongs in this export
+/// gate but is exempt from any Slang-source staleness gate.
+#[test]
+fn every_shader_file_is_covered() {
+    let shaders_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/shaders");
+    let mut missing = Vec::new();
+    for entry in std::fs::read_dir(shaders_dir)
+        .unwrap_or_else(|e| panic!("failed to read {shaders_dir}: {e:?}"))
+    {
+        let path = entry
+            .unwrap_or_else(|e| panic!("failed to read entry in {shaders_dir}: {e:?}"))
+            .path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("wgsl") {
+            continue;
+        }
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or_else(|| panic!("non-UTF8 shader filename: {path:?}"))
+            .to_string();
+        if !SHADERS.iter().any(|(name, _)| *name == stem) {
+            missing.push(stem);
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "src/shaders/ has .wgsl file(s) not covered by SHADERS in shader_export.rs: {missing:?}"
+    );
 }
 
 /// The depth-resolve pass has zero colour attachments (see the pipeline in
