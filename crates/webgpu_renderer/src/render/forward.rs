@@ -14,6 +14,8 @@ use crate::render::bloom::BloomPass;
 use crate::render::gpu_occlusion::GpuCulling;
 use crate::render::gpu_timing::{GpuTiming, TimedPass};
 use crate::render::ibl::{BrdfLut, EquirectImage, IblEnvironment, IblFallback};
+use crate::render::lights::pack_punctual_lights;
+pub use crate::render::lights::MAX_PUNCTUAL_LIGHTS;
 use crate::render::occlusion::OcclusionQueries;
 use crate::render::ssao::SsaoPass;
 use crate::render::tile_grid::{
@@ -22,14 +24,12 @@ use crate::render::tile_grid::{
 use crate::render::tonemap::TonemapPass;
 use crate::scene::camera::OrbitCamera;
 use crate::scene::{
-    AlphaMode, ChannelValues, CpuAnimation, CpuLight, CpuLightKind, CpuNode, CpuSampler, CpuScene,
-    CpuSkin, CpuTexture, InstanceRaw, Interpolation, MorphTarget, Vertex,
+    AlphaMode, ChannelValues, CpuAnimation, CpuNode, CpuSampler, CpuScene, CpuSkin, CpuTexture,
+    InstanceRaw, Interpolation, MorphTarget, Vertex,
 };
 
 /// Upper bound on joints per skin (storage buffer is sized to the skin).
 pub const MAX_JOINTS: usize = 256;
-
-pub const MAX_PUNCTUAL_LIGHTS: usize = 256;
 
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -183,42 +183,6 @@ impl GpuPrimitive {
             None => (&self.vertex_buffer, &self.index_buffer, self.index_count),
         }
     }
-}
-
-fn pack_punctual_lights(lights: &[CpuLight]) -> ([[f32; 4]; MAX_PUNCTUAL_LIGHTS * 4], u32) {
-    let mut packed = [[0.0f32; 4]; MAX_PUNCTUAL_LIGHTS * 4];
-    let count = lights.len().min(MAX_PUNCTUAL_LIGHTS);
-    for (i, light) in lights.iter().take(count).enumerate() {
-        let (kind, cos_inner, cos_outer) = match light.kind {
-            CpuLightKind::Point => (1.0, 0.0, 0.0),
-            CpuLightKind::Spot {
-                cos_inner,
-                cos_outer,
-            } => (2.0, cos_inner, cos_outer),
-            CpuLightKind::Directional => (3.0, 0.0, 0.0),
-        };
-        let base = i * 4;
-        packed[base] = [
-            light.position[0],
-            light.position[1],
-            light.position[2],
-            kind,
-        ];
-        packed[base + 1] = [
-            light.color[0] * light.intensity,
-            light.color[1] * light.intensity,
-            light.color[2] * light.intensity,
-            light.range,
-        ];
-        packed[base + 2] = [
-            light.direction[0],
-            light.direction[1],
-            light.direction[2],
-            cos_inner,
-        ];
-        packed[base + 3] = [cos_outer, 0.0, 0.0, 0.0];
-    }
-    (packed, count as u32)
 }
 
 pub struct ForwardRenderer {

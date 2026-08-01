@@ -10,6 +10,7 @@ pub mod gpu_timing;
 pub mod graph;
 pub mod histogram;
 pub mod ibl;
+pub mod lights;
 pub mod occlusion;
 pub mod overlay;
 pub mod ssao;
