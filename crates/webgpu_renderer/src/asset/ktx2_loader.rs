@@ -35,6 +35,21 @@ fn map_format(vk_format: u32) -> Option<CompressedFormat> {
     }
 }
 
+/// The colour space a KTX2 vkFormat declares: `Some(true)` for a
+/// `*_SRGB_BLOCK` format, `Some(false)` for a colour `*_UNORM_BLOCK` format,
+/// `None` for a data format with no colour space to declare (BC5).
+fn declared_srgb_for(vk_format: u32) -> Option<bool> {
+    match vk_format {
+        VK_FORMAT_BC1_RGBA_SRGB_BLOCK | VK_FORMAT_BC3_SRGB_BLOCK | VK_FORMAT_BC7_SRGB_BLOCK => {
+            Some(true)
+        }
+        VK_FORMAT_BC1_RGBA_UNORM_BLOCK | VK_FORMAT_BC3_UNORM_BLOCK | VK_FORMAT_BC7_UNORM_BLOCK => {
+            Some(false)
+        }
+        _ => None,
+    }
+}
+
 /// Parses a KTX2 file into a `CpuTexture` carrying its compressed mip chain.
 pub fn load_ktx2(bytes: &[u8]) -> anyhow::Result<CpuTexture> {
     let reader = ktx2::Reader::new(bytes).context("not a valid KTX2 container")?;
@@ -52,6 +67,7 @@ pub fn load_ktx2(bytes: &[u8]) -> anyhow::Result<CpuTexture> {
         .value();
     let format = map_format(vk_format)
         .with_context(|| format!("unsupported KTX2 vkFormat {vk_format} (expected BC1/3/5/7)"))?;
+    let declared_srgb = declared_srgb_for(vk_format);
 
     let mips: Vec<Vec<u8>> = reader.levels().map(|level| level.data.to_vec()).collect();
     anyhow::ensure!(!mips.is_empty(), "KTX2 contains no mip levels");
@@ -60,7 +76,7 @@ pub fn load_ktx2(bytes: &[u8]) -> anyhow::Result<CpuTexture> {
         width: header.pixel_width.max(1),
         height: header.pixel_height.max(1),
         rgba8: Vec::new(),
-        compressed: Some(CompressedTexture { format, mips }),
+        compressed: Some(CompressedTexture { format, mips, declared_srgb }),
     })
 }
 
@@ -81,6 +97,19 @@ mod tests {
         // passthrough target.
         assert_eq!(map_format(37), None);
         assert_eq!(map_format(0), None);
+    }
+
+    #[test]
+    fn declared_srgb_follows_the_container_vkformat() {
+        assert_eq!(declared_srgb_for(VK_FORMAT_BC7_SRGB_BLOCK), Some(true));
+        assert_eq!(declared_srgb_for(VK_FORMAT_BC1_RGBA_SRGB_BLOCK), Some(true));
+        assert_eq!(declared_srgb_for(VK_FORMAT_BC1_RGBA_UNORM_BLOCK), Some(false));
+        assert_eq!(declared_srgb_for(VK_FORMAT_BC3_UNORM_BLOCK), Some(false));
+        assert_eq!(
+            declared_srgb_for(VK_FORMAT_BC5_UNORM_BLOCK),
+            None,
+            "BC5 is a two-channel data format with no colour space to declare"
+        );
     }
 
     #[test]

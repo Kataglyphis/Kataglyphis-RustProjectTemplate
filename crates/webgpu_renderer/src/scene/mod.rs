@@ -127,6 +127,12 @@ pub struct CompressedTexture {
     pub format: CompressedFormat,
     /// Block data per mip level, level 0 first.
     pub mips: Vec<Vec<u8>>,
+    /// The colour space the KTX2 container's vkFormat declares
+    /// (`Some(true)` for a `*_SRGB_BLOCK` format, `Some(false)` for a
+    /// colour `*_UNORM_BLOCK` format, `None` for a data format with no
+    /// colour space, e.g. BC5). glTF usage decides the GPU format
+    /// regardless; this is only used to warn on a mismatch.
+    pub declared_srgb: Option<bool>,
 }
 
 /// Decoded RGBA8 texture (or a compressed payload). `srgb` decides the GPU

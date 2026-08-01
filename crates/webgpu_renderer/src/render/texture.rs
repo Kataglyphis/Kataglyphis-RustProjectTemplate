@@ -132,6 +132,17 @@ pub(crate) fn create_compressed_texture(
     srgb: bool,
     label: Option<&str>,
 ) -> wgpu::TextureView {
+    if let Some(declared) = compressed.declared_srgb {
+        if declared != srgb {
+            log::warn!(
+                "{}: KTX2 container declares {} but the material uses it as {}; \
+                 glTF usage decides the GPU format, so this may render with the wrong gamma",
+                label.unwrap_or("<unlabeled texture>"),
+                if declared { "sRGB" } else { "linear" },
+                if srgb { "sRGB" } else { "linear" },
+            );
+        }
+    }
     let format = compressed_wgpu_format(compressed.format, srgb);
     let block_bytes = compressed.format.block_bytes();
     let gpu_texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
@@ -304,6 +315,25 @@ mod tests {
                 1,
                 "{label}-nearest sampler must stay at 1x or wgpu rejects it"
             );
+        }
+    }
+
+    #[test]
+    fn compressed_wgpu_format_is_decided_by_usage_not_by_the_container() {
+        use CompressedFormat as F;
+        // The KTX2 container's declared colour space must never change which
+        // wgpu format is picked; only the material's `srgb` usage flag does.
+        let cases = [
+            (F::Bc1RgbaUnorm, false, wgpu::TextureFormat::Bc1RgbaUnorm),
+            (F::Bc1RgbaUnorm, true, wgpu::TextureFormat::Bc1RgbaUnormSrgb),
+            (F::Bc3RgbaUnorm, false, wgpu::TextureFormat::Bc3RgbaUnorm),
+            (F::Bc3RgbaUnorm, true, wgpu::TextureFormat::Bc3RgbaUnormSrgb),
+            (F::Bc5RgUnorm, false, wgpu::TextureFormat::Bc5RgUnorm),
+            (F::Bc7RgbaUnorm, false, wgpu::TextureFormat::Bc7RgbaUnorm),
+            (F::Bc7RgbaUnorm, true, wgpu::TextureFormat::Bc7RgbaUnormSrgb),
+        ];
+        for (format, srgb, expected) in cases {
+            assert_eq!(compressed_wgpu_format(format, srgb), expected);
         }
     }
 
