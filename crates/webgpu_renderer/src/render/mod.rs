@@ -1,3 +1,4 @@
+pub mod animation;
 pub mod auto_exposure;
 pub mod bloom;
 pub mod forward;
