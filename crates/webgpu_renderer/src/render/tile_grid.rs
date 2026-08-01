@@ -41,6 +41,9 @@ pub(crate) struct TileLightGridScratch {
 /// taking the screen-space AABB of whichever of those seven land in front of
 /// the camera (`clip.w > 0.0`) — a conservative bound, not an exact
 /// cone/sphere-vs-frustum test, which is not worth it at this light count.
+///
+/// Screen fractions are **framebuffer-oriented** (y down, `0.0` = top) to
+/// match `@builtin(position)` in the consuming shader, not NDC-oriented (y up).
 fn tile_rect_for_light(
     pos: glam::Vec3,
     range: f32,
@@ -76,7 +79,9 @@ fn tile_rect_for_light(
         }
         any_in_front = true;
         let ndc = clip.xy() / clip.w;
-        let uv = ndc * 0.5 + 0.5;
+        // Framebuffer-oriented (y down, 0.0 = top), matching @builtin(position)
+        // in the consuming shader — not NDC-oriented (y up).
+        let uv = glam::Vec2::new(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
         min_uv = min_uv.min(uv);
         max_uv = max_uv.max(uv);
     }
@@ -332,6 +337,89 @@ mod tests {
         for t in 0..total_tiles {
             assert!(scratch.grid[t * 2] >= 1, "tile {} missing the directional light", t);
         }
+    }
+
+    #[test]
+    fn build_tile_light_grid_bins_a_light_into_the_row_the_shader_reads() {
+        // Small-range point light clearly above the centre, so its rect stays
+        // inside the upper half of the screen.
+        let view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
+        let proj = Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
+        let vp = proj * view;
+
+        let mut packed = [[0.0f32; 4]; MAX_PUNCTUAL_LIGHTS * 4];
+        packed[0] = [0.0, 1.5, 0.0, 1.0]; // position above centre + kind=point
+        packed[1] = [1.0, 1.0, 1.0, 0.3]; // color*intensity + small range
+
+        let mut scratch = TileLightGridScratch::default();
+        build_tile_light_grid(&mut scratch, &packed, 1, 256, 256, &vp);
+
+        // Compute the expected tile the way the shader does: fragCoord is
+        // framebuffer-oriented (y down, 0.0 = top).
+        let clip = vp * glam::Vec4::new(0.0, 1.5, 0.0, 1.0);
+        let ndc = clip.xy() / clip.w;
+        let uv_y = 0.5 - (ndc.y) * 0.5;
+        let ty = ((uv_y * 256.0) as u32).min(255) / TILE_SIZE;
+        let tile_w = 256 / TILE_SIZE;
+
+        let mut found = false;
+        for tx in 0..tile_w {
+            let idx = (ty * tile_w + tx) as usize;
+            let count = scratch.grid[idx * 2] as usize;
+            if count == 0 {
+                continue;
+            }
+            let offset = scratch.grid[idx * 2 + 1] as usize;
+            if scratch.indices[offset..offset + count].contains(&0) {
+                found = true;
+                break;
+            }
+        }
+        assert!(found, "the row the shader reads for this light should contain it");
+        assert!(ty < 8, "a light above centre should land in the upper half, got ty={ty}");
+    }
+
+    #[test]
+    fn build_tile_light_grid_keeps_two_lights_in_their_own_halves() {
+        let view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
+        let proj = Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
+        let vp = proj * view;
+
+        let mut packed = [[0.0f32; 4]; MAX_PUNCTUAL_LIGHTS * 4];
+        packed[0] = [0.0, 1.5, 0.0, 1.0]; // above centre
+        packed[1] = [1.0, 1.0, 1.0, 0.3];
+        packed[4] = [0.0, -1.5, 0.0, 1.0]; // below centre
+        packed[5] = [1.0, 1.0, 1.0, 0.3];
+
+        let mut scratch = TileLightGridScratch::default();
+        build_tile_light_grid(&mut scratch, &packed, 2, 256, 256, &vp);
+
+        let tile_w = 256 / TILE_SIZE;
+        let tile_h = 256 / TILE_SIZE;
+
+        let tile_contains = |ty: u32, tx: u32, light: u32| -> bool {
+            let idx = (ty * tile_w + tx) as usize;
+            let count = scratch.grid[idx * 2] as usize;
+            if count == 0 {
+                return false;
+            }
+            let offset = scratch.grid[idx * 2 + 1] as usize;
+            scratch.indices[offset..offset + count].contains(&light)
+        };
+
+        // Light 0 (above centre) must appear somewhere in the upper half and
+        // must not appear in the lower half; light 1 (below centre) the
+        // mirror of that.
+        let light0_in_upper = (0..8).any(|ty| (0..tile_w).any(|tx| tile_contains(ty, tx, 0)));
+        let light0_in_lower =
+            (8..tile_h).any(|ty| (0..tile_w).any(|tx| tile_contains(ty, tx, 0)));
+        let light1_in_lower = (8..tile_h).any(|ty| (0..tile_w).any(|tx| tile_contains(ty, tx, 1)));
+        let light1_in_upper = (0..8).any(|ty| (0..tile_w).any(|tx| tile_contains(ty, tx, 1)));
+
+        assert!(light0_in_upper, "light above centre should be in the upper half");
+        assert!(!light0_in_lower, "light above centre should not leak into the lower half");
+        assert!(light1_in_lower, "light below centre should be in the lower half");
+        assert!(!light1_in_upper, "light below centre should not leak into the upper half");
     }
 
     #[test]
