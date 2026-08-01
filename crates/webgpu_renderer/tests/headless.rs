@@ -393,6 +393,32 @@ fn first_frame_uses_the_correct_cascade_and_tile_counts() {
     );
 }
 
+/// Reads `Resources/ShadersSlang/forward/forward.slang`, four directories up
+/// from this crate (out of the `Kataglyphis-RustProjectTemplate` submodule
+/// into the superproject tree). Returns `None` — with an `eprintln!` — when
+/// that tree is not present, matching the existing no-GPU skip convention so
+/// the pin tests below don't fail in a checkout of the submodule alone.
+fn slang_source() -> Option<String> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../../Resources/ShadersSlang/forward/forward.slang");
+    match std::fs::read_to_string(&path) {
+        Ok(source) => Some(source),
+        Err(err) => {
+            eprintln!("SKIP: could not read {}: {err}", path.display());
+            None
+        }
+    }
+}
+
+/// Parses `static const <ty> <name> = <value>;` out of `source` and returns
+/// `value` parsed as `T`.
+fn parse_slang_constant<T: std::str::FromStr>(source: &str, name: &str) -> Option<T> {
+    let needle = format!(" {name} = ");
+    let start = source.find(&needle)? + needle.len();
+    let end = start + source[start..].find(';')?;
+    source[start..end].trim().parse().ok()
+}
+
 /// Pins `CASCADE_COUNT` in Rust against the `static const int CASCADE_COUNT`
 /// baked into `forward.slang` — there are exactly three `light_space*`
 /// matrices on both sides, so the two must never drift silently. No GPU
@@ -400,6 +426,36 @@ fn first_frame_uses_the_correct_cascade_and_tile_counts() {
 #[test]
 fn cascade_count_matches_the_slang_constant() {
     assert_eq!(kataglyphis_webgpu_renderer::render::forward::CASCADE_COUNT, 3);
+
+    let Some(source) = slang_source() else {
+        return;
+    };
+    let shader_cascade_count: usize = parse_slang_constant(&source, "CASCADE_COUNT")
+        .expect("forward.slang must declare `static const int CASCADE_COUNT = <n>;`");
+    assert_eq!(
+        kataglyphis_webgpu_renderer::render::forward::CASCADE_COUNT,
+        shader_cascade_count,
+        "Rust CASCADE_COUNT and forward.slang's CASCADE_COUNT have drifted apart"
+    );
+}
+
+/// Pins `render::tile_grid::TILE_SIZE` against the `static const uint
+/// TILE_SIZE` baked into `forward.slang` — `punctual_lighting` divides
+/// `fragCoord` by that constant to pick a tile, and the CPU derives the tile
+/// grid's dimensions from the same constant, so the two must never drift
+/// apart. No GPU needed.
+#[test]
+fn tile_size_matches_the_slang_constant() {
+    let Some(source) = slang_source() else {
+        return;
+    };
+    let shader_tile_size: u32 = parse_slang_constant(&source, "TILE_SIZE")
+        .expect("forward.slang must declare `static const uint TILE_SIZE = <n>;`");
+    assert_eq!(
+        kataglyphis_webgpu_renderer::render::tile_grid::TILE_SIZE,
+        shader_tile_size,
+        "Rust TILE_SIZE and forward.slang's TILE_SIZE have drifted apart"
+    );
 }
 
 #[test]
