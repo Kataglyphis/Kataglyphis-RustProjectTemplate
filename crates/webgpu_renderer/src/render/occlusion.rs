@@ -46,6 +46,22 @@ const SLOT_COUNT: usize = 3;
 /// Bytes per occlusion query result (a `u64` sample count).
 const QUERY_BYTES: u64 = 8;
 
+/// Relative expansion `aabb_contains` applies to a box's half-extent, matching
+/// `occlusion_bbox.wgsl`'s `0.5 * 0.02` margin term so the CPU containment
+/// test agrees with the proxy box the GPU actually rasterises.
+pub(crate) const CONTAINMENT_MARGIN: f32 = 0.02;
+
+/// True when `p` lies inside `[min, max]` expanded by `margin` (a fraction of
+/// each axis's half-extent) plus a fixed 1 cm floor - the same expansion
+/// `occlusion_bbox.wgsl` applies to the proxy box it rasterises, so this test
+/// agrees with what the GPU actually measures rather than a slightly
+/// different volume. The fixed floor matters for a degenerate (zero-extent)
+/// box, where a purely relative margin would vanish to zero.
+pub(crate) fn aabb_contains(min: Vec3, max: Vec3, p: Vec3, margin: f32) -> bool {
+    let expand = (max - min) * 0.5 * margin + Vec3::splat(0.01);
+    p.cmpge(min - expand).all() && p.cmple(max + expand).all()
+}
+
 /// Map state of one readback slot, shared with the `map_async` callback.
 const MAP_PENDING: u8 = 0;
 const MAP_READY: u8 = 1;
@@ -83,6 +99,12 @@ struct Slot {
     /// visibility - else a new, smaller scene inherits the old scene's
     /// per-index culling for a frame or two.
     generation: u64,
+    /// Per-primitive "eye is inside this AABB" flags, computed from the SAME
+    /// eye this slot's queries were recorded with. Stored here rather than on
+    /// `Self` directly because the readback lands one or more frames late -
+    /// mixing a later frame's eye into an earlier frame's samples would
+    /// re-introduce the flicker in a subtler form (see `record`'s doc).
+    forced_visible: Vec<bool>,
 }
 
 /// Per-primitive occlusion detection over the forward depth buffer.
@@ -216,13 +238,25 @@ impl OcclusionQueries {
     /// nothing when there is no scene or no free ring slot this frame.
     ///
     /// `depth_view` is the forward pass's depth buffer, `view_proj` the matrix
-    /// the forward pass drew with, and `aabbs` one world AABB per primitive in
-    /// primitive order. Must be recorded into the same encoder as the forward
-    /// pass and before submit; call [`Self::end_frame`] after submit.
-    // Seven distinct inputs, none bundleable without an artificial wrapper:
+    /// the forward pass drew with, `aabbs` one world AABB per primitive in
+    /// primitive order, and `eye` the camera position the forward pass drew
+    /// from. Must be recorded into the same encoder as the forward pass and
+    /// before submit; call [`Self::end_frame`] after submit.
+    ///
+    /// A primitive whose AABB contains `eye` is force-visible in the result
+    /// [`Self::end_frame`] eventually produces: from inside its own box, the
+    /// proxy geometry's near-facing side is near-plane clipped and its
+    /// far-facing side sits behind the primitive's own depth, so the query
+    /// reads back 0 samples regardless of whether the primitive is actually
+    /// on screen. The mask is computed HERE, against this call's `eye`, and
+    /// carried on the ring slot so it lines up with the samples it corrects -
+    /// computing it instead at readback time would pair a stale query result
+    /// with a newer eye, which is the same late-binding hazard `generation`
+    /// guards against for scene changes.
+    // Eight distinct inputs, none bundleable without an artificial wrapper:
     // the device (buffer growth), queue (uploads), encoder (the pass), the
-    // forward depth, the camera matrix, the AABBs, and the timing scope. The
-    // timing scope pushed it one over clippy's default of seven.
+    // forward depth, the camera matrix, the AABBs, the eye position, and the
+    // timing scope. Already over clippy's default of seven before `eye`.
     #[allow(clippy::too_many_arguments)]
     pub fn record(
         &mut self,
@@ -232,6 +266,7 @@ impl OcclusionQueries {
         depth_view: &wgpu::TextureView,
         view_proj: Mat4,
         aabbs: &[(Vec3, Vec3)],
+        eye: Vec3,
         timing: crate::render::gpu_timing::PassScope<'_>,
     ) {
         self.recording = false;
@@ -247,6 +282,11 @@ impl OcclusionQueries {
             return;
         };
         self.current = slot_index;
+
+        let forced_visible: Vec<bool> = aabbs
+            .iter()
+            .map(|(min, max)| aabb_contains(*min, *max, eye, CONTAINMENT_MARGIN))
+            .collect();
 
         queue.write_buffer(
             &self.view_proj_buffer,
@@ -295,6 +335,7 @@ impl OcclusionQueries {
 
         let slot = &mut self.slots[slot_index];
         slot.count = count;
+        slot.forced_visible = forced_visible;
         let bytes = u64::from(count) * QUERY_BYTES;
         encoder.resolve_query_set(&self.query_set, 0..count, &slot.resolve, 0);
         encoder.copy_buffer_to_buffer(&slot.resolve, 0, &slot.readback, 0, bytes);
@@ -344,7 +385,12 @@ impl OcclusionQueries {
                     // reset's empty visibility so the new scene is not culled by
                     // the old scene's samples.
                     if self.slots[index].generation == self.generation {
-                        self.visibility = samples.iter().map(|&s| s > 0).collect();
+                        let forced = &self.slots[index].forced_visible;
+                        self.visibility = samples
+                            .iter()
+                            .enumerate()
+                            .map(|(i, &s)| s > 0 || forced.get(i).copied().unwrap_or(false))
+                            .collect();
                         self.samples = samples;
                     }
                 }
@@ -357,8 +403,10 @@ impl OcclusionQueries {
     }
 
     /// Per-primitive visibility from the most recent completed readback: `true`
-    /// when the primitive's box had > 0 fragments pass the depth test. Empty
-    /// until the first readback lands (a frame or two after recording starts).
+    /// when the primitive's box had > 0 fragments pass the depth test, OR the
+    /// primitive's AABB contained `eye` at record time (see [`Self::record`]).
+    /// Empty until the first readback lands (a frame or two after recording
+    /// starts).
     pub fn visibility(&self) -> &[bool] {
         &self.visibility
     }
@@ -390,6 +438,14 @@ impl OcclusionQueries {
         self.generation = self.generation.wrapping_add(1);
         self.visibility.clear();
         self.samples.clear();
+        // Belt-and-suspenders alongside the generation bump above: a slot's
+        // stale mask can never reach `self.visibility` once its generation no
+        // longer matches (see `end_frame`), but clearing it too means a slot
+        // never *holds* a previous scene's flags past the reset that
+        // invalidated them.
+        for slot in &mut self.slots {
+            slot.forced_visible.clear();
+        }
     }
 
     /// Index of a slot with no outstanding map, preferring `current` so the
@@ -458,6 +514,7 @@ fn create_slots(device: &wgpu::Device, capacity: u32) -> Vec<Slot> {
             map_state: None,
             count: 0,
             generation: 0,
+            forced_visible: Vec::new(),
         })
         .collect()
 }
@@ -472,4 +529,72 @@ fn read_samples(buffer: &wgpu::Buffer, count: usize) -> Vec<u64> {
         .collect();
     drop(view);
     samples
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn aabb_contains_point_strictly_inside() {
+        assert!(aabb_contains(
+            Vec3::splat(-1.0),
+            Vec3::splat(1.0),
+            Vec3::ZERO,
+            CONTAINMENT_MARGIN
+        ));
+    }
+
+    #[test]
+    fn aabb_contains_point_strictly_outside() {
+        assert!(!aabb_contains(
+            Vec3::splat(-1.0),
+            Vec3::splat(1.0),
+            Vec3::new(5.0, 0.0, 0.0),
+            CONTAINMENT_MARGIN
+        ));
+    }
+
+    #[test]
+    fn aabb_contains_point_exactly_on_a_face() {
+        assert!(aabb_contains(
+            Vec3::splat(-1.0),
+            Vec3::splat(1.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            CONTAINMENT_MARGIN
+        ));
+    }
+
+    #[test]
+    fn aabb_contains_point_just_outside_but_within_the_margin() {
+        // Half-extent 1.0, so margin = 1.0 * 0.02 + 0.01 = 0.03 on every axis.
+        let (min, max) = (Vec3::splat(-1.0), Vec3::splat(1.0));
+        assert!(
+            aabb_contains(min, max, Vec3::new(1.02, 0.0, 0.0), CONTAINMENT_MARGIN),
+            "0.02 past the face is still inside the 0.03 margin"
+        );
+        assert!(
+            !aabb_contains(min, max, Vec3::new(1.04, 0.0, 0.0), CONTAINMENT_MARGIN),
+            "0.04 past the face is outside the 0.03 margin"
+        );
+    }
+
+    #[test]
+    fn aabb_contains_point_degenerate_zero_extent_box() {
+        // A relative-only margin would vanish to zero here; the fixed 1 cm
+        // floor is what keeps a degenerate box from rejecting its own point.
+        let p = Vec3::new(3.0, -2.0, 0.5);
+        assert!(
+            aabb_contains(p, p, p, CONTAINMENT_MARGIN),
+            "the box's own point must be inside itself"
+        );
+        assert!(
+            aabb_contains(p, p, p + Vec3::new(0.005, 0.0, 0.0), CONTAINMENT_MARGIN),
+            "within the fixed 1cm floor"
+        );
+        assert!(
+            !aabb_contains(p, p, p + Vec3::new(0.02, 0.0, 0.0), CONTAINMENT_MARGIN),
+            "outside the fixed 1cm floor"
+        );
+    }
 }

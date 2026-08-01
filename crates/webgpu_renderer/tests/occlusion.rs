@@ -365,6 +365,63 @@ fn two_visible_cubes_are_both_drawn_with_gpu_culling() {
 }
 
 #[test]
+fn a_primitive_containing_the_camera_is_always_reported_visible() {
+    // Regression for the strobe described in BACKLOG's "Force-visible any
+    // primitive whose AABB contains the camera" task: from inside a
+    // primitive's own AABB, the occlusion proxy box's near-facing side is
+    // near-plane clipped and its far-facing side sits behind the primitive's
+    // own depth, so the hardware query reads back 0 samples even though the
+    // primitive fills the screen. Needs geometry that actually renders from
+    // the inside (double-sided - a closed, single-sided cube renders nothing
+    // from inside, leaves the depth buffer empty, and can't reach this path
+    // at all).
+    let Ok(gpu) = GpuContext::new_headless() else {
+        eprintln!("SKIP: no GPU adapter available in this environment");
+        return;
+    };
+
+    let mut prim = cube_with_transform(Mat4::IDENTITY);
+    prim.material.double_sided = true;
+    let scene = CpuScene {
+        primitives: vec![prim],
+        ..Default::default()
+    };
+
+    let mut renderer = ForwardRenderer::new(&gpu, 256, 256);
+    renderer.upload_scene(&gpu, &scene);
+    renderer.occlusion_queries_enabled = true;
+
+    // Eye at radius 0.2 from the origin: inside the unit cube's [-0.5, 0.5]
+    // bounds on every axis, well past the 0.1 near plane.
+    let camera = OrbitCamera {
+        radius: 0.2,
+        yaw_deg: 0.0,
+        pitch_deg: 0.0,
+        ..OrbitCamera::default()
+    };
+
+    let mut observed = Vec::new();
+    for _ in 0..64 {
+        renderer
+            .render_to_pixels(&gpu, 256, 256, &camera)
+            .expect("headless render must succeed");
+        if let Some(&visible) = renderer.occlusion_visibility().first() {
+            observed.push(visible);
+        }
+    }
+
+    assert!(
+        !observed.is_empty(),
+        "expected at least one readback to land in 64 frames"
+    );
+    assert!(
+        observed.iter().all(|&v| v),
+        "a primitive containing the camera must be reported visible on every \
+         landed readback, got {observed:?}"
+    );
+}
+
+#[test]
 fn gpu_culling_is_off_by_default() {
     let Ok(gpu) = GpuContext::new_headless() else {
         eprintln!("SKIP: no GPU adapter available in this environment");

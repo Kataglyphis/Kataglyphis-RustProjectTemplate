@@ -2178,6 +2178,7 @@ impl ForwardRenderer {
                     &self.depth,
                     view_proj,
                     &aabbs,
+                    eye,
                     self.gpu_timing.scope(TimedPass::OcclusionCull),
                 );
             }
@@ -3102,10 +3103,12 @@ fn normal_matrix_of(model: Mat4) -> Mat4 {
 /// True when `p` lies inside the AABB expanded by the SAME margin the occlusion
 /// proxy box uses (`occlusion_bbox.wgsl`: 2% of the half-extent plus 1 cm), so
 /// this CPU test agrees with the box actually rasterised rather than a slightly
-/// different one.
+/// different one. Thin wrapper over [`crate::render::occlusion::aabb_contains`],
+/// which `OcclusionQueries::record` also uses to force-visible a primitive the
+/// camera sits inside - kept here too since the GPU-culling path (no such
+/// baked-in forcing) still needs this guard at the draw-skip decision below.
 fn aabb_contains_point(min: Vec3, max: Vec3, p: Vec3) -> bool {
-    let margin = (max - min) * 0.5 * 0.02 + Vec3::splat(0.01);
-    p.cmpge(min - margin).all() && p.cmple(max + margin).all()
+    crate::render::occlusion::aabb_contains(min, max, p, crate::render::occlusion::CONTAINMENT_MARGIN)
 }
 
 /// Bounds covering every instance of `pre`.
