@@ -2605,55 +2605,22 @@ impl ForwardRenderer {
         }
     }
 
-    /// Fits one orthographic light matrix per cascade: cascade 0 hugs the
-    /// camera focus (crisp near shadows), the last covers the whole scene.
+    /// Fits one orthographic light matrix per cascade to the eye-distance
+    /// splits the shader (`forward.slang:198-211`) picks a cascade with -
+    /// see `render::cascades` for why the split *values* have to be derived
+    /// from the camera, not the scene alone.
     fn update_cascades(&mut self, camera: &OrbitCamera) {
         let (min, max) = self
             .scene_bounds
             .unwrap_or((Vec3::splat(-1.0), Vec3::splat(1.0)));
-        let scene_center = (min + max) * 0.5;
-        let mut scene_radius = ((max - min).length() * 0.5).max(1e-3);
-        if !scene_radius.is_finite() {
-            scene_radius = 1.0;
-        }
+        let light_dir = self.light_dir_ambient.truncate().normalize_or_zero();
 
-        let near_radius = (scene_radius * 0.35).max(0.5);
-        let mid_radius = (scene_radius * 0.7).max(1.0);
+        let fit = crate::render::cascades::fit_cascades(camera, min, max, light_dir);
         // z, w (tile_w, tile_h) are supplied by the per-frame uniform write
         // in `render`, not here.
-        self.cascade_splits = [near_radius * 2.0, mid_radius * 2.0, 0.0, 0.0];
-
-        let focus_near = camera.target.lerp(camera.eye(), 0.15);
-        let cascades = [
-            (focus_near, near_radius),
-            (camera.target, mid_radius),
-            (scene_center, scene_radius),
-        ];
-        for (i, (center, radius)) in cascades.into_iter().enumerate() {
-            self.cascade_matrices[i] = self.light_matrix_for(center, radius);
-        }
+        self.cascade_splits = [fit.splits[0], fit.splits[1], 0.0, 0.0];
+        self.cascade_matrices = fit.matrices;
     }
-
-    fn light_matrix_for(&self, center: Vec3, radius: f32) -> Mat4 {
-        let light_dir = self.light_dir_ambient.truncate().normalize_or_zero();
-        let light_dir = if light_dir == Vec3::ZERO {
-            Vec3::Y
-        } else {
-            light_dir
-        };
-        let up = if light_dir.dot(Vec3::Y).abs() > 0.99 {
-            Vec3::Z
-        } else {
-            Vec3::Y
-        };
-        // Pull the eye far back so casters outside the cascade box still fit
-        // in the depth range.
-        let eye = center + light_dir * (radius * 4.0);
-        let view = Mat4::look_at_rh(eye, center, up);
-        let projection = Mat4::orthographic_rh(-radius, radius, -radius, radius, 0.1, radius * 8.0);
-        projection * view
-    }
-
 }
 
 /// Group 1 uniforms, mirroring `IblParams` in forward.wgsl.
