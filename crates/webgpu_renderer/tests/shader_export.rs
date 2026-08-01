@@ -79,6 +79,44 @@ fn every_shader_file_is_covered() {
     );
 }
 
+/// WGSL has no string literals, so a `//` can only ever appear as the start
+/// of a comment - the Slang WGSL backend itself emits none. A `//` in a
+/// checked-in generated file is therefore always a hand-edit made directly on
+/// the output, with a regenerate's expiry date on it: the next
+/// `compile-slang-shaders` run silently drops it. `histogram.wgsl` is exempt
+/// (see `every_shader_file_is_covered` above): it is hand-written, not
+/// Slang-generated, so comments in it are normal.
+#[test]
+fn generated_wgsl_has_no_hand_edits() {
+    let shaders_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/shaders");
+    let mut hand_edits = Vec::new();
+    for entry in std::fs::read_dir(shaders_dir)
+        .unwrap_or_else(|e| panic!("failed to read {shaders_dir}: {e:?}"))
+    {
+        let path = entry
+            .unwrap_or_else(|e| panic!("failed to read entry in {shaders_dir}: {e:?}"))
+            .path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("wgsl") {
+            continue;
+        }
+        if path.file_name().and_then(|n| n.to_str()) == Some("histogram.wgsl") {
+            continue;
+        }
+        let contents = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("failed to read {path:?}: {e:?}"));
+        for (line_number, line) in contents.lines().enumerate() {
+            if line.contains("//") {
+                hand_edits.push(format!("{path:?}:{}: {line}", line_number + 1));
+            }
+        }
+    }
+    assert!(
+        hand_edits.is_empty(),
+        "generated WGSL must not be hand-edited - put the change in the .slang source, or in \
+         the post-emit patch table in compile-slang-shaders.ps1/.sh: {hand_edits:#?}"
+    );
+}
+
 /// The depth-resolve pass has zero colour attachments (see the pipeline in
 /// `forward.rs`) and must write the depth aspect via `@builtin(frag_depth)`.
 /// Slang's WGSL backend has no depth-write control, so it emits a plain
