@@ -336,6 +336,72 @@ fn shadow_darkens_plane_under_cube() {
     );
 }
 
+/// Before the fix, `cascade_splits.z` doubled as both the shadow cascade
+/// count *and* the tile grid width, and the tile counts were written into
+/// `FrameUniforms` a frame late (initialized to `(0, 0)`). Both bugs forced
+/// `cascade = -1` for every fragment on a renderer's very first frame,
+/// silently disabling shadows until a second frame ran. This renders exactly
+/// ONE frame per fresh renderer — the case that used to be broken — at two
+/// target sizes whose tile counts differ, and reuses
+/// `shadow_darkens_plane_under_cube`'s neutral-vs-blue-shadow classifier to
+/// prove the shadow is present in that very first frame at both sizes.
+#[test]
+fn first_frame_uses_the_correct_cascade_and_tile_counts() {
+    let Ok(gpu) = GpuContext::new_headless() else {
+        eprintln!("SKIP: no GPU adapter available in this environment");
+        return;
+    };
+
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_on_plane.gltf");
+    let scene = load_gltf(path).expect("cube_on_plane.gltf must load");
+
+    let camera = OrbitCamera {
+        radius: 6.0,
+        pitch_deg: 55.0,
+        ..OrbitCamera::default()
+    };
+
+    let first_frame_shadowed_pixels = |width: u32, height: u32| -> usize {
+        let mut renderer = ForwardRenderer::new(&gpu, width, height);
+        renderer.upload_scene(&gpu, &scene);
+        renderer.light_dir_ambient = glam::Vec4::new(-1.0, 0.7, -0.3, 0.15);
+
+        let pixels = renderer
+            .render_to_pixels(&gpu, width, height, &camera)
+            .expect("headless render must succeed");
+
+        pixels
+            .chunks_exact(4)
+            .filter(|p| {
+                let (r, b) = (p[0] as i32, p[2] as i32);
+                r < 110 && b > r + 15 && b < 180
+            })
+            .count()
+    };
+
+    let shadowed_256 = first_frame_shadowed_pixels(256, 256);
+    assert!(
+        shadowed_256 > 150,
+        "256x256 first frame: expected a shadowed patch under the cube, got {shadowed_256} pixels"
+    );
+
+    let shadowed_512 = first_frame_shadowed_pixels(512, 512);
+    assert!(
+        shadowed_512 > 150,
+        "512x512 first frame: expected a shadowed patch under the cube, got {shadowed_512} pixels"
+    );
+}
+
+/// Pins `CASCADE_COUNT` in Rust against the `static const int CASCADE_COUNT`
+/// baked into `forward.slang` — there are exactly three `light_space*`
+/// matrices on both sides, so the two must never drift silently. No GPU
+/// needed.
+#[test]
+fn cascade_count_matches_the_slang_constant() {
+    assert_eq!(kataglyphis_webgpu_renderer::render::forward::CASCADE_COUNT, 3);
+}
+
 #[test]
 fn alpha_modes_blend_and_mask() {
     let Ok(gpu) = GpuContext::new_headless() else {

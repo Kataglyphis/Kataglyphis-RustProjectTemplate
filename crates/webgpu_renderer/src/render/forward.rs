@@ -927,7 +927,9 @@ impl ForwardRenderer {
             shadow_casters_considered: 0,
             shadow_caster_bundle: None,
             shadow_caster_count: 0,
-            cascade_splits: [10.0, 30.0, CASCADE_COUNT as f32, 0.0],
+            // z, w (tile_w, tile_h) are supplied by the per-frame uniform
+            // write in `render`, not this constructor-time default.
+            cascade_splits: [10.0, 30.0, 0.0, 0.0],
             primitives: Vec::new(),
             gpu_timing: GpuTiming::unavailable(),
             occlusion: OcclusionQueries::new(device),
@@ -1724,6 +1726,13 @@ impl ForwardRenderer {
             bytemuck::bytes_of(&sky_uniforms),
         );
 
+        // Tile grid dimensions must be known before the frame uniforms are
+        // built below, so this frame's tile counts land in the uniform
+        // instead of last frame's (cascade_splits.zw carries them).
+        let tx = (width + TILE_SIZE - 1) / TILE_SIZE;
+        let ty = (height + TILE_SIZE - 1) / TILE_SIZE;
+        self.tile_counts = (tx, ty);
+
         // Per-frame data: write ONCE, shared by every primitive via @group(2).
         let frame_uniforms = FrameUniforms {
             view_proj: view_proj.to_cols_array_2d(),
@@ -1760,8 +1769,6 @@ impl ForwardRenderer {
                 width, height,
                 &view_proj,
             );
-            let tx = (width + TILE_SIZE - 1) / TILE_SIZE;
-            let ty = (height + TILE_SIZE - 1) / TILE_SIZE;
             let total_tiles = (tx * ty) as usize;
 
             // Ensure buffer capacity; rebuild the bind group if either buffer
@@ -1806,7 +1813,6 @@ impl ForwardRenderer {
             }
             gpu.queue.write_buffer(&self.tile_light_grid_buffer, 0, bytemuck::cast_slice(&self.tile_light_grid_scratch.grid));
             gpu.queue.write_buffer(&self.tile_light_indices_buffer, 0, bytemuck::cast_slice(&self.tile_light_grid_scratch.indices));
-            self.tile_counts = (tx, ty);
         }
 
         for prim in &mut self.primitives {
@@ -2613,12 +2619,9 @@ impl ForwardRenderer {
 
         let near_radius = (scene_radius * 0.35).max(0.5);
         let mid_radius = (scene_radius * 0.7).max(1.0);
-        self.cascade_splits = [
-            near_radius * 2.0,
-            mid_radius * 2.0,
-            CASCADE_COUNT as f32,
-            0.0,
-        ];
+        // z, w (tile_w, tile_h) are supplied by the per-frame uniform write
+        // in `render`, not here.
+        self.cascade_splits = [near_radius * 2.0, mid_radius * 2.0, 0.0, 0.0];
 
         let focus_near = camera.target.lerp(camera.eye(), 0.15);
         let cascades = [
@@ -2651,33 +2654,6 @@ impl ForwardRenderer {
         projection * view
     }
 
-    /// Orthographic world->light-clip matrix fitted to the scene bounds.
-    #[allow(dead_code)]
-    fn light_space_matrix(&self) -> Mat4 {
-        let (min, max) = self
-            .scene_bounds
-            .unwrap_or((Vec3::splat(-1.0), Vec3::splat(1.0)));
-        let center = (min + max) * 0.5;
-        let radius = ((max - min).length() * 0.5).max(1e-3);
-
-        let light_dir = self.light_dir_ambient.truncate().normalize_or_zero();
-        let light_dir = if light_dir == Vec3::ZERO {
-            Vec3::Y
-        } else {
-            light_dir
-        };
-        let up = if light_dir.dot(Vec3::Y).abs() > 0.99 {
-            Vec3::Z
-        } else {
-            Vec3::Y
-        };
-
-        let eye = center + light_dir * (radius * 2.0);
-        let view = Mat4::look_at_rh(eye, center, up);
-        // glam's orthographic_rh uses 0..1 depth, matching WebGPU clip space.
-        let projection = Mat4::orthographic_rh(-radius, radius, -radius, radius, 0.1, radius * 4.0);
-        projection * view
-    }
 }
 
 /// Group 1 uniforms, mirroring `IblParams` in forward.wgsl.
