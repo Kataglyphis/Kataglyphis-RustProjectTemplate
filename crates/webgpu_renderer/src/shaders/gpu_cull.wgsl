@@ -58,31 +58,31 @@ fn cs_main(@builtin(global_invocation_id) gid_0 : vec3<u32>)
             visibility_0[idx_0] = u32(1);
             return;
         }
-        var _S5 : vec2<f32> = vec2<f32>(0.5f);
-        var uv_0 : vec2<f32> = clip_0.xy / vec2<f32>(_S4) * _S5 + _S5;
-        var _S6 : f32 = min(aabbNear_0, clip_0.z / _S4);
-        var _S7 : vec2<f32> = min(uvMin_0, uv_0);
-        var _S8 : vec2<f32> = max(uvMax_0, uv_0);
+        var ndc_0 : vec2<f32> = clip_0.xy / vec2<f32>(_S4);
+        var uv_0 : vec2<f32> = vec2<f32>(ndc_0.x * 0.5f + 0.5f, 0.5f - ndc_0.y * 0.5f);
+        var _S5 : f32 = min(aabbNear_0, clip_0.z / _S4);
+        var _S6 : vec2<f32> = min(uvMin_0, uv_0);
+        var _S7 : vec2<f32> = max(uvMax_0, uv_0);
         var i_1 : u32 = i_0 + u32(1);
-        aabbNear_0 = _S6;
-        uvMin_0 = _S7;
-        uvMax_0 = _S8;
+        aabbNear_0 = _S5;
+        uvMin_0 = _S6;
+        uvMax_0 = _S7;
         i_0 = i_1;
     }
-    const _S9 : vec2<f32> = vec2<f32>(0.0f, 0.0f);
-    const _S10 : vec2<f32> = vec2<f32>(1.0f, 1.0f);
-    var uvMin_1 : vec2<f32> = clamp(uvMin_0, _S9, _S10);
-    var uvMax_1 : vec2<f32> = clamp(uvMax_0, _S9, _S10);
-    var _S11 : bool;
+    const _S8 : vec2<f32> = vec2<f32>(0.0f, 0.0f);
+    const _S9 : vec2<f32> = vec2<f32>(1.0f, 1.0f);
+    var uvMin_1 : vec2<f32> = clamp(uvMin_0, _S8, _S9);
+    var uvMax_1 : vec2<f32> = clamp(uvMax_0, _S8, _S9);
+    var _S10 : bool;
     if((uvMax_1.x) <= (uvMin_1.x))
     {
-        _S11 = true;
+        _S10 = true;
     }
     else
     {
-        _S11 = (uvMax_1.y) <= (uvMin_1.y);
+        _S10 = (uvMax_1.y) <= (uvMin_1.y);
     }
-    if(_S11)
+    if(_S10)
     {
         visibility_0[idx_0] = u32(0);
         return;
@@ -90,7 +90,7 @@ fn cs_main(@builtin(global_invocation_id) gid_0 : vec3<u32>)
     var w_0 : u32;
     var h_0 : u32;
     {var dim = textureDimensions((depthTex_0));((w_0)) = dim.x;((h_0)) = dim.y;};
-    var _S12 : vec2<i32> = vec2<i32>(i32(w_0) - i32(1), i32(h_0) - i32(1));
+    var _S11 : vec2<i32> = vec2<i32>(i32(w_0) - i32(1), i32(h_0) - i32(1));
     var maxSampled_0 : f32 = 0.0f;
     var ty_0 : u32 = u32(0);
     for(;;)
@@ -112,10 +112,10 @@ fn cs_main(@builtin(global_invocation_id) gid_0 : vec3<u32>)
             {
                 break;
             }
-            var _S13 : vec3<i32> = vec3<i32>(clamp(vec2<i32>(mix(uvMin_1, uvMax_1, (vec2<f32>(f32(tx_0), f32(ty_0)) + vec2<f32>(0.5f)) / vec2<f32>(8.0f)) * vec2<f32>(f32(w_0), f32(h_0))), vec2<i32>(i32(0), i32(0)), _S12), i32(0));
-            var _S14 : f32 = max(maxSampled_0, (textureLoad((depthTex_0), ((_S13)).xy, ((_S13)).z)));
+            var _S12 : vec3<i32> = vec3<i32>(clamp(vec2<i32>(mix(uvMin_1, uvMax_1, (vec2<f32>(f32(tx_0), f32(ty_0)) + vec2<f32>(0.5f)) / vec2<f32>(8.0f)) * vec2<f32>(f32(w_0), f32(h_0))), vec2<i32>(i32(0), i32(0)), _S11), i32(0));
+            var _S13 : f32 = max(maxSampled_0, (textureLoad((depthTex_0), ((_S12)).xy, ((_S12)).z)));
             var tx_1 : u32 = tx_0 + u32(1);
-            maxSampled_0 = _S14;
+            maxSampled_0 = _S13;
             tx_0 = tx_1;
         }
         ty_0 = ty_0 + u32(1);

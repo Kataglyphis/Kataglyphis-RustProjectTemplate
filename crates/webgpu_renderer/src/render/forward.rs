@@ -1130,6 +1130,18 @@ impl ForwardRenderer {
         self.occlusion.visibility()
     }
 
+    /// Per-primitive visibility from the compute-shader culling path
+    /// (`gpu_culling_enabled`), index-aligned to the uploaded primitives. Same
+    /// contract as [`Self::occlusion_visibility`], but fed by [`GpuCulling`]
+    /// instead of hardware occlusion queries. Empty until GPU culling is
+    /// enabled AND the first readback has landed.
+    pub fn gpu_culling_visibility(&self) -> &[bool] {
+        self.gpu_culling
+            .as_ref()
+            .map(GpuCulling::visibility)
+            .unwrap_or(&[])
+    }
+
     /// Raw occlusion sample counts behind [`Self::occlusion_visibility`], for
     /// tests and diagnostics that want the fragment counts, not just the bool.
     pub fn occlusion_samples(&self) -> &[u64] {

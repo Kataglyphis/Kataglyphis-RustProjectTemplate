@@ -422,6 +422,69 @@ fn a_primitive_containing_the_camera_is_always_reported_visible() {
 }
 
 #[test]
+fn gpu_culling_respects_vertical_screen_position() {
+    // `an_occluded_primitive_is_skipped_with_gpu_culling` and
+    // `two_visible_cubes_are_both_drawn_with_gpu_culling` above both use
+    // vertically centred, symmetric geometry, so a vertically mirrored
+    // NDC->uv mapping in gpu_cull.slang samples the same depth-buffer region
+    // either way and neither test can tell a correct mapping from a mirrored
+    // one. This test breaks that symmetry: a large occluder covers only the
+    // TOP half of the screen (world y in [0, 8], which the camera below,
+    // looking down -Z with +Y up, projects above the screen's vertical
+    // centre), with one small cube behind it in the top half (must be
+    // occluded) and one in the bottom half, outside the occluder's screen
+    // footprint (must stay visible). On a mirrored uv mapping this comes out
+    // exactly backwards: the top cube reads back visible and the bottom one
+    // reads back occluded, because each is tested against the depth in the
+    // wrong half of the screen.
+    let Ok(gpu) = GpuContext::new_headless() else {
+        eprintln!("SKIP: no GPU adapter available in this environment");
+        return;
+    };
+
+    // World y in [0, 8], x in [-4, 4], z in [0, 4]: near the camera (eye at
+    // z=8) and spanning from the screen's vertical centre (y=0) upward, so it
+    // occupies only the top half of the frame.
+    let occluder = cube_with_transform(
+        Mat4::from_translation(Vec3::new(0.0, 4.0, 2.0))
+            * Mat4::from_scale(Vec3::new(8.0, 8.0, 4.0)),
+    );
+    // Behind the occluder in depth (z = -3, same as the other tests' hidden
+    // cube), one in the top half of the screen, one in the bottom half.
+    let hidden_top = cube_with_transform(Mat4::from_translation(Vec3::new(0.0, 2.0, -3.0)));
+    let hidden_bottom = cube_with_transform(Mat4::from_translation(Vec3::new(0.0, -2.0, -3.0)));
+
+    let scene = CpuScene {
+        primitives: vec![occluder, hidden_top, hidden_bottom],
+        ..Default::default()
+    };
+
+    let mut renderer = ForwardRenderer::new(&gpu, 256, 256);
+    renderer.upload_scene(&gpu, &scene);
+    renderer.gpu_culling_enabled = true;
+
+    let camera = looking_down_neg_z();
+    render_until_readback_lands(&mut renderer, &gpu, &camera);
+
+    let visibility = renderer.gpu_culling_visibility();
+    eprintln!("gpu-culling visibility: {visibility:?}");
+    assert_eq!(
+        visibility.len(),
+        3,
+        "expected one visibility entry per primitive, got {visibility:?}"
+    );
+    assert!(visibility[0], "the occluder itself must remain visible");
+    assert!(
+        !visibility[1],
+        "the top-half cube sits behind the occluder in its own screen region and must be culled"
+    );
+    assert!(
+        visibility[2],
+        "the bottom-half cube is outside the occluder's screen footprint and must stay visible"
+    );
+}
+
+#[test]
 fn gpu_culling_is_off_by_default() {
     let Ok(gpu) = GpuContext::new_headless() else {
         eprintln!("SKIP: no GPU adapter available in this environment");

@@ -352,6 +352,12 @@ impl GpuCulling {
         }
     }
 
+    /// Per-primitive visibility from the most recent completed readback, same
+    /// contract as [`crate::render::occlusion::OcclusionQueries::visibility`].
+    pub fn visibility(&self) -> &[bool] {
+        &self.visibility
+    }
+
     /// Whether primitive `i` should be drawn given the last readback.
     ///
     /// Defaults to VISIBLE (`true`) for any index the readback has not covered
