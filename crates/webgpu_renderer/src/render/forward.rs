@@ -379,10 +379,8 @@ pub struct ForwardRenderer {
     /// Record the occlusion detection pass after the forward pass.
     ///
     /// Off by default, like `lod_enabled` and `enable_gpu_timing`: it adds a
-    /// depth-only pass plus a query resolve, and this increment only DETECTS
-    /// occlusion (reads back per-primitive visibility) - it does not yet skip
-    /// any draw, so the frame renders exactly as before whether it is on or
-    /// off. The visibility is exposed via [`Self::occlusion_visibility`].
+    /// depth-only pass plus a query resolve. The visibility is exposed via
+    /// [`Self::occlusion_visibility`].
     pub occlusion_queries_enabled: bool,
     /// Use GPU compute-shader culling instead of hardware occlusion queries.
     /// When true, [`GpuCulling`] replaces [`OcclusionQueries`].
@@ -1984,8 +1982,20 @@ impl ForwardRenderer {
                     view: &self.depth_msaa,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
-                        // Discard MSAA depth; the resolve pass copies to `depth`.
-                        store: wgpu::StoreOp::Discard,
+                        // Must be Store, not Discard: the depth-resolve pass
+                        // below is a SEPARATE render pass recorded after this
+                        // one ends, not a subpass. A store op determines what
+                        // happens to the attachment when ITS OWN pass ends, so
+                        // Discard here throws the MSAA depth away before the
+                        // resolve pass - which runs later in the same encoder
+                        // - ever reads it, and every pixel resolves to
+                        // whatever the backend leaves behind (0.0 measured on
+                        // this AMD/Vulkan host). Confirmed by an isolated
+                        // repro: a known clear value round-trips through the
+                        // resolve pass correctly with Store, and comes back
+                        // as 0.0 with Discard, independent of the frag_depth
+                        // fix below.
+                        store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: None,
                 }),

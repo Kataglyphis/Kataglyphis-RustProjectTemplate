@@ -15,6 +15,10 @@ const SHADERS: &[(&str, &str)] = &[
         "occlusion_bbox",
         include_str!("../src/shaders/occlusion_bbox.wgsl"),
     ),
+    (
+        "depth_resolve",
+        include_str!("../src/shaders/depth_resolve.wgsl"),
+    ),
 ];
 
 #[test]
@@ -37,4 +41,47 @@ fn all_shaders_export_to_spirv() {
             "{name}: no entry points exported"
         );
     }
+}
+
+/// The depth-resolve pass has zero colour attachments (see the pipeline in
+/// `forward.rs`) and must write the depth aspect via `@builtin(frag_depth)`.
+/// Slang's WGSL backend has no depth-write control, so it emits a plain
+/// `@location(0)` colour output that gets silently dropped by wgpu, and the
+/// rasterizer's own fragment z is written instead (the fullscreen triangle's
+/// NDC z is 0.0, so every pixel resolves to 0.0). `compile-slang-shaders.*`
+/// patches this after emit; this test pins the patched result.
+#[test]
+fn depth_resolve_fragment_writes_frag_depth() {
+    let source = include_str!("../src/shaders/depth_resolve.wgsl");
+    let module = naga::front::wgsl::parse_str(source)
+        .unwrap_or_else(|e| panic!("depth_resolve.wgsl must parse: {e:?}"));
+    let fs_main = module
+        .entry_points
+        .iter()
+        .find(|ep| ep.name == "fs_main")
+        .expect("depth_resolve.wgsl must export fs_main");
+    let result = fs_main
+        .function
+        .result
+        .as_ref()
+        .expect("fs_main must return a value");
+    let members = match &module.types[result.ty].inner {
+        naga::TypeInner::Struct { members, .. } => members,
+        other => panic!("fs_main result type must be a struct, got {other:?}"),
+    };
+    assert!(
+        members
+            .iter()
+            .any(|m| matches!(
+                m.binding,
+                Some(naga::Binding::BuiltIn(naga::BuiltIn::FragDepth))
+            )),
+        "fs_main must write @builtin(frag_depth); result members are {members:?}"
+    );
+    assert!(
+        !members
+            .iter()
+            .any(|m| matches!(m.binding, Some(naga::Binding::Location { .. }))),
+        "fs_main must not emit a colour @location output; result members are {members:?}"
+    );
 }

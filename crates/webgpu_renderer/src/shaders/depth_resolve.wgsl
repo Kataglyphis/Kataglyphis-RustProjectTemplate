@@ -18,7 +18,7 @@ fn vs_main(@builtin(vertex_index) vid_0 : u32) -> FullscreenVsOut_0
 
 struct pixelOutput_0
 {
-    @location(0) output_0 : f32,
+    @builtin(frag_depth) output_0 : f32,
 };
 
 struct pixelInput_0
@@ -38,7 +38,7 @@ fn fs_main( _S1 : pixelInput_0, @builtin(position) svPosition_1 : vec4<f32>) -> 
     var i_0 : u32 = u32(0);
     for(;;)
     {
-        if(i_0 < u32(4))
+        if(i_0 < samples_0)
         {
         }
         else
