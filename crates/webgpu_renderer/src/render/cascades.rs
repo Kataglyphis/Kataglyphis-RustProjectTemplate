@@ -298,6 +298,86 @@ mod tests {
         );
     }
 
+    /// Mirrors `forward.slang:198-227`'s cascade selection + projection, up
+    /// through the `uv`/`proj.z` range check at `:212` (the point where the
+    /// shader currently gives up and returns "fully lit"). Returns whether
+    /// `world` lands inside cascade `c`'s box.
+    fn shader_covers(view_proj: Mat4, world: Vec3) -> bool {
+        let clip = view_proj * world.extend(1.0);
+        if clip.w.abs() < 1e-6 {
+            return false;
+        }
+        let proj = clip.truncate() / clip.w;
+        let u = proj.x * 0.5 + 0.5;
+        let v = 0.5 - proj.y * 0.5;
+        (0.0..=1.0).contains(&u) && (0.0..=1.0).contains(&v) && (0.0..=1.0).contains(&proj.z)
+    }
+
+    /// `forward.slang:198-203`'s cascade selection rule, in isolation.
+    fn select_cascade(eye_distance: f32, splits: [f32; 2]) -> usize {
+        let mut cascade = 0usize;
+        if eye_distance > splits[0] {
+            cascade = 1;
+        }
+        if eye_distance > splits[1] {
+            cascade = 2;
+        }
+        cascade.min(CASCADE_COUNT - 1)
+    }
+
+    #[test]
+    fn every_selectable_eye_distance_lands_inside_the_cascade_it_selects() {
+        // The near-band hole: a fragment closer to the camera than roughly
+        // half the near split is routed to cascade 0 by `select_cascade`,
+        // but cascade 0's box hugs the camera FOCUS point
+        // (`camera.target.lerp(camera.eye(), 0.15)`), not the camera itself,
+        // so a point that close to the eye can fall outside it. The fix
+        // (`forward.slang`'s `shadow_visibility`) retries the next coarser
+        // cascade before giving up, so the invariant this test pins is
+        // UNION coverage: some cascade at or above the selected index must
+        // contain the fragment, not necessarily the selected one alone.
+        let scene_min = Vec3::new(-4.0, 0.0, -4.0);
+        let scene_max = Vec3::new(4.0, 1.4, 4.0);
+        let light_dir = Vec3::new(-1.0, -0.3, -1.0);
+        let camera = OrbitCamera {
+            radius: 6.0,
+            pitch_deg: 5.0,
+            ..OrbitCamera::default()
+        };
+
+        let fit = fit_cascades(&camera, scene_min, scene_max, light_dir);
+        let eye = camera.eye();
+        let view_dir = (camera.target - eye).normalize();
+
+        let lo = 0.05 * fit.splits[0];
+        let hi = 1.5 * fit.splits[1];
+        const STEPS: u32 = 64;
+
+        let mut uncovered = Vec::new();
+        for i in 0..=STEPS {
+            let t = i as f32 / STEPS as f32;
+            let eye_distance = lo + t * (hi - lo);
+            let world = eye + view_dir * eye_distance;
+            let selected = select_cascade(eye_distance, fit.splits);
+
+            let covered_by_fallback =
+                (selected..CASCADE_COUNT).any(|c| shader_covers(fit.matrices[c], world));
+            if !covered_by_fallback {
+                uncovered.push((eye_distance, selected));
+            }
+        }
+
+        assert!(
+            uncovered.is_empty(),
+            "no cascade from the selected one through {} covers the fragment for {} of {} \
+             sampled eye distances (eye_distance, selected cascade): {:?}",
+            CASCADE_COUNT - 1,
+            uncovered.len(),
+            STEPS + 1,
+            uncovered
+        );
+    }
+
     #[test]
     fn cascade_box_size_is_invariant_under_camera_motion() {
         // The other half of the shimmer: if the box resized as the camera
