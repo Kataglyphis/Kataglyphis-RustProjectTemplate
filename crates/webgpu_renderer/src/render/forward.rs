@@ -1321,8 +1321,12 @@ impl ForwardRenderer {
     }
 
     /// Opaque primitives drawn / considered by the camera pass last frame.
-    /// With occlusion queries enabled, `drawn < considered` once a primitive
-    /// has been occluded for a frame - the observable proof the skip engaged.
+    /// `drawn < considered` once a primitive has been occluded for a frame -
+    /// the observable proof the skip engaged. Fed by whichever of
+    /// `occlusion_queries_enabled` (hardware queries, [`OcclusionQueries`]) or
+    /// `gpu_culling_enabled` (compute-shader depth test, [`GpuCulling`]) is
+    /// on; the two are mutually exclusive and `gpu_culling_enabled` takes
+    /// priority if both are somehow set. With both off, `drawn == considered`.
     pub fn occlusion_cull_stats(&self) -> (u32, u32) {
         (self.occlusion_drawn, self.occlusion_considered)
     }
@@ -1437,6 +1441,9 @@ impl ForwardRenderer {
         // was measured against; a new scene must not inherit it (a smaller scene
         // would see stale culls at shared indices).
         self.occlusion.reset();
+        if let Some(gpu_cull) = self.gpu_culling.as_mut() {
+            gpu_cull.reset();
+        }
         self.scene_bounds = compute_world_bounds(scene);
         let (packed, count) = pack_punctual_lights(&scene.lights);
         self.punctual_lights = packed;
@@ -2208,10 +2215,14 @@ impl ForwardRenderer {
                 // from inside at all (so depth stays empty and the box passes
                 // regardless), and I could not build a failing case from them.
                 // Interior/double-sided geometry does reach the bad path.
-                if self.occlusion_queries_enabled
-                    && !self.occlusion.visible(i)
-                    && !aabb_contains_point(prim.aabb_min, prim.aabb_max, eye)
-                {
+                let occluded = if self.gpu_culling_enabled {
+                    self.gpu_culling.as_ref().is_some_and(|c| !c.visible(i))
+                } else if self.occlusion_queries_enabled {
+                    !self.occlusion.visible(i)
+                } else {
+                    false
+                };
+                if occluded && !aabb_contains_point(prim.aabb_min, prim.aabb_max, eye) {
                     continue;
                 }
                 occ_drawn += 1;
@@ -2317,6 +2328,7 @@ impl ForwardRenderer {
                     GpuCulling::new(gpu, self.primitives.len().max(1024))
                 });
                 let (width, height) = self.target_size;
+                let inv_view_proj = view_proj.inverse();
                 // Use the resolved single-sample depth for culling
                 gpu_cull.cull(
                     gpu,
@@ -2325,7 +2337,7 @@ impl ForwardRenderer {
                     width,
                     height,
                     bytemuck::cast_ref(&view_proj),
-                    bytemuck::cast_ref(&Mat4::IDENTITY), // inv_view_proj placeholder
+                    bytemuck::cast_ref(&inv_view_proj),
                     &aabbs,
                 );
             } else if self.occlusion_queries_enabled {
@@ -2385,6 +2397,14 @@ impl ForwardRenderer {
         // detection is advisory and a later increment reads last-known
         // visibility. When disabled this is a cheap poll over empty slots.
         self.occlusion.end_frame(&gpu.device);
+        // Same non-blocking drain for the GPU-culling ring, gated on the flag
+        // like `cull` above - the two paths are mutually exclusive so only one
+        // ever has readbacks in flight.
+        if self.gpu_culling_enabled {
+            if let Some(gpu_cull) = self.gpu_culling.as_mut() {
+                gpu_cull.end_frame(&gpu.device);
+            }
+        }
     }
 
     /// Headless helper: renders one tonemapped frame into a fresh RGBA8

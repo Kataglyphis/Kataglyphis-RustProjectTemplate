@@ -297,3 +297,94 @@ fn loading_a_new_scene_does_not_inherit_the_old_scene_visibility() {
          {drawn}/{considered})"
     );
 }
+
+#[test]
+fn an_occluded_primitive_is_skipped_with_gpu_culling() {
+    // Same shape as `an_occluded_primitive_is_actually_skipped_in_the_opaque_pass`,
+    // but exercising the compute-shader path (`gpu_culling_enabled`) instead of
+    // hardware occlusion queries - the two must be interchangeable from the
+    // draw loop's point of view.
+    let Ok(gpu) = GpuContext::new_headless() else {
+        eprintln!("SKIP: no GPU adapter available in this environment");
+        return;
+    };
+
+    let occluder = cube_with_transform(
+        Mat4::from_translation(Vec3::new(0.0, 0.0, 2.0)) * Mat4::from_scale(Vec3::splat(4.0)),
+    );
+    let hidden = cube_with_transform(Mat4::from_translation(Vec3::new(0.0, 0.0, -3.0)));
+    let scene = CpuScene {
+        primitives: vec![occluder, hidden],
+        ..Default::default()
+    };
+
+    let mut renderer = ForwardRenderer::new(&gpu, 256, 256);
+    renderer.upload_scene(&gpu, &scene);
+    renderer.gpu_culling_enabled = true;
+
+    let camera = looking_down_neg_z();
+    render_until_readback_lands(&mut renderer, &gpu, &camera);
+
+    let (drawn, considered) = renderer.occlusion_cull_stats();
+    assert_eq!(considered, 2, "both cubes are within the frustum");
+    assert_eq!(
+        drawn, 1,
+        "the hidden cube must be culled by the compute-shader path, leaving 1 draw (got {drawn})"
+    );
+
+    // Disabling it draws both again next frame - the skip is gated on the flag.
+    renderer.gpu_culling_enabled = false;
+    renderer
+        .render_to_pixels(&gpu, 256, 256, &camera)
+        .expect("render");
+    let (drawn_off, _) = renderer.occlusion_cull_stats();
+    assert_eq!(drawn_off, 2, "with culling off both cubes draw");
+}
+
+#[test]
+fn two_visible_cubes_are_both_drawn_with_gpu_culling() {
+    // Over-culling guard for the compute-shader path, mirroring
+    // `two_visible_cubes_are_both_drawn_with_culling_on`.
+    let Ok(gpu) = GpuContext::new_headless() else {
+        eprintln!("SKIP: no GPU adapter available in this environment");
+        return;
+    };
+    let left = cube_with_transform(Mat4::from_translation(Vec3::new(-3.0, 0.0, 0.0)));
+    let right = cube_with_transform(Mat4::from_translation(Vec3::new(3.0, 0.0, 0.0)));
+    let scene = CpuScene {
+        primitives: vec![left, right],
+        ..Default::default()
+    };
+    let mut renderer = ForwardRenderer::new(&gpu, 256, 256);
+    renderer.upload_scene(&gpu, &scene);
+    renderer.gpu_culling_enabled = true;
+    let camera = looking_down_neg_z();
+    render_until_readback_lands(&mut renderer, &gpu, &camera);
+    let (drawn, considered) = renderer.occlusion_cull_stats();
+    assert_eq!((drawn, considered), (2, 2), "both visible cubes must draw");
+}
+
+#[test]
+fn gpu_culling_is_off_by_default() {
+    let Ok(gpu) = GpuContext::new_headless() else {
+        eprintln!("SKIP: no GPU adapter available in this environment");
+        return;
+    };
+
+    let scene = load_gltf(cube_path()).expect("cube.gltf must load");
+    let mut renderer = ForwardRenderer::new(&gpu, 128, 128);
+    renderer.upload_scene(&gpu, &scene);
+
+    assert!(!renderer.gpu_culling_enabled);
+    let camera = OrbitCamera::default();
+    for _ in 0..4 {
+        renderer
+            .render_to_pixels(&gpu, 128, 128, &camera)
+            .expect("headless render must succeed");
+    }
+    let (drawn, considered) = renderer.occlusion_cull_stats();
+    assert_eq!(
+        drawn, considered,
+        "no primitive should be culled while gpu_culling_enabled is off"
+    );
+}
