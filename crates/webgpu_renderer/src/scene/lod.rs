@@ -12,10 +12,21 @@
 //! SURFACE rather than to the original vertices, which preserves silhouettes
 //! and creases that clustering rounds off. That is the upgrade this module is
 //! shaped for and has not had.
+//!
+//! Attribute rule: a merged vertex's `position` and `normal` are the
+//! CENTROID/average of the cell's input vertices - they are meaningfully
+//! interpolable. Every other attribute (`uv`, `uv1`, `tangent`, `color`,
+//! `joints`, `weights`) is copied whole from the cell's MEDOID - the input
+//! vertex nearest the final centroid - rather than averaged: a bone index is
+//! not a number you can interpolate, and averaging `uv` across a seam smears
+//! the atlas. This differs from `qem.rs`, which blends `uv`/`color` along the
+//! collapsed edge and only takes `joints`/`weights` from the nearer endpoint;
+//! clustering merges N vertices at once rather than collapsing one edge, so
+//! "nearest of many" rather than "lerp between two" is the natural analogue.
 
 use std::collections::HashMap;
 
-use glam::Vec3;
+use glam::{DVec3, Vec3};
 
 use crate::scene::{CpuPrimitive, Vertex};
 
@@ -60,7 +71,13 @@ pub fn simplify_primitive(prim: &CpuPrimitive, cell_ratio: f32) -> CpuPrimitive 
     let mut cell_to_index: HashMap<(i64, i64, i64), u32> = HashMap::new();
     let mut vertices: Vec<Vertex> = Vec::new();
     let mut normal_sums: Vec<Vec3> = Vec::new();
-    let mut position_sums: Vec<Vec3> = Vec::new();
+    // Accumulated in f64: summing dozens of f32 positions in whatever order
+    // the input happens to list them rounds differently per order, and the
+    // medoid pass below turns that rounding into a discrete argmin - a case
+    // where "off in the last bit" can flip which real vertex is nearest. f64
+    // pushes that noise far below the gap between any two genuinely distinct
+    // candidates.
+    let mut position_sums: Vec<DVec3> = Vec::new();
     let mut merge_counts: Vec<f32> = Vec::new();
     let mut remap: Vec<u32> = Vec::with_capacity(prim.vertices.len());
 
@@ -74,12 +91,12 @@ pub fn simplify_primitive(prim: &CpuPrimitive, cell_ratio: f32) -> CpuPrimitive 
         let index = *cell_to_index.entry(key).or_insert_with(|| {
             vertices.push(*v);
             normal_sums.push(Vec3::ZERO);
-            position_sums.push(Vec3::ZERO);
+            position_sums.push(DVec3::ZERO);
             merge_counts.push(0.0);
             (vertices.len() - 1) as u32
         });
         normal_sums[index as usize] += Vec3::from_array(v.normal);
-        position_sums[index as usize] += p;
+        position_sums[index as usize] += p.as_dvec3();
         merge_counts[index as usize] += 1.0;
         remap.push(index);
     }
@@ -91,8 +108,55 @@ pub fn simplify_primitive(prim: &CpuPrimitive, cell_ratio: f32) -> CpuPrimitive 
         }
         let count = merge_counts[index];
         if count > 0.0 {
-            vertex.position = (position_sums[index] / count).to_array();
+            vertex.position = (position_sums[index] / count as f64).as_vec3().to_array();
         }
+    }
+
+    // Second pass: pick the MEDOID for every attribute other than position
+    // and normal - the input vertex nearest the final centroid. Requires the
+    // centroids above to already be in place. Distances are compared in f64
+    // against the f64 centroid sum, not the rounded f32 `vertex.position`, so
+    // a genuine tie stays a tie instead of being manufactured by the f32
+    // round-trip.
+    //
+    // A regular grid puts exact ties well within reach (two vertices
+    // symmetric about a cell's centroid), so ties need a break that cannot
+    // depend on how the mesh is listed. The ORIGINAL vertex index looks like
+    // one, but is not: reversing the whole vertex list turns "smallest
+    // index" into "largest index" for the very same two vertices, which is
+    // exactly the order-dependence this function exists to remove. The
+    // vertex's own position is stable under any reordering, so ties instead
+    // break on the lexicographically smaller position (`total_cmp`, which
+    // gives every float pair a defined order).
+    let mut medoid_index: Vec<u32> = vec![0; vertices.len()];
+    let mut medoid_dist_sq: Vec<f64> = vec![f64::INFINITY; vertices.len()];
+    let mut medoid_position: Vec<DVec3> = vec![DVec3::ZERO; vertices.len()];
+    for (i, v) in prim.vertices.iter().enumerate() {
+        let cell = remap[i] as usize;
+        let p = Vec3::from_array(v.position).as_dvec3();
+        let centroid = position_sums[cell] / merge_counts[cell] as f64;
+        let dist_sq = (p - centroid).length_squared();
+        let is_better = dist_sq < medoid_dist_sq[cell]
+            || (dist_sq == medoid_dist_sq[cell]
+                && p.x
+                    .total_cmp(&medoid_position[cell].x)
+                    .then_with(|| p.y.total_cmp(&medoid_position[cell].y))
+                    .then_with(|| p.z.total_cmp(&medoid_position[cell].z))
+                    == std::cmp::Ordering::Less);
+        if is_better {
+            medoid_dist_sq[cell] = dist_sq;
+            medoid_index[cell] = i as u32;
+            medoid_position[cell] = p;
+        }
+    }
+    for (cell, vertex) in vertices.iter_mut().enumerate() {
+        let source = &prim.vertices[medoid_index[cell] as usize];
+        vertex.uv = source.uv;
+        vertex.uv1 = source.uv1;
+        vertex.tangent = source.tangent;
+        vertex.color = source.color;
+        vertex.joints = source.joints;
+        vertex.weights = source.weights;
     }
 
     // Rebuild indices, dropping triangles that collapsed to a line/point.
@@ -136,6 +200,14 @@ pub fn build_lod_chain(prim: &CpuPrimitive, switch_distances: &[f32]) -> Vec<Lod
 /// cell, fewer vertices) while QEM's is a TRIANGLE BUDGET (smaller fraction,
 /// fewer triangles). They move in opposite directions and are not
 /// interchangeable numbers.
+///
+/// They also differ in non-interpolable attribute handling: clustering
+/// (this module's top doc) copies `uv`/`uv1`/`tangent`/`color`/`joints`/
+/// `weights` whole from the cell's medoid, while `qem.rs::blend` lerps
+/// `uv`/`color` along the collapsed edge and only takes `joints`/`weights`
+/// from the nearer endpoint. Not a bug in either - N-way cell merging and
+/// pairwise edge collapse warrant different rules - but a caller that
+/// switches `Simplifier` should not expect bit-identical attribute behavior.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Simplifier {
     /// Grid quantization. O(n), and cannot represent a feature smaller than
@@ -371,6 +443,13 @@ mod tests {
             v.position[0] += (n * 0.37).fract() * 0.01;
             v.position[1] += (n * 0.71).fract() * 0.01;
             v.position[2] += (n * 0.13).fract() * 0.01;
+            // Distinct per-vertex uv/joints so a medoid pick can be told apart
+            // from its neighbours - grid_primitive gives every vertex the
+            // same uv and joints, which would pass even a first-wins-style
+            // regression by coincidence.
+            v.uv = [n, n * 2.0];
+            v.joints = [n, 0.0, 0.0, 0.0];
+            v.weights = [1.0, 0.0, 0.0, 0.0];
         }
 
         let mut reordered = original.clone();
@@ -415,7 +494,109 @@ mod tests {
                 (pa - pb).length() < 1e-4,
                 "vertex order changed a merged position: {pa:?} vs {pb:?}"
             );
+
+            // uv/joints/weights are copied from the medoid, not summed, so
+            // unlike position they should match exactly - no f32 summation
+            // noise to allow for.
+            assert_eq!(
+                va.uv, vb.uv,
+                "vertex order changed which vertex's uv was kept"
+            );
+            assert_eq!(
+                va.joints, vb.joints,
+                "vertex order changed which vertex's joints was kept"
+            );
+            assert_eq!(
+                va.weights, vb.weights,
+                "vertex order changed which vertex's weights was kept"
+            );
         }
+    }
+
+    #[test]
+    fn merged_vertices_take_their_skin_binding_from_the_nearest_real_vertex() {
+        // A single cell containing vertices bound to different joints. The
+        // merged vertex must carry the MEDOID's joints/weights - the input
+        // vertex closest to the merged centroid - not whichever vertex the
+        // merge loop happened to visit first.
+        let mut prim = grid_primitive(2);
+        prim.vertices[0].position = [0.0, 0.0, 0.0];
+        prim.vertices[0].joints = [1.0, 0.0, 0.0, 0.0];
+        prim.vertices[0].weights = [1.0, 0.0, 0.0, 0.0];
+        prim.vertices[0].uv = [0.1, 0.1];
+
+        prim.vertices[1].position = [0.01, 0.0, 0.0];
+        prim.vertices[1].joints = [2.0, 0.0, 0.0, 0.0];
+        prim.vertices[1].weights = [0.0, 1.0, 0.0, 0.0];
+        prim.vertices[1].uv = [0.2, 0.2];
+
+        prim.vertices[2].position = [0.0, 0.01, 0.0];
+        prim.vertices[2].joints = [3.0, 0.0, 0.0, 0.0];
+        prim.vertices[2].weights = [0.0, 0.0, 1.0, 0.0];
+        prim.vertices[2].uv = [0.3, 0.3];
+
+        prim.vertices[3].position = [10.0, 10.0, 10.0];
+        prim.vertices[3].joints = [4.0, 0.0, 0.0, 0.0];
+        prim.vertices[3].weights = [0.0, 0.0, 0.0, 1.0];
+        prim.vertices[3].uv = [0.4, 0.4];
+
+        // A cell size that swallows the first three vertices (clustered near
+        // the origin) but not the fourth (far away), so the merged centroid
+        // is the average of vertices 0-2 and the nearest of those three -
+        // vertex 0, sitting exactly at the average's neighbourhood - is the
+        // medoid.
+        let cell_ratio = 0.5;
+        let simplified = simplify_primitive(&prim, cell_ratio);
+        assert_eq!(
+            simplified.vertices.len(),
+            2,
+            "expected the three close vertices to merge and the far one to stay separate"
+        );
+
+        let merged = simplified
+            .vertices
+            .iter()
+            .find(|v| Vec3::from_array(v.position).length() < 1.0)
+            .expect("merged cluster vertex not found");
+
+        assert_eq!(
+            merged.joints,
+            prim.vertices[0].joints,
+            "expected the medoid's (vertex 0) joints, not an average or a different vertex's"
+        );
+        assert_eq!(
+            merged.weights,
+            prim.vertices[0].weights,
+            "expected the medoid's (vertex 0) weights"
+        );
+
+        // Reversing the input order must not change which vertex is the
+        // medoid.
+        let mut reversed = prim.clone();
+        reversed.vertices.reverse();
+        let last = (prim.vertices.len() - 1) as u32;
+        for index in &mut reversed.indices {
+            *index = last - *index;
+        }
+        let simplified_reversed = simplify_primitive(&reversed, cell_ratio);
+        let merged_reversed = simplified_reversed
+            .vertices
+            .iter()
+            .find(|v| Vec3::from_array(v.position).length() < 1.0)
+            .expect("merged cluster vertex not found");
+
+        assert_eq!(
+            merged_reversed.joints, merged.joints,
+            "vertex order changed which vertex's joints the merge kept"
+        );
+        assert_eq!(
+            merged_reversed.weights, merged.weights,
+            "vertex order changed which vertex's weights the merge kept"
+        );
+        assert_eq!(
+            merged_reversed.uv, merged.uv,
+            "vertex order changed which vertex's uv the merge kept"
+        );
     }
 
     #[test]
