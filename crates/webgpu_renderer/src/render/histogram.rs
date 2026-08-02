@@ -6,13 +6,8 @@
 //! in [`crate::render::auto_exposure`], before anything depends on its output.
 
 use crate::context::GpuContext;
-use crate::render::auto_exposure::HISTOGRAM_BINS;
+use crate::render::auto_exposure::{BUILD_WORKGROUP, CLEAR_WORKGROUP, HISTOGRAM_BINS};
 use crate::render::gpu_timing::PassScope;
-
-/// Workgroup size of `cs_build_histogram`; must match the shader.
-const BUILD_WORKGROUP: u32 = 16;
-/// Workgroup size of `cs_clear_histogram`; must match the shader.
-const CLEAR_WORKGROUP: u32 = 64;
 
 /// Per-frame inputs to the reduction pass.
 #[derive(Copy, Clone, Debug)]

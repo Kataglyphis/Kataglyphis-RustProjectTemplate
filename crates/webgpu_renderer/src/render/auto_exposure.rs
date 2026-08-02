@@ -25,6 +25,13 @@ pub const HISTOGRAM_BINS: usize = 64;
 pub const MIN_LOG_LUMINANCE: f32 = -10.0;
 pub const MAX_LOG_LUMINANCE: f32 = 4.0;
 
+/// Workgroup size of `histogram.wgsl`'s `cs_build_histogram`; must match the
+/// shader's `@workgroup_size(16, 16, 1)`.
+pub const BUILD_WORKGROUP: u32 = 16;
+/// Workgroup size of `histogram.wgsl`'s `cs_clear_histogram`; must match the
+/// shader's `@workgroup_size(64, 1, 1)`.
+pub const CLEAR_WORKGROUP: u32 = 64;
+
 /// Middle grey. The exposure that maps average scene luminance onto this is
 /// what "correctly exposed" means here.
 pub const EXPOSURE_KEY: f32 = 0.18;
