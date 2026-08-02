@@ -71,6 +71,9 @@ pub(crate) fn linear_to_srgb(value: f32) -> u8 {
 /// space; data maps (normals, metallic-roughness) are averaged raw.
 pub(crate) fn generate_mips(base: &CpuTexture, srgb: bool) -> Vec<(u32, u32, Vec<u8>)> {
     let mut levels = vec![(base.width, base.height, base.rgba8.clone())];
+    if base.width == 0 || base.height == 0 {
+        return levels;
+    }
     let (mut w, mut h) = (base.width, base.height);
 
     while w > 1 || h > 1 {
@@ -94,7 +97,11 @@ pub(crate) fn generate_mips(base: &CpuTexture, srgb: bool) -> Vec<(u32, u32, Vec
                         let sum: f32 = samples.iter().map(|&b| srgb_to_linear(b)).sum();
                         linear_to_srgb(sum / 4.0)
                     } else {
-                        (samples.iter().map(|&b| b as u32).sum::<u32>() / 4) as u8
+                        // Round-half-up: the sRGB arm above already rounds via
+                        // `linear_to_srgb`, and the two arms disagreeing is what let a
+                        // truncation bias compound once per level down the whole chain.
+                        // Four u8 values sum to at most 1020, so `+ 2` cannot overflow.
+                        ((samples.iter().map(|&b| b as u32).sum::<u32>() + 2) / 4) as u8
                     };
                     next.push(value);
                 }
@@ -394,6 +401,53 @@ mod tests {
             );
         }
         // Alpha is linear even for sRGB textures: raw byte average of two 0s and two 255s.
-        assert_eq!(data[3], 127);
+        // The exact mean of two 0s and two 255s is 127.5; round-half-up gives 128.
+        assert_eq!(data[3], 128);
+    }
+
+    #[test]
+    fn generate_mips_does_not_drift_darker_over_a_long_chain() {
+        const SIZE: u32 = 64;
+        let mut rgba8 = vec![0u8; (SIZE * SIZE * 4) as usize];
+        for y in 0..SIZE {
+            for x in 0..SIZE {
+                for channel in 0..4u32 {
+                    let value = ((x * 7 + y * 13 + channel) % 256) as u8;
+                    rgba8[((y * SIZE + x) * 4 + channel) as usize] = value;
+                }
+            }
+        }
+        let base = CpuTexture { width: SIZE, height: SIZE, rgba8, compressed: None };
+
+        let mut sums = [0f64; 4];
+        for y in 0..SIZE {
+            for x in 0..SIZE {
+                for channel in 0..4usize {
+                    sums[channel] += base.rgba8[((y * SIZE + x) * 4 + channel as u32) as usize] as f64;
+                }
+            }
+        }
+        let means: Vec<f64> = sums.iter().map(|&s| s / (SIZE * SIZE) as f64).collect();
+
+        let levels = generate_mips(&base, false);
+        let (w, h, data) = levels.last().unwrap();
+        assert_eq!((*w, *h), (1, 1));
+        for channel in 0..4usize {
+            let value = data[channel] as f64;
+            let mean = means[channel].round();
+            assert!(
+                (value - mean).abs() <= 1.0,
+                "channel {channel}: mip value {value} drifted too far from base mean {mean}"
+            );
+        }
+    }
+
+    #[test]
+    fn generate_mips_on_a_zero_sized_texture_returns_only_the_base() {
+        let base = CpuTexture { width: 0, height: 4, rgba8: Vec::new(), compressed: None };
+        let levels = generate_mips(&base, false);
+        assert_eq!(levels.len(), 1);
+        assert_eq!(levels[0].0, 0);
+        assert_eq!(levels[0].1, 4);
     }
 }
