@@ -654,6 +654,68 @@ fn ssao_darkens_geometry() {
     );
 }
 
+/// A structural counterpart to `ssao_darkens_geometry`: that test only checks
+/// that SSAO removes *some* energy, which a flat `1 - ssao_strength` output
+/// (independent of the reconstructed normal) would also satisfy. This test
+/// asks for the property a correct kernel must have - a fronto-parallel
+/// surface has no neighbouring occluders within its hemisphere, so its
+/// interior must read as unoccluded regardless of `ssao_strength`.
+#[test]
+fn ssao_leaves_a_flat_surface_unoccluded() {
+    let Ok(gpu) = GpuContext::new_headless() else {
+        eprintln!("SKIP: no GPU adapter available in this environment");
+        return;
+    };
+
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_alpha.gltf");
+    let scene = load_gltf(&path).expect("cube_alpha.gltf must load");
+    let (width, height) = (256, 256);
+    let mut renderer = ForwardRenderer::new(&gpu, width, height);
+    renderer.upload_scene(&gpu, &scene);
+    renderer.bloom_strength = 0.0;
+
+    // Head-on view of the cube's +Z face: target its centre, pitch 0, yaw 90
+    // (camera on +Z looking down -Z), close enough that the face fills most
+    // of the frame.
+    let camera = OrbitCamera {
+        target: glam::Vec3::new(0.0, 0.5, 0.0),
+        radius: 2.0,
+        yaw_deg: 90.0,
+        pitch_deg: 0.0,
+        ..OrbitCamera::default()
+    };
+
+    renderer.ssao_strength = 0.0;
+    let without = renderer
+        .render_to_pixels(&gpu, width, height, &camera)
+        .expect("render without ssao");
+    renderer.ssao_strength = 1.0;
+    let with = renderer
+        .render_to_pixels(&gpu, width, height, &camera)
+        .expect("render with ssao");
+
+    // Sample the central half of the frame, well inside the face and away
+    // from its silhouette edges (and from the elevated blend/mask quads,
+    // which are edge-on at pitch 0 and do not reach this region).
+    let margin = width as usize / 4;
+    let mut max_diff = 0i32;
+    for y in margin..(height as usize - margin) {
+        for x in margin..(width as usize - margin) {
+            let idx = (y * width as usize + x) * 4;
+            for c in 0..3 {
+                let diff = (with[idx + c] as i32 - without[idx + c] as i32).abs();
+                max_diff = max_diff.max(diff);
+            }
+        }
+    }
+    assert!(
+        max_diff <= 6,
+        "flat fronto-parallel surface should read as unoccluded at any ssao_strength, \
+         max channel diff over the interior was {max_diff}"
+    );
+}
+
 #[test]
 fn animation_moves_the_cube() {
     let Ok(gpu) = GpuContext::new_headless() else {

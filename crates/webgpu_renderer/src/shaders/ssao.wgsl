@@ -78,7 +78,7 @@ fn fs_ssao( _S2 : pixelInput_0, @builtin(position) svPosition_1 : vec4<f32>) -> 
     {var dim = textureDimensions((depthTex_0));((w_1)) = dim.x;((h_1)) = dim.y;};
     var _S4 : vec2<f32> = _S2.uv_3 + vec2<f32>(1.0f / f32(w_1), 0.0f);
     var _S5 : vec2<f32> = _S2.uv_3 + vec2<f32>(0.0f, 1.0f / f32(h_1));
-    var n_0 : vec3<f32> = normalize(cross(view_pos_at_0(_S4, load_depth_0(_S4)) - p_0, view_pos_at_0(_S5, load_depth_0(_S5)) - p_0));
+    var n_0 : vec3<f32> = normalize(cross(view_pos_at_0(_S5, load_depth_0(_S5)) - p_0, view_pos_at_0(_S4, load_depth_0(_S4)) - p_0));
     const _S6 : vec3<f32> = vec3<f32>(0.0f, 1.0f, 0.0f);
     var up_0 : vec3<f32>;
     if((abs(n_0.y)) > 0.98000001907348633f)
