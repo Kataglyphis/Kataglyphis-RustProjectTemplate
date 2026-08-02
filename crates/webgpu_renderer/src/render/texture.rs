@@ -144,6 +144,9 @@ pub(crate) fn create_compressed_texture(
         }
     }
     let format = compressed_wgpu_format(compressed.format, srgb);
+    // `compressed.mips` is trusted here (level count and per-level byte size both
+    // match `texture.width`/`texture.height`) because `ktx2_loader::validate_mip_chain`
+    // already rejected anything that wouldn't.
     let block_bytes = compressed.format.block_bytes();
     let gpu_texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
         label,

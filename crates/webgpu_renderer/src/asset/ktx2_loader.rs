@@ -50,6 +50,42 @@ fn declared_srgb_for(vk_format: u32) -> Option<bool> {
     }
 }
 
+/// Rejects a mip chain that cannot possibly belong to a `width`x`height`
+/// texture in `format`: an empty chain, more levels than the full mip
+/// pyramid allows, or any level whose data is too small for the block
+/// dimensions it is claimed to cover. Pure and adapter-free, so it can run
+/// long before any wgpu resource exists.
+pub(crate) fn validate_mip_chain(
+    width: u32,
+    height: u32,
+    format: CompressedFormat,
+    mips: &[Vec<u8>],
+) -> anyhow::Result<()> {
+    anyhow::ensure!(!mips.is_empty(), "KTX2 contains no mip levels");
+
+    let max_levels = 32 - width.max(height).leading_zeros();
+    anyhow::ensure!(
+        mips.len() as u32 <= max_levels,
+        "KTX2 declares {} mip levels but a {width}x{height} texture has at most {max_levels}",
+        mips.len()
+    );
+
+    let block_bytes = format.block_bytes();
+    for (level, data) in mips.iter().enumerate() {
+        let w = (width >> level).max(1);
+        let h = (height >> level).max(1);
+        let expected = w.div_ceil(4) * h.div_ceil(4) * block_bytes;
+        anyhow::ensure!(
+            data.len() as u32 >= expected,
+            "KTX2 mip level {level} has {} bytes but a {w}x{h} block-compressed \
+             level needs at least {expected}",
+            data.len()
+        );
+    }
+
+    Ok(())
+}
+
 /// Parses a KTX2 file into a `CpuTexture` carrying its compressed mip chain.
 pub fn load_ktx2(bytes: &[u8]) -> anyhow::Result<CpuTexture> {
     let reader = ktx2::Reader::new(bytes).context("not a valid KTX2 container")?;
@@ -60,6 +96,10 @@ pub fn load_ktx2(bytes: &[u8]) -> anyhow::Result<CpuTexture> {
         "KTX2 supercompression {:?} is not supported yet (Basis transcoding pending)",
         header.supercompression_scheme
     );
+
+    anyhow::ensure!(header.face_count <= 1, "KTX2 cubemaps ({} faces) are not supported yet, only 2D textures", header.face_count);
+    anyhow::ensure!(header.layer_count <= 1, "KTX2 array textures ({} layers) are not supported yet, only 2D textures", header.layer_count);
+    anyhow::ensure!(header.pixel_depth <= 1, "KTX2 3D textures (depth {}) are not supported yet, only 2D textures", header.pixel_depth);
 
     let vk_format = header
         .format
@@ -72,9 +112,14 @@ pub fn load_ktx2(bytes: &[u8]) -> anyhow::Result<CpuTexture> {
     let mips: Vec<Vec<u8>> = reader.levels().map(|level| level.data.to_vec()).collect();
     anyhow::ensure!(!mips.is_empty(), "KTX2 contains no mip levels");
 
+    let width = header.pixel_width.max(1);
+    let height = header.pixel_height.max(1);
+    validate_mip_chain(width, height, format, &mips)
+        .context("KTX2 mip chain does not match the declared dimensions")?;
+
     Ok(CpuTexture {
-        width: header.pixel_width.max(1),
-        height: header.pixel_height.max(1),
+        width,
+        height,
         rgba8: Vec::new(),
         compressed: Some(CompressedTexture { format, mips, declared_srgb }),
     })
@@ -132,5 +177,39 @@ mod tests {
         // Garbage in -> a graceful Err, never a panic.
         assert!(load_ktx2(b"not a ktx2 file at all").is_err());
         assert!(load_ktx2(&[]).is_err());
+    }
+
+    /// A correctly-sized 4x4 BC1 mip chain: one 4x4 block per level, 8 bytes
+    /// (one block) apiece, down to the 1x1 level.
+    fn valid_4x4_bc1_chain(levels: usize) -> Vec<Vec<u8>> {
+        (0..levels).map(|_| vec![0u8; 8]).collect()
+    }
+
+    #[test]
+    fn validate_mip_chain_rejects_more_levels_than_the_dimensions_allow() {
+        // 4x4 has a full pyramid of 3 levels (4x4, 2x2, 1x1); a 5th level
+        // cannot correspond to any real mip of a 4x4 texture.
+        let five_levels = valid_4x4_bc1_chain(5);
+        assert!(
+            validate_mip_chain(4, 4, CompressedFormat::Bc1RgbaUnorm, &five_levels).is_err()
+        );
+
+        let three_levels = valid_4x4_bc1_chain(3);
+        assert!(
+            validate_mip_chain(4, 4, CompressedFormat::Bc1RgbaUnorm, &three_levels).is_ok()
+        );
+    }
+
+    #[test]
+    fn validate_mip_chain_rejects_a_truncated_level() {
+        let mut chain = valid_4x4_bc1_chain(3);
+        chain.last_mut().unwrap().pop();
+        assert!(validate_mip_chain(4, 4, CompressedFormat::Bc1RgbaUnorm, &chain).is_err());
+    }
+
+    #[test]
+    fn validate_mip_chain_accepts_a_base_only_chain() {
+        let chain = valid_4x4_bc1_chain(1);
+        assert!(validate_mip_chain(4, 4, CompressedFormat::Bc1RgbaUnorm, &chain).is_ok());
     }
 }
