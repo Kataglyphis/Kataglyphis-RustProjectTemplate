@@ -117,6 +117,66 @@ fn generated_wgsl_has_no_hand_edits() {
     );
 }
 
+/// Hand-maintained: `src/render/*.rs` pipeline builders name these entry
+/// points by string, so a `.slang`/manifest edit that drops or renames one
+/// compiles fine and fails only at pipeline-creation time (or worse, is
+/// silently masked by a `filterable`/binding mismatch). This table pins the
+/// pipeline-builder's expectations against the actual WGSL export so the
+/// mismatch is a `cargo test` failure instead - this is what caught
+/// `Precompute::new` naming a `fs_downsample_cube` that `ibl.wgsl` did not
+/// export. Seeded by grepping `entry_point: Some(` across `src/render/`.
+const REQUIRED_ENTRY_POINTS: &[(&str, &[&str])] = &[
+    (
+        "forward",
+        &[
+            "vs_main",
+            "fs_main",
+            "vs_shadow_masked",
+            "fs_shadow_masked",
+            "vs_shadow",
+        ],
+    ),
+    ("sky", &["vs_main", "fs_main"]),
+    ("tonemap", &["vs_main", "fs_main"]),
+    ("bloom", &["vs_main", "fs_brightpass", "fs_blur_h", "fs_blur_v"]),
+    ("ssao", &["vs_main", "fs_ssao", "fs_blur"]),
+    (
+        "ibl",
+        &[
+            "vs_fullscreen",
+            "fs_equirect_to_cube",
+            "fs_downsample_cube",
+            "fs_irradiance",
+            "fs_prefilter",
+            "fs_brdf_lut",
+        ],
+    ),
+    ("occlusion_bbox", &["vs_main", "fs_main"]),
+    ("depth_resolve", &["vs_main", "fs_main"]),
+    ("gpu_cull", &["cs_main"]),
+    (
+        "histogram",
+        &["cs_build_histogram", "cs_reduce_exposure", "cs_clear_histogram"],
+    ),
+];
+
+#[test]
+fn every_pipeline_entry_point_is_exported() {
+    for (name, source) in SHADERS {
+        let Some((_, required)) = REQUIRED_ENTRY_POINTS.iter().find(|(n, _)| n == name) else {
+            continue;
+        };
+        let module = naga::front::wgsl::parse_str(source)
+            .unwrap_or_else(|e| panic!("{name}.wgsl must parse: {e:?}"));
+        for entry_point in *required {
+            assert!(
+                module.entry_points.iter().any(|ep| ep.name == *entry_point),
+                "{name}.wgsl must export `{entry_point}` - a src/render/*.rs pipeline names it"
+            );
+        }
+    }
+}
+
 /// The depth-resolve pass has zero colour attachments (see the pipeline in
 /// `forward.rs`) and must write the depth aspect via `@builtin(frag_depth)`.
 /// Slang's WGSL backend has no depth-write control, so it emits a plain
