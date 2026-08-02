@@ -228,6 +228,39 @@ fn triangulate(indices: &[u32], mode: gltf::mesh::Mode) -> Vec<u32> {
     }
 }
 
+/// Drops every triangle with a corner that does not address a vertex this
+/// primitive actually shipped, returning the surviving triangle-list indices
+/// and the number of triangles dropped.
+///
+/// The `gltf` crate validates that an index accessor fits inside its buffer
+/// view; it does NOT validate that the index *values* address existing
+/// vertices. Everything downstream indexes `vertices` directly -
+/// [`compute_flat_normals`], [`compute_tangents`] and the MikkTSpace adapter's
+/// `self.indices[..] as usize` - so an out-of-range value is a bounds-check
+/// panic, and in the WASM demo a panic is an unrecoverable abort of the whole
+/// canvas: one malformed upload takes the page down. Mirrors the C++
+/// `GltfLoader::processPrimitive` guard (`353ab7d4`).
+///
+/// Filtering is at whole-triangle granularity (`chunks_exact(3)`) for the same
+/// reason the C++ side drops a whole triangle: a bad corner must not re-wind
+/// its neighbours, and the list has to stay a multiple of 3. A trailing
+/// partial triangle (index count not a multiple of 3) is dropped too, but is
+/// not counted - it was never a triangle.
+fn drop_out_of_range_triangles(indices: Vec<u32>, vertex_count: usize) -> (Vec<u32>, usize) {
+    let in_range = |tri: &&[u32]| tri.iter().all(|&i| (i as usize) < vertex_count);
+    let triangle_count = indices.len() / 3;
+    let kept = indices.chunks_exact(3).filter(in_range).count();
+    if kept == triangle_count && indices.len().is_multiple_of(3) {
+        return (indices, 0);
+    }
+
+    let mut out = Vec::with_capacity(kept * 3);
+    for tri in indices.chunks_exact(3).filter(in_range) {
+        out.extend_from_slice(tri);
+    }
+    (out, triangle_count - kept)
+}
+
 /// Converts a decoded glTF image (any of the formats the `gltf` crate emits)
 /// into tightly packed RGBA8.
 fn to_rgba8(img: gltf::image::Data) -> anyhow::Result<CpuTexture> {
@@ -508,6 +541,21 @@ fn load_primitive(
     // every downstream stage (culling, LOD, QEM, the draw path) on one plain
     // triangle-list representation.
     let indices = triangulate(&raw_indices, primitive.mode());
+    // Sanitize BEFORE anything consumes the list: compute_flat_normals,
+    // compute_tangents and the MikkTSpace adapter all index `vertices` with
+    // these values unchecked-by-us, so an out-of-range corner panics (an abort
+    // of the whole canvas in the WASM demo). One warn per primitive, never per
+    // triangle. Nothing downstream keeps a per-triangle side table - the
+    // material is per-primitive - so the filtered list is the only consumer.
+    let (indices, dropped_triangles) = drop_out_of_range_triangles(indices, vertices.len());
+    if dropped_triangles > 0 {
+        log::warn!(
+            "glTF primitive {}: dropped {} triangle(s) whose indices do not address any of its {} vertices",
+            primitive.index(),
+            dropped_triangles,
+            vertices.len()
+        );
+    }
 
     // Missing normals: derive flat face normals so lighting stays sane.
     if reader.read_normals().is_none() {
@@ -854,6 +902,68 @@ mod tests {
         // Degenerate input must not panic or underflow.
         assert!(triangulate(&[0, 1], Mode::TriangleStrip).is_empty());
         assert!(triangulate(&[], Mode::TriangleFan).is_empty());
+    }
+
+    #[test]
+    fn out_of_range_indices_drop_their_triangle() {
+        // Two triangles over 3 vertices; the second references vertex 7, which
+        // this primitive never shipped. Before the guard this reached
+        // `vertices[7]` in compute_flat_normals - a bounds-check panic, i.e. an
+        // unrecoverable abort of the whole canvas in the WASM demo.
+        let (kept, dropped) = drop_out_of_range_triangles(vec![0, 1, 2, 7, 1, 2], 3);
+        assert_eq!(kept, vec![0, 1, 2], "only the in-range triangle survives");
+        assert_eq!(dropped, 1);
+        assert!(
+            kept.len().is_multiple_of(3),
+            "the list must stay a triangle list"
+        );
+        assert!(
+            kept.iter().all(|&i| (i as usize) < 3),
+            "every surviving index must address a real vertex"
+        );
+
+        // The whole triangle goes, not just the bad corner: dropping only the
+        // corner would re-wind its neighbours into a different triangle.
+        let (kept, dropped) = drop_out_of_range_triangles(vec![9, 1, 2, 0, 1, 2], 3);
+        assert_eq!(kept, vec![0, 1, 2]);
+        assert_eq!(dropped, 1);
+
+        // The consumers that used to panic must now run clean on the filtered
+        // list. This is the actual oracle - it panics without the fix.
+        let mut vertices: Vec<Vertex> = (0..3)
+            .map(|i| Vertex {
+                position: [i as f32, 0.0, 0.0],
+                normal: [0.0, 0.0, 0.0],
+                uv: [i as f32, 0.0],
+                tangent: [0.0; 4],
+                joints: [0.0; 4],
+                weights: [0.0; 4],
+                color: [1.0, 1.0, 1.0, 1.0],
+                uv1: [0.0, 0.0],
+            })
+            .collect();
+        let (filtered, dropped) = drop_out_of_range_triangles(vec![0, 1, 2, 3, 4, 5], vertices.len());
+        assert_eq!(dropped, 1);
+        compute_flat_normals(&mut vertices, &filtered);
+        compute_tangents(&mut vertices, &filtered);
+
+        // Degenerate input, mirroring how `strips_and_fans_expand_to_triangle_lists`
+        // pins triangulate's: empty stays empty, an all-bad list empties out, a
+        // trailing partial triangle is truncated away (it was never a triangle,
+        // so it is not counted as dropped), and a fully valid list is returned
+        // untouched with a zero count.
+        assert_eq!(drop_out_of_range_triangles(vec![], 3), (vec![], 0));
+        assert_eq!(drop_out_of_range_triangles(vec![5, 6, 7], 3), (vec![], 1));
+        assert_eq!(drop_out_of_range_triangles(vec![0, 1, 2, 0], 3), (vec![0, 1, 2], 0));
+        assert_eq!(drop_out_of_range_triangles(vec![0, 1], 3), (vec![], 0));
+        assert_eq!(
+            drop_out_of_range_triangles(vec![0, 1, 2, 2, 1, 0], 3),
+            (vec![0, 1, 2, 2, 1, 0], 0),
+            "a fully in-range list must pass through unchanged"
+        );
+        // vertex_count 0 (a primitive with no POSITION data behind it) must
+        // reject everything rather than index into an empty slice.
+        assert_eq!(drop_out_of_range_triangles(vec![0, 0, 0], 0), (vec![], 1));
     }
 
     #[test]
