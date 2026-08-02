@@ -323,6 +323,35 @@ pub fn parse_obj_with_materials(source: &str, materials: Vec<ObjMaterial>) -> Re
     Ok(mesh)
 }
 
+/// Escapes a string for embedding in a JSON string literal, per RFC 8259.
+///
+/// Material names and texture URIs come straight from the `.mtl` file and are
+/// interpolated into hand-written JSON (see `to_gltf`) - an unescaped `"` or
+/// `\` (routine in a Windows-authored `map_Kd textures\wood.png`) would
+/// otherwise corrupt the document.
+fn json_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// glTF's own default base colour / a zero bound - used to replace non-finite
+/// floats that would `Display` as `inf`/`NaN`, neither of which is valid JSON.
+fn finite_or(value: f32, default: f32) -> f32 {
+    if value.is_finite() {
+        value
+    } else {
+        default
+    }
+}
+
 fn parse_f32(text: &str, line: usize) -> Result<f32> {
     text.parse::<f32>()
         .with_context(|| format!("line {line}: '{text}' is not a number"))
@@ -436,7 +465,7 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
 
     let images_json = image_uris
         .iter()
-        .map(|uri| format!(r#"{{ "uri": "{uri}" }}"#))
+        .map(|uri| format!(r#"{{ "uri": "{}" }}"#, json_escape(uri)))
         .collect::<Vec<_>>()
         .join(", ");
     let textures_json = (0..image_uris.len())
@@ -456,7 +485,11 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
         .materials
         .iter()
         .map(|material| {
-            let [r, g, b, a] = material.base_color;
+            // glTF's own default base colour is 1.0 in every channel, so a
+            // non-finite `Kd`/`d`/`Tr` (`Display`s as `inf`/`NaN`, neither
+            // valid JSON) falls back to fully-opaque white rather than
+            // corrupting the document.
+            let [r, g, b, a] = material.base_color.map(|component| finite_or(component, 1.0));
             // OBJ has no metallic/roughness. 0 metallic and 1 roughness is the
             // closest thing to "plain diffuse", which is what Kd describes;
             // inheriting glTF's default (metallic 1) would render every
@@ -470,7 +503,7 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
             };
             format!(
                 r#"{{ "name": "{}", "pbrMetallicRoughness": {{ "baseColorFactor": [{}, {}, {}, {}]{}, "metallicFactor": 0.0, "roughnessFactor": 1.0 }}{} }}"#,
-                material.name,
+                json_escape(&material.name),
                 r, g, b, a,
                 texture_json,
                 if a < 1.0 { r#", "alphaMode": "BLEND""# } else { "" }
@@ -525,12 +558,15 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
   \"textures\": [{textures_json}],"
             )
         },
-        min0 = min[0],
-        min1 = min[1],
-        min2 = min[2],
-        max0 = max[0],
-        max1 = max[1],
-        max2 = max[2],
+        // `bounds()` returns +/-infinity for an empty mesh (no positions to
+        // fold `min`/`max` over); `inf` is not a valid JSON number, so it is
+        // replaced with 0.0 rather than left to corrupt the document.
+        min0 = finite_or(min[0], 0.0),
+        min1 = finite_or(min[1], 0.0),
+        min2 = finite_or(min[2], 0.0),
+        max0 = finite_or(max[0], 0.0),
+        max1 = finite_or(max[1], 0.0),
+        max2 = finite_or(max[2], 0.0),
     );
 
     (json, bin)

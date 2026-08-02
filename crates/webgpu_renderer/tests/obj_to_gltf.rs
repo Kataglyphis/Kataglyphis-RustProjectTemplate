@@ -528,3 +528,58 @@ fn an_untextured_obj_emits_no_texture_arrays() {
     );
     load_gltf(&gltf_path).expect("an untextured conversion must still load");
 }
+
+#[test]
+fn a_material_name_with_json_metacharacters_still_produces_loadable_gltf() {
+    // A quote and a trailing backslash in a material name would otherwise
+    // terminate the JSON string early or escape the closing quote. Every
+    // material declared in the .mtl reaches the output regardless of whether
+    // any `usemtl` references it, so this does not need to match `painted`.
+    let dir = temp_dir("quoted_material_name");
+    std::fs::write(
+        dir.join("textured.mtl"),
+        "newmtl he said \"hi\"\\\\\nKd 1 0 0\n",
+    )
+    .expect("mtl");
+    let obj_path = dir.join("textured.obj");
+    std::fs::write(&obj_path, TEXTURED_OBJ).expect("obj");
+    let gltf_path = dir.join("quoted.gltf");
+
+    convert_file(&obj_path, &gltf_path).expect("conversion must succeed");
+    load_gltf(&gltf_path).expect("the converted glTF must load despite the quote/backslash");
+}
+
+#[test]
+fn a_backslash_texture_path_does_not_corrupt_the_document() {
+    // A Windows-authored `map_Kd textures\wood.png` must not be interpolated
+    // as a raw JSON string, or `\w` becomes an invalid escape sequence. The
+    // OBJ and glTF live in the same directory, so the referenced texture
+    // resolves without needing the (separate) copy-next-to-output step.
+    let dir = temp_dir("backslash_texture");
+    let texture_dir = dir.join("textures");
+    std::fs::create_dir_all(&texture_dir).expect("textures dir");
+    write_test_png(&texture_dir.join("wood.png"));
+    std::fs::write(
+        dir.join("textured.mtl"),
+        "newmtl painted\nKd 1 1 1\nmap_Kd textures\\wood.png\n",
+    )
+    .expect("mtl");
+    let obj_path = dir.join("textured.obj");
+    std::fs::write(&obj_path, TEXTURED_OBJ).expect("obj");
+    let gltf_path = dir.join("textured.gltf");
+
+    convert_file(&obj_path, &gltf_path).expect("conversion must still succeed");
+    load_gltf(&gltf_path).expect("the converted glTF must load despite the backslash path");
+}
+
+#[test]
+fn an_empty_mesh_emits_finite_accessor_bounds() {
+    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::ObjMesh;
+
+    // `bounds()` returns +/-infinity when there is no geometry to fold over,
+    // and `inf`/`NaN` are not valid JSON numbers.
+    let (json, _bin) = to_gltf(&ObjMesh::default(), "empty.bin");
+
+    assert!(!json.contains("inf"), "accessor bounds must not contain inf");
+    assert!(!json.contains("NaN"), "accessor bounds must not contain NaN");
+}
