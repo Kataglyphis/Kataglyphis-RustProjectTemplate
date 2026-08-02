@@ -85,12 +85,15 @@ fn a_constant_environment_convolves_to_its_own_radiance() {
         }
     }
 
-    // Measured worst-case relative error: see the report in the commit
-    // message. The budget covers the midpoint quadrature (~1e-4), the
-    // Rgba16Float storage of both the environment and the result (2^-11 each),
-    // and driver-dependent cube filtering across face seams.
+    // Measured worst-case relative error: 0.000419 with the midpoint
+    // quadrature (128x64 steps, explicit mip-0 sampling) versus 0.001814 with
+    // the left-endpoint quadrature this test used to tolerate (64x32 steps).
+    // 0.001 sits between the two, so it fails on a regression back to
+    // left-endpoint sampling while leaving headroom for the Rgba16Float
+    // storage of both the environment and the result (2^-11 each) and
+    // driver-dependent cube filtering across face seams.
     assert!(
-        worst < 0.01,
+        worst < 0.001,
         "constant environment did not convolve to itself: worst relative error {worst}"
     );
     eprintln!("uniform-environment irradiance: worst relative error {worst:.6}");
