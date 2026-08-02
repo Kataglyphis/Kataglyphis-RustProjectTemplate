@@ -59,8 +59,7 @@ fn variance(values: &[f32]) -> f32 {
 
 #[test]
 fn a_constant_environment_convolves_to_its_own_radiance() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -99,8 +98,7 @@ fn a_constant_environment_convolves_to_its_own_radiance() {
 
 #[test]
 fn a_constant_environment_prefilters_to_its_own_radiance_at_every_roughness() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -130,8 +128,7 @@ fn a_constant_environment_prefilters_to_its_own_radiance_at_every_roughness() {
 
 #[test]
 fn irradiance_never_exceeds_the_brightest_radiance_in_the_environment() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -182,8 +179,7 @@ fn irradiance_never_exceeds_the_brightest_radiance_in_the_environment() {
 
 #[test]
 fn higher_roughness_prefilter_mips_are_strictly_blurrier() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -227,8 +223,7 @@ fn higher_roughness_prefilter_mips_are_strictly_blurrier() {
 
 #[test]
 fn the_brdf_lut_stays_in_range_and_conserves_energy() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -256,8 +251,7 @@ fn the_brdf_lut_stays_in_range_and_conserves_energy() {
 
 #[test]
 fn the_brdf_lut_reproduces_the_known_mirror_and_grazing_behaviour() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -321,8 +315,7 @@ fn the_brdf_lut_reproduces_the_known_mirror_and_grazing_behaviour() {
 
 #[test]
 fn the_equirect_projection_puts_the_sky_on_the_right_faces() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -371,8 +364,7 @@ fn render(renderer: &mut ForwardRenderer, gpu: &GpuContext) -> Vec<u8> {
 
 #[test]
 fn with_no_environment_the_analytic_path_renders_exactly_what_it_always_did() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -405,8 +397,7 @@ fn with_no_environment_the_analytic_path_renders_exactly_what_it_always_did() {
 
 #[test]
 fn setting_an_environment_actually_changes_the_rendered_frame() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -531,8 +522,7 @@ fn hdr_bytes_decode_and_bake_into_the_same_environment_as_the_source_pixels() {
         "RGBE round-trip error {worst} exceeds its quantum"
     );
 
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -561,8 +551,7 @@ fn hdr_bytes_decode_and_bake_into_the_same_environment_as_the_source_pixels() {
 
 #[test]
 fn the_brdf_table_is_baked_once_and_shared_across_environments() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 

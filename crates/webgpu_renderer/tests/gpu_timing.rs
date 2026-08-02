@@ -17,8 +17,7 @@ fn cube_path() -> std::path::PathBuf {
 
 #[test]
 fn every_pass_reports_a_finite_non_negative_duration() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("no GPU adapter; skipping");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
     if !gpu.supports_timestamps {
@@ -85,8 +84,7 @@ fn every_pass_reports_a_finite_non_negative_duration() {
 
 #[test]
 fn timings_stay_empty_until_enabled() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("no GPU adapter; skipping");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
     let renderer = ForwardRenderer::new(&gpu, 64, 64);

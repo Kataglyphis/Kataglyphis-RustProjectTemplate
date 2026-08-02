@@ -54,8 +54,7 @@ fn skinned_cube_scene(joint_translation: Vec3) -> kataglyphis_webgpu_renderer::C
 
 #[test]
 fn bounds_follow_the_joint_not_the_bind_pose() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -88,8 +87,7 @@ fn bounds_follow_the_joint_not_the_bind_pose() {
 
 #[test]
 fn an_identity_joint_leaves_bounds_at_the_bind_pose() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -116,8 +114,7 @@ fn an_identity_joint_leaves_bounds_at_the_bind_pose() {
 /// the BASE position leaves the view - even with the instances on screen.
 #[test]
 fn bounds_span_every_instance() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -163,8 +160,7 @@ fn bounds_span_every_instance() {
 /// un-instanced scene and distant instances neither received nor cast shadows.
 #[test]
 fn scene_bounds_track_instances() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -202,8 +198,7 @@ fn scene_bounds_track_instances() {
 /// in the shaded pixels while the silhouette matches.
 #[test]
 fn a_non_uniform_instance_scale_shades_like_the_same_node_scale() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
     let (w, h) = (128, 128);

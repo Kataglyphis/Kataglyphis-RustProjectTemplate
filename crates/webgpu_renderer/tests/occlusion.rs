@@ -49,8 +49,7 @@ fn render_until_readback_lands(
 
 #[test]
 fn a_cube_hidden_behind_another_reads_back_zero_samples() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -103,8 +102,7 @@ fn a_cube_hidden_behind_another_reads_back_zero_samples() {
 
 #[test]
 fn two_side_by_side_cubes_are_both_visible() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -136,8 +134,7 @@ fn two_side_by_side_cubes_are_both_visible() {
 
 #[test]
 fn detection_is_off_by_default() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -166,8 +163,7 @@ fn an_occluded_primitive_is_actually_skipped_in_the_opaque_pass() {
     // as the detection test; after the readback lands, the hidden cube must be
     // SKIPPED - 1 of 2 opaque primitives drawn - while both are still frustum-
     // visible (so this proves occlusion, not frustum, culling).
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -211,8 +207,7 @@ fn an_occluded_primitive_is_actually_skipped_in_the_opaque_pass() {
 fn two_visible_cubes_are_both_drawn_with_culling_on() {
     // Guard against over-culling: two side-by-side cubes (both visible) must
     // BOTH draw even with occlusion enabled.
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
     let left = cube_with_transform(Mat4::from_translation(Vec3::new(-3.0, 0.0, 0.0)));
@@ -241,8 +236,7 @@ fn loading_a_new_scene_does_not_inherit_the_old_scene_visibility() {
     // culled. Reproduce: occlude index 1 in scene A, then load a scene B of two
     // fully visible cubes and render ONE frame - the frame where stale
     // visibility would still bite, before scene B's own queries land.
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -304,8 +298,7 @@ fn an_occluded_primitive_is_skipped_with_gpu_culling() {
     // but exercising the compute-shader path (`gpu_culling_enabled`) instead of
     // hardware occlusion queries - the two must be interchangeable from the
     // draw loop's point of view.
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -345,8 +338,7 @@ fn an_occluded_primitive_is_skipped_with_gpu_culling() {
 fn two_visible_cubes_are_both_drawn_with_gpu_culling() {
     // Over-culling guard for the compute-shader path, mirroring
     // `two_visible_cubes_are_both_drawn_with_culling_on`.
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
     let left = cube_with_transform(Mat4::from_translation(Vec3::new(-3.0, 0.0, 0.0)));
@@ -375,8 +367,7 @@ fn a_primitive_containing_the_camera_is_always_reported_visible() {
     // the inside (double-sided - a closed, single-sided cube renders nothing
     // from inside, leaves the depth buffer empty, and can't reach this path
     // at all).
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -437,8 +428,7 @@ fn gpu_culling_respects_vertical_screen_position() {
     // exactly backwards: the top cube reads back visible and the bottom one
     // reads back occluded, because each is tested against the depth in the
     // wrong half of the screen.
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -486,8 +476,7 @@ fn gpu_culling_respects_vertical_screen_position() {
 
 #[test]
 fn gpu_culling_is_off_by_default() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 

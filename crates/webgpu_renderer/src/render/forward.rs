@@ -2959,8 +2959,7 @@ mod tests {
 
     #[test]
     fn set_animation_time_recomputes_and_dirties_the_cached_normal_matrix() {
-        let Ok(gpu) = GpuContext::new_headless() else {
-            eprintln!("SKIP: no GPU adapter available in this environment");
+        let Some(gpu) = GpuContext::headless_or_skip() else {
             return;
         };
 

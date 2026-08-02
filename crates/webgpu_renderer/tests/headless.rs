@@ -93,8 +93,7 @@ fn gltf_loader_reads_morph_target_and_default_weight() {
 
 #[test]
 fn renders_cube_headless() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -145,8 +144,7 @@ fn renders_cube_headless() {
 
 #[test]
 fn renders_textured_cube_headless() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -190,8 +188,7 @@ fn morph_weight_lifts_the_silhouette() {
         ChannelValues, CpuAnimation, CpuAnimationChannel, CpuNode, Interpolation, MorphTarget,
     };
 
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -282,8 +279,7 @@ fn morph_weight_lifts_the_silhouette() {
 
 #[test]
 fn shadow_darkens_plane_under_cube() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -347,8 +343,7 @@ fn shadow_darkens_plane_under_cube() {
 /// prove the shadow is present in that very first frame at both sizes.
 #[test]
 fn first_frame_uses_the_correct_cascade_and_tile_counts() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -460,8 +455,7 @@ fn tile_size_matches_the_slang_constant() {
 
 #[test]
 fn alpha_modes_blend_and_mask() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -523,8 +517,7 @@ fn alpha_modes_blend_and_mask() {
 
 #[test]
 fn punctual_lights_pool_on_plane() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -579,8 +572,7 @@ fn punctual_lights_pool_on_plane() {
 
 #[test]
 fn bloom_adds_energy_around_bright_sources() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -618,8 +610,7 @@ fn bloom_adds_energy_around_bright_sources() {
 
 #[test]
 fn ssao_darkens_geometry() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -662,8 +653,7 @@ fn ssao_darkens_geometry() {
 /// interior must read as unoccluded regardless of `ssao_strength`.
 #[test]
 fn ssao_leaves_a_flat_surface_unoccluded() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -718,8 +708,7 @@ fn ssao_leaves_a_flat_surface_unoccluded() {
 
 #[test]
 fn animation_moves_the_cube() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -770,8 +759,7 @@ fn animation_moves_the_cube() {
 
 #[test]
 fn skinning_bends_the_bar() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -923,8 +911,7 @@ fn orthographic_projection_matrix_is_finite_and_maps_near_far_to_expected_depth(
 
 #[test]
 fn resize_handles_zero_dimensions() {
-    let Ok(mut gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(mut gpu) = GpuContext::headless_or_skip() else {
         return;
     };
     // Headless context has no surface: resize must be a no-op, not a crash —
@@ -947,8 +934,7 @@ fn resize_handles_zero_dimensions() {
 /// is dramatically darker: linear 0.05 stores as byte ~13 instead of ~63.
 #[test]
 fn non_srgb_target_is_gamma_encoded_like_an_srgb_one() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -1009,8 +995,7 @@ fn non_srgb_target_is_gamma_encoded_like_an_srgb_one() {
 /// exposure never reaching the pixels.
 #[test]
 fn auto_exposure_brightens_a_dark_scene_over_successive_frames() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -1067,8 +1052,7 @@ fn auto_exposure_brightens_a_dark_scene_over_successive_frames() {
 /// would mean the slider stopped reaching the pixels.
 #[test]
 fn manual_exposure_still_controls_brightness() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -1104,8 +1088,7 @@ fn manual_exposure_still_controls_brightness() {
 /// what distinguishes "three instances" from "three draws of the same place".
 #[test]
 fn instances_appear_at_their_own_transforms() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -1168,8 +1151,7 @@ fn instances_appear_at_their_own_transforms() {
 
 #[test]
 fn clearing_instances_restores_a_single_copy_rather_than_none() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -1207,8 +1189,7 @@ fn clearing_instances_restores_a_single_copy_rather_than_none() {
 
 #[test]
 fn growing_the_instance_count_reallocates_correctly() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -1251,8 +1232,7 @@ fn growing_the_instance_count_reallocates_correctly() {
 /// The structural shadow check below still proves the shadow itself survives.
 #[test]
 fn caster_culling_engages_and_shadows_survive() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -1321,8 +1301,7 @@ fn caster_culling_engages_and_shadows_survive() {
 /// were never picked up, `animation_moves_the_cube` above would catch that.
 #[test]
 fn shadow_caster_bundle_is_cached_across_frames() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -1373,8 +1352,7 @@ fn gltf_loader_reads_unlit_flag() {
 /// of it, while the lit control changes visibly.
 #[test]
 fn unlit_material_ignores_the_light() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
     let (w, h) = (128, 128);
@@ -1429,8 +1407,7 @@ fn unlit_material_ignores_the_light() {
 /// the VRAM ceiling both.
 #[test]
 fn a_shared_texture_uploads_once() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -1484,8 +1461,7 @@ fn masked_card_casts_half_the_shadow_of_an_opaque_one() {
     };
     use std::sync::Arc;
 
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -1639,8 +1615,7 @@ fn masked_card_casts_half_the_shadow_of_an_opaque_one() {
 fn vertex_colors_tint_the_surface() {
     use kataglyphis_webgpu_renderer::scene::{AlphaMode, CpuMaterial, CpuPrimitive, Vertex};
 
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -1724,8 +1699,7 @@ fn texture_slot_samples_its_declared_uv_set() {
     };
     use std::sync::Arc;
 
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 

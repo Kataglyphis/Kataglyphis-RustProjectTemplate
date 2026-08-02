@@ -146,6 +146,26 @@ impl GpuContext {
         })
     }
 
+    /// Test-facing wrapper around [`Self::new_headless`]: `Some` on success,
+    /// `None` (after printing the SKIP line) on failure — unless
+    /// `KATAGLYPHIS_REQUIRE_GPU` is set, in which case failure panics instead
+    /// of silently skipping. A skipped GPU test and a passing GPU test read
+    /// identically in a CI log, so the host verification loop sets this
+    /// variable to tell the two apart; see `docs/gpu-golden-testing.md`.
+    #[doc(hidden)]
+    pub fn headless_or_skip() -> Option<Self> {
+        match Self::new_headless() {
+            Ok(gpu) => Some(gpu),
+            Err(err) => {
+                if std::env::var("KATAGLYPHIS_REQUIRE_GPU").is_ok_and(|v| !v.is_empty()) {
+                    panic!("KATAGLYPHIS_REQUIRE_GPU is set but no GPU adapter is usable: {err}");
+                }
+                eprintln!("SKIP: no GPU adapter available in this environment");
+                None
+            }
+        }
+    }
+
     pub fn surface_format(&self) -> Option<wgpu::TextureFormat> {
         self.surface_config.as_ref().map(|c| c.format)
     }

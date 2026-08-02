@@ -85,8 +85,7 @@ fn build_histogram(gpu: &GpuContext, luminances: &[f32], width: u32) -> Vec<u32>
 
 #[test]
 fn gpu_binning_matches_the_cpu_binning() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -122,8 +121,7 @@ fn gpu_binning_matches_the_cpu_binning() {
 
 #[test]
 fn every_pixel_is_counted_exactly_once() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -147,8 +145,7 @@ fn every_pixel_is_counted_exactly_once() {
 
 #[test]
 fn the_histogram_is_cleared_between_builds() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -213,8 +210,7 @@ fn reduce_exposure(
 
 #[test]
 fn gpu_reduction_matches_the_cpu_exposure_maths() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
 
@@ -253,8 +249,7 @@ fn gpu_reduction_matches_the_cpu_exposure_maths() {
 
 #[test]
 fn a_dark_scene_exposes_up_and_a_bright_scene_exposes_down() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
     use kataglyphis_webgpu_renderer::render::histogram::ExposureSettings;
@@ -279,8 +274,7 @@ fn a_dark_scene_exposes_up_and_a_bright_scene_exposes_down() {
 
 #[test]
 fn adaptation_moves_toward_the_target_without_jumping_to_it() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
     use kataglyphis_webgpu_renderer::render::histogram::ExposureSettings;
@@ -309,8 +303,7 @@ fn adaptation_moves_toward_the_target_without_jumping_to_it() {
 
 #[test]
 fn an_all_black_frame_holds_the_previous_exposure() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
     use kataglyphis_webgpu_renderer::render::histogram::ExposureSettings;
@@ -335,8 +328,7 @@ fn an_all_black_frame_holds_the_previous_exposure() {
 
 #[test]
 fn a_zero_length_frame_does_not_snap_the_exposure() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
     use kataglyphis_webgpu_renderer::render::histogram::ExposureSettings;
@@ -372,8 +364,7 @@ fn a_zero_length_frame_does_not_snap_the_exposure() {
 
 #[test]
 fn manual_mode_writes_the_slider_value_through() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
     use kataglyphis_webgpu_renderer::render::histogram::ExposureSettings;

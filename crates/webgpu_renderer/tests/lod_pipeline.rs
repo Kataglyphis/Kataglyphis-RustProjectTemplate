@@ -36,8 +36,7 @@ fn renderer_with_lod(gpu: &GpuContext, enabled: bool) -> ForwardRenderer {
 
 #[test]
 fn chains_are_built_at_upload_and_not_per_frame() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
     let renderer = renderer_with_lod(&gpu, true);
@@ -64,8 +63,7 @@ fn chains_are_built_at_upload_and_not_per_frame() {
 
 #[test]
 fn a_distant_primitive_draws_strictly_fewer_indices() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
     let renderer = renderer_with_lod(&gpu, true);
@@ -91,8 +89,7 @@ fn a_distant_primitive_draws_strictly_fewer_indices() {
 
 #[test]
 fn lod_disabled_draws_full_detail_at_every_distance() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
     let renderer = renderer_with_lod(&gpu, false);
@@ -118,8 +115,7 @@ fn lod_disabled_draws_full_detail_at_every_distance() {
 
 #[test]
 fn an_lod_frame_still_renders() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
     let mut renderer = renderer_with_lod(&gpu, true);
@@ -143,8 +139,7 @@ fn morphed_primitives_are_excluded_from_lod() {
     // distance even with LOD enabled: `apply_morph_targets` re-blends only the
     // full-res vertex buffer, so a simplified LOD level would draw the
     // un-morphed neutral pose and the object would pop to its rest shape.
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
     let morph_path =
@@ -213,8 +208,7 @@ fn quadric_level_zero_differs_from_full_detail() {
 /// LOD level and reorder blending on any unevenly tessellated mesh.
 #[test]
 fn lod_selection_is_stable_across_a_no_op_animation_update() {
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available in this environment");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
     let mut renderer = renderer_with_lod(&gpu, true);

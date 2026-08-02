@@ -30,8 +30,7 @@ fn rejects_non_ktx2_input() {
 #[test]
 fn uploads_bc1_when_supported() {
     use kataglyphis_webgpu_renderer::GpuContext;
-    let Ok(gpu) = GpuContext::new_headless() else {
-        eprintln!("SKIP: no GPU adapter available");
+    let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
     if !gpu.supports_bc {
