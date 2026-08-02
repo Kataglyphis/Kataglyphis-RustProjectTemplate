@@ -116,6 +116,11 @@ pub fn exposure_ev_for_luminance(average_luminance: f32) -> f32 {
 /// framerate independence is the point - a naive `current + (target -
 /// current) * speed` converges roughly twice as fast at 120 Hz as at 60 Hz,
 /// so a value tuned on one machine is wrong on every other.
+///
+/// The two degenerate cases are different rules: `speed <= 0` means
+/// adaptation is disabled, so the target applies immediately; `delta_time_seconds
+/// <= 0` means no time passed (a stalled frame or a coarse/repeated timer
+/// reading from `frame_clock::tick_at`), so the current value must hold.
 pub fn adapt_exposure_ev(
     current_ev: f32,
     target_ev: f32,
@@ -125,8 +130,11 @@ pub fn adapt_exposure_ev(
     if !current_ev.is_finite() {
         return target_ev;
     }
-    if delta_time_seconds <= 0.0 || speed <= 0.0 {
+    if delta_time_seconds <= 0.0 {
         return current_ev;
+    }
+    if speed <= 0.0 {
+        return target_ev;
     }
     let blend = 1.0 - (-delta_time_seconds * speed).exp();
     current_ev + (target_ev - current_ev) * blend.clamp(0.0, 1.0)
@@ -321,16 +329,20 @@ mod tests {
     }
 
     #[test]
-    fn a_stalled_frame_or_disabled_adaptation_holds_the_current_value() {
+    fn a_stalled_frame_holds_the_current_value() {
         assert_eq!(
             adapt_exposure_ev(1.5, 4.0, 0.0, 3.0),
             1.5,
             "dt 0 must not move exposure"
         );
+    }
+
+    #[test]
+    fn disabled_smoothing_uses_the_target_immediately() {
         assert_eq!(
             adapt_exposure_ev(1.5, 4.0, 0.016, 0.0),
-            1.5,
-            "speed 0 disables adaptation"
+            4.0,
+            "speed 0 disables smoothing, so the target applies immediately"
         );
     }
 

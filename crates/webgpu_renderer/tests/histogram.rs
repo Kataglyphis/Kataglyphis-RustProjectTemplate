@@ -334,6 +334,43 @@ fn an_all_black_frame_holds_the_previous_exposure() {
 }
 
 #[test]
+fn a_zero_length_frame_does_not_snap_the_exposure() {
+    let Ok(gpu) = GpuContext::new_headless() else {
+        eprintln!("SKIP: no GPU adapter available in this environment");
+        return;
+    };
+    use kataglyphis_webgpu_renderer::render::histogram::ExposureSettings;
+
+    // A stalled frame or a coarse/repeated FrameClock reading reports dt as
+    // 0.0 (see render::frame_clock::tick_at). That must hold the current
+    // value, not snap to the target the way a disabled-smoothing (speed 0)
+    // frame legitimately does.
+    let luminances = vec![0.005f32; 256];
+    let settings = ExposureSettings {
+        delta_time_seconds: 1.0 / 60.0,
+        speed: 3.0,
+        auto_enabled: true,
+        manual_ev: 0.0,
+    };
+    let (moved, target) = reduce_exposure(&gpu, &luminances, 16, settings, 0.0);
+    assert!(
+        moved > 0.0 && moved < target,
+        "setup frame should move partway toward the target, got {moved} of {target}"
+    );
+
+    let stalled_settings = ExposureSettings {
+        delta_time_seconds: 0.0,
+        ..settings
+    };
+    let (held, _target) = reduce_exposure(&gpu, &luminances, 16, stalled_settings, moved);
+
+    assert_eq!(
+        held, moved,
+        "a zero-length frame moved exposure from {moved} to {held}"
+    );
+}
+
+#[test]
 fn manual_mode_writes_the_slider_value_through() {
     let Ok(gpu) = GpuContext::new_headless() else {
         eprintln!("SKIP: no GPU adapter available in this environment");

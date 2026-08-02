@@ -102,7 +102,12 @@ fn cs_clear_histogram(@builtin(global_invocation_id) id: vec3<u32>) {
 // tonemap needs can just stay in a buffer the tonemap reads.
 //
 // Mirrors render::auto_exposure::{average_luminance, exposure_ev_for_luminance,
-// adapt_exposure_ev}, all of which are unit-tested on the CPU side.
+// adapt_exposure_ev}, all of which are unit-tested on the CPU side. The two
+// degenerate adaptation cases are NOT the same rule, and cs_reduce_exposure
+// below implements both distinctly:
+//   - speed <= 0: adaptation is disabled, snap to the target immediately.
+//   - dt <= 0: no time passed (a stalled frame or a coarse/repeated timer
+//     reading — see render::frame_clock::tick_at), hold the current value.
 
 const EXPOSURE_KEY: f32 = 0.18;
 
@@ -173,10 +178,19 @@ fn cs_reduce_exposure() {
     let average_luminance = exp2(weighted_log_sum / counted);
     let target_ev = log2(EXPOSURE_KEY / average_luminance);
 
+    if (dt <= 0.0) {
+        // No time passed: hold the current value rather than snapping. A
+        // stalled frame or a coarse/repeated timer reading must not pop the
+        // exposure just because this reduction still ran.
+        exposure_state[0] = current_ev;
+        exposure_state[1] = target_ev;
+        return;
+    }
+
     // Exponential, not a plain lerp: a lerp converges twice as fast at 120 Hz
     // as at 60, so a speed tuned on one machine is wrong on every other.
     var adapted = target_ev;
-    if (dt > 0.0 && speed > 0.0) {
+    if (speed > 0.0) {
         let blend = clamp(1.0 - exp(-dt * speed), 0.0, 1.0);
         adapted = current_ev + (target_ev - current_ev) * blend;
     }
