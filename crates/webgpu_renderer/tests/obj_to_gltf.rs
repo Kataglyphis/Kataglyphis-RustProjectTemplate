@@ -447,6 +447,79 @@ fn a_textured_obj_converts_to_a_gltf_with_a_loadable_texture() {
 }
 
 #[test]
+fn a_textures_subdirectory_layout_is_resolved() {
+    // Every shipped engine OBJ (crytek-sponza, Pillum, Sulo/WolfStahl,
+    // VikingRoom) puts its textures in a `textures/` subdirectory next to the
+    // .mtl and references them by bare filename - `map_Kd` does not name the
+    // subdirectory. docs/model-loading.md's second candidate is the rule that
+    // makes that layout resolve instead of converting to an untextured glTF.
+    let dir = temp_dir("textures_subdir");
+    let texture_dir = dir.join("textures");
+    std::fs::create_dir_all(&texture_dir).expect("textures dir");
+    write_test_png(&texture_dir.join("paint.png"));
+    std::fs::write(
+        dir.join("textured.mtl"),
+        "newmtl painted\nKd 1 1 1\nmap_Kd paint.png\n",
+    )
+    .expect("mtl");
+    let obj_path = dir.join("textured.obj");
+    std::fs::write(&obj_path, TEXTURED_OBJ).expect("obj");
+
+    let out = temp_dir("textures_subdir_out");
+    let gltf_path = out.join("textured.gltf");
+    convert_file(&obj_path, &gltf_path).expect("conversion must succeed");
+
+    // The bare filename is what gets copied and emitted as the glTF uri -
+    // which candidate resolved it is not observable from the output.
+    assert!(
+        out.join("paint.png").exists(),
+        "the textures/-subdirectory texture was not copied next to the glTF"
+    );
+
+    let scene = load_gltf(&gltf_path).expect("the converted glTF must load");
+    let texture = scene.primitives[0]
+        .material
+        .base_color_texture
+        .as_ref()
+        .expect("the material must carry a base colour texture");
+    assert_eq!((texture.texture.width, texture.texture.height), (2, 2));
+}
+
+#[test]
+fn a_backslash_map_kd_under_textures_is_resolved() {
+    // A Windows-authored `map_Kd textures\paint.png` must normalise to
+    // `textures/paint.png` (parse_mtl) before path resolution ever runs, or
+    // the literal backslash is just another filename character on Linux and
+    // the candidate lookup misses. .obj and .gltf share a directory here (as
+    // in `a_backslash_texture_path_does_not_corrupt_the_document` above), so
+    // the copy step short-circuits on source == destination and the test
+    // isolates normalisation from the separate copy-destination behaviour.
+    let dir = temp_dir("backslash_subdir");
+    let texture_dir = dir.join("textures");
+    std::fs::create_dir_all(&texture_dir).expect("textures dir");
+    write_test_png(&texture_dir.join("paint.png"));
+    std::fs::write(
+        dir.join("textured.mtl"),
+        "newmtl painted\nKd 1 1 1\nmap_Kd textures\\paint.png\n",
+    )
+    .expect("mtl");
+    let obj_path = dir.join("textured.obj");
+    std::fs::write(&obj_path, TEXTURED_OBJ).expect("obj");
+    let gltf_path = dir.join("textured.gltf");
+
+    convert_file(&obj_path, &gltf_path).expect("conversion must succeed");
+
+    let scene = load_gltf(&gltf_path).expect("the converted glTF must load");
+    assert!(
+        scene.primitives[0]
+            .material
+            .base_color_texture
+            .is_some(),
+        "the backslash-authored texture under textures/ must still resolve"
+    );
+}
+
+#[test]
 fn materials_sharing_a_map_emit_one_image() {
     let dir = temp_dir("shared_texture");
     write_test_png(&dir.join("shared.png"));

@@ -135,7 +135,14 @@ pub fn parse_mtl(source: &str) -> Vec<ObjMaterial> {
                     // (`map_Kd -s 1 1 1 wood.png`), so the path is the LAST
                     // token, not the first. Taking values[0] silently turns
                     // any option-carrying map into a texture named "-s".
-                    material.base_color_texture = values.last().map(|name| name.to_string());
+                    //
+                    // Normalising `\` to `/` is a deliberate deviation from
+                    // "as written in the .mtl": a Windows-authored relative
+                    // path (`textures\wood.png`) must still resolve when the
+                    // conversion runs on Linux, where `\` is just another
+                    // filename character rather than a separator.
+                    material.base_color_texture =
+                        values.last().map(|name| name.replace('\\', "/"));
                 }
             }
             "Tr" if !values.is_empty() => {
@@ -621,7 +628,20 @@ pub fn convert_file(obj_path: &Path, gltf_path: &Path) -> Result<ObjMesh> {
         let Some(uri) = &material.base_color_texture else {
             continue;
         };
-        let source_path = obj_path.with_file_name(uri);
+        // docs/model-loading.md: resolve relative to the directory containing
+        // the .mtl (== the .obj's directory - the mtllib loop above always
+        // resolves there) first, and retry under a textures/ subdirectory of
+        // that same directory second, because every shipped asset in this
+        // repo puts its textures there instead of beside the .mtl.
+        let beside_mtl = obj_path.with_file_name(uri);
+        let under_textures = obj_path.with_file_name(format!("textures/{uri}"));
+        let source_path = if beside_mtl.exists() {
+            beside_mtl.clone()
+        } else if under_textures.exists() {
+            under_textures.clone()
+        } else {
+            beside_mtl.clone()
+        };
         let destination = gltf_path.with_file_name(uri);
         if source_path == destination {
             continue;
@@ -633,8 +653,9 @@ pub fn convert_file(obj_path: &Path, gltf_path: &Path) -> Result<ObjMesh> {
                 // worth having, and OBJ files routinely reference textures
                 // that were never shipped alongside them.
                 log::warn!(
-                    "{}: {error}; the converted glTF references a texture that is not there",
-                    source_path.display()
+                    "{} (also tried {}): {error}; the converted glTF references a texture that is not there",
+                    beside_mtl.display(),
+                    under_textures.display()
                 );
             }
         }
