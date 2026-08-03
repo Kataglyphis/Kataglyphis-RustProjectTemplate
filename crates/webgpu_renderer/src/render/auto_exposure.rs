@@ -353,4 +353,19 @@ mod tests {
         assert_eq!(adapt_exposure_ev(f32::NAN, 2.0, 0.016, 3.0), 2.0);
         assert_eq!(adapt_exposure_ev(f32::INFINITY, 2.0, 0.016, 3.0), 2.0);
     }
+
+    #[test]
+    fn a_fixed_pre_exposure_threshold_cannot_serve_a_dark_and_a_bright_scene() {
+        // Pins the reason bloom.slang now thresholds the *exposed* HDR value
+        // instead of the raw one: the exposure a dark scene and a bright
+        // scene need differs by more than a decade, so no single raw-space
+        // constant can put both anywhere near a fixed threshold of 1.0.
+        let dark_exposure = exposure_for_luminance(0.05);
+        let bright_exposure = exposure_for_luminance(2.0);
+        assert!(
+            dark_exposure / bright_exposure > 10.0,
+            "dark-scene exposure {dark_exposure} is not a decade above \
+             bright-scene exposure {bright_exposure}"
+        );
+    }
 }

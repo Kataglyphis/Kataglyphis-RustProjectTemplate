@@ -69,7 +69,7 @@ struct pixelInput_0
 @fragment
 fn fs_main( _S1 : pixelInput_0, @builtin(position) svPosition_2 : vec4<f32>) -> pixelOutput_0
 {
-    var mapped_0 : vec3<f32> = aces_tonemap_0(((textureSample((hdrTex_0), (hdrSampler_0), (_S1.uv_2))).xyz * vec3<f32>(mix(1.0f, (textureSample((aoTex_0), (hdrSampler_0), (_S1.uv_2))).x, tonemapUniforms_0.params_0.y)) + (textureSample((bloomTex_0), (hdrSampler_0), (_S1.uv_2))).xyz * vec3<f32>(tonemapUniforms_0.params_0.x)) * vec3<f32>(exp2(exposureState_0[i32(0)])));
+    var mapped_0 : vec3<f32> = aces_tonemap_0((textureSample((hdrTex_0), (hdrSampler_0), (_S1.uv_2))).xyz * vec3<f32>(mix(1.0f, (textureSample((aoTex_0), (hdrSampler_0), (_S1.uv_2))).x, tonemapUniforms_0.params_0.y)) * vec3<f32>(exp2(exposureState_0[i32(0)])) + (textureSample((bloomTex_0), (hdrSampler_0), (_S1.uv_2))).xyz * vec3<f32>(tonemapUniforms_0.params_0.x));
     if((tonemapUniforms_0.params_0.w) > 0.5f)
     {
         var _S2 : pixelOutput_0 = pixelOutput_0( vec4<f32>(linear_to_srgb_0(mapped_0), 1.0f) );

@@ -47,6 +47,21 @@ impl BloomPass {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                // [adapted EV, target EV], the same buffer tonemap.rs binds at
+                // binding 5. Only fs_brightpass reads it, but one layout keeps
+                // all three bloom pipelines on the same pipeline layout - see
+                // ssao.rs's ssao_bg/ssao_blur_bg for the same "one layout, one
+                // binding some pipelines ignore" precedent.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -107,8 +122,17 @@ impl BloomPass {
         }
     }
 
-    /// (Re)creates the half-res chain for a new HDR target.
-    pub fn rebuild(&mut self, gpu: &GpuContext, width: u32, height: u32, hdr: &wgpu::TextureView) {
+    /// (Re)creates the half-res chain for a new HDR target. `exposure_buffer`
+    /// is the same `[adapted EV, target EV]` buffer passed to
+    /// `TonemapPass::set_input`.
+    pub fn rebuild(
+        &mut self,
+        gpu: &GpuContext,
+        width: u32,
+        height: u32,
+        hdr: &wgpu::TextureView,
+        exposure_buffer: &wgpu::Buffer,
+    ) {
         let (w, h) = ((width / 2).max(1), (height / 2).max(1));
         self.size = (w, h);
         let make_tex = |label: &str| {
@@ -145,6 +169,10 @@ impl BloomPass {
                     wgpu::BindGroupEntry {
                         binding: 1,
                         resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: exposure_buffer.as_entire_binding(),
                     },
                 ],
             })

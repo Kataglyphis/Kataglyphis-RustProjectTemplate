@@ -1635,7 +1635,13 @@ impl ForwardRenderer {
             self.hdr_rebound_needed = true;
         }
         if self.hdr_rebound_needed {
-            self.bloom.rebuild(gpu, width, height, &self.hdr_view);
+            self.bloom.rebuild(
+                gpu,
+                width,
+                height,
+                &self.hdr_view,
+                self.histogram.exposure_buffer(),
+            );
             self.ssao.rebuild(gpu, width, height, &self.depth);
             let bloom_out = self
                 .bloom
@@ -1656,12 +1662,7 @@ impl ForwardRenderer {
             );
             self.hdr_rebound_needed = false;
         }
-        tonemap.set_params(
-            &gpu.queue,
-            self.bloom_strength,
-            self.ssao_strength,
-            self.exposure_ev,
-        );
+        tonemap.set_params(&gpu.queue, self.bloom_strength, self.ssao_strength);
         // Manual mode still routes through the reduction, which copies the
         // slider value into the same buffer the tonemap reads - one source of
         // truth, and switching modes cannot strand a stale value.

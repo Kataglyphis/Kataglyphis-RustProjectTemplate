@@ -151,20 +151,18 @@ impl TonemapPass {
     }
 
     /// Per-frame parameters.
-    pub fn set_params(
-        &self,
-        queue: &wgpu::Queue,
-        bloom_strength: f32,
-        ssao_strength: f32,
-        exposure_ev: f32,
-    ) {
+    pub fn set_params(&self, queue: &wgpu::Queue, bloom_strength: f32, ssao_strength: f32) {
         queue.write_buffer(
             &self.uniform_buffer,
             0,
             bytemuck::bytes_of(&[
                 bloom_strength,
                 ssao_strength,
-                exposure_ev.exp2(),
+                // params.z: unused. Exposure comes from exposureState (see
+                // TonemapUniforms in tonemap.slang) so this used to carry a
+                // dead exposure_ev.exp2() write; kept as a field because the
+                // uniform layout is pinned by the shader struct.
+                0.0,
                 // params.w: see `encode_srgb`. Decided by the output format at
                 // pipeline creation, not per frame, but it rides along here
                 // because the uniform already exists and its w was unused.

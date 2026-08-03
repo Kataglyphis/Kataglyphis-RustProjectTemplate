@@ -2,6 +2,8 @@
 
 @binding(1) @group(0) var srcSampler_0 : sampler;
 
+@binding(2) @group(0) var<storage, read> exposureState_0 : array<f32>;
+
 struct FullscreenVsOut_0
 {
     @builtin(position) svPosition_0 : vec4<f32>,
@@ -37,7 +39,7 @@ struct pixelInput_0
 @fragment
 fn fs_brightpass( _S1 : pixelInput_0, @builtin(position) svPosition_1 : vec4<f32>) -> pixelOutput_0
 {
-    var _S2 : pixelOutput_0 = pixelOutput_0( vec4<f32>(max((textureSample((srcTex_0), (srcSampler_0), (_S1.uv_1))).xyz - vec3<f32>(1.0f), vec3<f32>(0.0f)), 1.0f) );
+    var _S2 : pixelOutput_0 = pixelOutput_0( vec4<f32>(max((textureSample((srcTex_0), (srcSampler_0), (_S1.uv_1))).xyz * vec3<f32>(exp2(exposureState_0[i32(0)])) - vec3<f32>(1.0f), vec3<f32>(0.0f)), 1.0f) );
     return _S2;
 }
 
