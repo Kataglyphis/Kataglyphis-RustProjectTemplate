@@ -9,6 +9,7 @@
 //! ready simply keeps drawing with the last-known visibility.
 
 use crate::context::GpuContext;
+use crate::render::bind_layout;
 use bytemuck::{Pod, Zeroable};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
@@ -88,46 +89,16 @@ impl GpuCulling {
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("gpu_cull_bgl"),
             entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
+                bind_layout::texture(
+                    0,
+                    wgpu::ShaderStages::COMPUTE,
+                    wgpu::TextureSampleType::Depth,
+                    wgpu::TextureViewDimension::D2,
+                    false,
+                ),
+                bind_layout::uniform(1, wgpu::ShaderStages::COMPUTE),
+                bind_layout::storage_buffer(2, wgpu::ShaderStages::COMPUTE, true),
+                bind_layout::storage_buffer(3, wgpu::ShaderStages::COMPUTE, false),
             ],
         });
 

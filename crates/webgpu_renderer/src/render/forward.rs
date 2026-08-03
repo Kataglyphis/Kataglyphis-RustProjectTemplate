@@ -10,6 +10,7 @@ use crate::context::GpuContext;
 use crate::render::animation::{
     keyframe_lerp_indices, sample_morph_weights, sample_quat, sample_vec3,
 };
+use crate::render::bind_layout;
 use crate::render::bloom::BloomPass;
 use crate::render::gpu_occlusion::GpuCulling;
 use crate::render::gpu_timing::{GpuTiming, TimedPass};
@@ -372,64 +373,40 @@ impl ForwardRenderer {
         });
 
         let mut entries: Vec<wgpu::BindGroupLayoutEntry> = vec![
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Depth,
-                    view_dimension: wgpu::TextureViewDimension::D2Array,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 2,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
-                count: None,
-            },
+            bind_layout::uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT),
+            bind_layout::texture(
+                1,
+                wgpu::ShaderStages::FRAGMENT,
+                wgpu::TextureSampleType::Depth,
+                wgpu::TextureViewDimension::D2Array,
+                false,
+            ),
+            bind_layout::sampler(
+                2,
+                wgpu::ShaderStages::FRAGMENT,
+                wgpu::SamplerBindingType::Comparison,
+            ),
         ];
         // Five material texture/sampler pairs: base color, metallic-roughness,
         // normal, emissive, occlusion (bindings 3..=12).
         for slot in 0..5u32 {
-            entries.push(wgpu::BindGroupLayoutEntry {
-                binding: 3 + slot * 2,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            });
-            entries.push(wgpu::BindGroupLayoutEntry {
-                binding: 4 + slot * 2,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            });
+            entries.push(bind_layout::texture_2d(
+                3 + slot * 2,
+                wgpu::ShaderStages::FRAGMENT,
+                true,
+            ));
+            entries.push(bind_layout::sampler(
+                4 + slot * 2,
+                wgpu::ShaderStages::FRAGMENT,
+                wgpu::SamplerBindingType::Filtering,
+            ));
         }
 
-        entries.push(wgpu::BindGroupLayoutEntry {
-            binding: 13,
-            visibility: wgpu::ShaderStages::VERTEX,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Storage { read_only: true },
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        });
+        entries.push(bind_layout::storage_buffer(
+            13,
+            wgpu::ShaderStages::VERTEX,
+            true,
+        ));
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("forward_bind_group_layout"),
@@ -440,26 +417,8 @@ impl ForwardRenderer {
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("shadow_bind_group_layout"),
                 entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 13,
-                        visibility: wgpu::ShaderStages::VERTEX,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
+                    bind_layout::uniform(0, wgpu::ShaderStages::VERTEX),
+                    bind_layout::storage_buffer(13, wgpu::ShaderStages::VERTEX, true),
                 ],
             });
 
@@ -468,16 +427,7 @@ impl ForwardRenderer {
         let frame_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("frame_bind_group_layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
+                entries: &[bind_layout::uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT)],
             });
         let frame_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("frame_uniforms"),
@@ -499,16 +449,11 @@ impl ForwardRenderer {
         let light_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("light_bind_group_layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
+                entries: &[bind_layout::storage_buffer(
+                    0,
+                    wgpu::ShaderStages::FRAGMENT,
+                    true,
+                )],
             });
         let light_storage_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("light_storage"),
@@ -531,30 +476,12 @@ impl ForwardRenderer {
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("tile_light_bgl"),
                 entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
+                    bind_layout::storage_buffer(0, wgpu::ShaderStages::FRAGMENT, true),
+                    bind_layout::storage_buffer(1, wgpu::ShaderStages::FRAGMENT, true),
                 ],
             });
         // Initial sizes: will be rebuilt on first render if larger needed.
-        let max_tiles = 192 * 128;  // enough for 3072×2048 ÷ 16²
+        let max_tiles = 192 * 128; // enough for 3072×2048 ÷ 16²
         let tile_grid_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("tile_light_grid"),
             size: (max_tiles as u64) * 8, // vec2<u32> per tile
@@ -571,8 +498,14 @@ impl ForwardRenderer {
             label: Some("tile_light_bg"),
             layout: &tile_bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: tile_grid_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: tile_idx_buf.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: tile_grid_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: tile_idx_buf.as_entire_binding(),
+                },
             ],
         });
 
@@ -584,7 +517,13 @@ impl ForwardRenderer {
         // Group 3 (lights) is forward-only and omitted from shadow/sky layouts.
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("forward_pipeline_layout"),
-            bind_group_layouts: &[Some(&bind_group_layout), Some(&ibl_bind_group_layout), Some(&frame_bind_group_layout), Some(&light_bind_group_layout), Some(&tile_bind_group_layout)],
+            bind_group_layouts: &[
+                Some(&bind_group_layout),
+                Some(&ibl_bind_group_layout),
+                Some(&frame_bind_group_layout),
+                Some(&light_bind_group_layout),
+                Some(&tile_bind_group_layout),
+            ],
             immediate_size: 0,
         });
 
@@ -605,16 +544,7 @@ impl ForwardRenderer {
         let cascade_index_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("shadow_cascade_index_layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
+                entries: &[bind_layout::uniform(0, wgpu::ShaderStages::VERTEX)],
             });
         let cascade_index_bind_groups: Vec<wgpu::BindGroup> = (0..CASCADE_COUNT as u32)
             .map(|cascade| {
@@ -637,7 +567,11 @@ impl ForwardRenderer {
         let shadow_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("shadow_pipeline_layout"),
-                bind_group_layouts: &[Some(&shadow_bind_group_layout), Some(&cascade_index_layout), Some(&frame_bind_group_layout)],
+                bind_group_layouts: &[
+                    Some(&shadow_bind_group_layout),
+                    Some(&cascade_index_layout),
+                    Some(&frame_bind_group_layout),
+                ],
                 immediate_size: 0,
             });
 
@@ -650,42 +584,14 @@ impl ForwardRenderer {
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("shadow_masked_bind_group_layout"),
                 entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 4,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 13,
-                        visibility: wgpu::ShaderStages::VERTEX,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
+                    bind_layout::uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT),
+                    bind_layout::texture_2d(3, wgpu::ShaderStages::FRAGMENT, true),
+                    bind_layout::sampler(
+                        4,
+                        wgpu::ShaderStages::FRAGMENT,
+                        wgpu::SamplerBindingType::Filtering,
+                    ),
+                    bind_layout::storage_buffer(13, wgpu::ShaderStages::VERTEX, true),
                 ],
             });
         let shadow_masked_pipeline_layout =
@@ -711,16 +617,7 @@ impl ForwardRenderer {
         let sky_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("sky_bind_group_layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
+                entries: &[bind_layout::uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT)],
             });
         let sky_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("sky_pipeline_layout"),
@@ -816,8 +713,7 @@ impl ForwardRenderer {
         let hdr_view = create_hdr_texture(device, width, height, 1);
         let depth_msaa = create_depth_texture(device, width, height, MSAA_SAMPLE_COUNT);
         let hdr_msaa = create_hdr_texture(device, width, height, MSAA_SAMPLE_COUNT);
-        let (depth_resolve_pipeline, depth_resolve_bgl) =
-            create_depth_resolve_pipeline(device);
+        let (depth_resolve_pipeline, depth_resolve_bgl) = create_depth_resolve_pipeline(device);
         let depth_resolve_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("depth_resolve_bind_group"),
             layout: &depth_resolve_bgl,
@@ -1334,7 +1230,10 @@ impl ForwardRenderer {
             for (slot_index, (texture_ref, fallback)) in slots.iter().enumerate() {
                 match texture_ref {
                     Some(tex_ref) => {
-                        let key = (std::sync::Arc::as_ptr(&tex_ref.texture) as usize, tex_ref.srgb);
+                        let key = (
+                            std::sync::Arc::as_ptr(&tex_ref.texture) as usize,
+                            tex_ref.srgb,
+                        );
                         let view = match texture_cache.get(&key) {
                             Some(v) => v.clone(),
                             None => {
@@ -1625,14 +1524,15 @@ impl ForwardRenderer {
             self.depth_msaa = create_depth_texture(&gpu.device, width, height, MSAA_SAMPLE_COUNT);
             self.hdr_msaa = create_hdr_texture(&gpu.device, width, height, MSAA_SAMPLE_COUNT);
             // Recreate depth resolve bind group with new MSAA depth view.
-            self.depth_resolve_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("depth_resolve_bind_group"),
-                layout: &self.depth_resolve_bind_group_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&self.depth_msaa),
-                }],
-            });
+            self.depth_resolve_bind_group =
+                gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("depth_resolve_bind_group"),
+                    layout: &self.depth_resolve_bind_group_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&self.depth_msaa),
+                    }],
+                });
             // A stale view here reads a destroyed texture.
             self.histogram.set_input(gpu, &self.hdr_view);
             self.target_size = (width, height);
@@ -1747,7 +1647,8 @@ impl ForwardRenderer {
                 &mut self.tile_light_grid_scratch,
                 &self.punctual_lights,
                 self.punctual_light_count,
-                width, height,
+                width,
+                height,
                 &view_proj,
             );
             let total_tiles = (tx * ty) as usize;
@@ -1768,12 +1669,13 @@ impl ForwardRenderer {
             }
             let needed_idx = (self.tile_light_grid_scratch.indices.len() as u64) * 4;
             if needed_idx > self.tile_light_indices_buffer.size() {
-                self.tile_light_indices_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("tile_light_indices"),
-                    size: needed_idx.max(64),
-                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
+                self.tile_light_indices_buffer =
+                    gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("tile_light_indices"),
+                        size: needed_idx.max(64),
+                        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    });
                 bind_group_dirty = true;
             }
             if bind_group_dirty {
@@ -1792,8 +1694,16 @@ impl ForwardRenderer {
                     ],
                 });
             }
-            gpu.queue.write_buffer(&self.tile_light_grid_buffer, 0, bytemuck::cast_slice(&self.tile_light_grid_scratch.grid));
-            gpu.queue.write_buffer(&self.tile_light_indices_buffer, 0, bytemuck::cast_slice(&self.tile_light_grid_scratch.indices));
+            gpu.queue.write_buffer(
+                &self.tile_light_grid_buffer,
+                0,
+                bytemuck::cast_slice(&self.tile_light_grid_scratch.grid),
+            );
+            gpu.queue.write_buffer(
+                &self.tile_light_indices_buffer,
+                0,
+                bytemuck::cast_slice(&self.tile_light_grid_scratch.indices),
+            );
         }
 
         for prim in &mut self.primitives {
@@ -1818,7 +1728,12 @@ impl ForwardRenderer {
                     prim.base_uv_transform[1][2],
                     0.0,
                 ],
-                material_flags: [if prim.unlit { 1.0 } else { 0.0 }, prim.uv_set_mask as f32, 0.0, 0.0],
+                material_flags: [
+                    if prim.unlit { 1.0 } else { 0.0 },
+                    prim.uv_set_mask as f32,
+                    0.0,
+                    0.0,
+                ],
             };
             gpu.queue
                 .write_buffer(&prim.uniform_buffer, 0, bytemuck::bytes_of(&prim_uniforms));
@@ -2136,9 +2051,9 @@ impl ForwardRenderer {
 
             if self.gpu_culling_enabled {
                 // GPU compute-shader culling
-                let gpu_cull = self.gpu_culling.get_or_insert_with(|| {
-                    GpuCulling::new(gpu, self.primitives.len().max(1024))
-                });
+                let gpu_cull = self
+                    .gpu_culling
+                    .get_or_insert_with(|| GpuCulling::new(gpu, self.primitives.len().max(1024)));
                 let (width, height) = self.target_size;
                 let inv_view_proj = view_proj.inverse();
                 // Use the resolved single-sample depth for culling
@@ -2196,8 +2111,7 @@ impl ForwardRenderer {
         // whatever was left behind the last time it ran. The adapted EV still
         // takes a few frames to settle towards the target after that - that's
         // ordinary temporal adaptation, not staleness.
-        let build_needed =
-            histogram_build_needed(self.auto_exposure, self.auto_exposure_was_on);
+        let build_needed = histogram_build_needed(self.auto_exposure, self.auto_exposure_was_on);
         self.auto_exposure_was_on = self.auto_exposure;
         if build_needed {
             self.histogram.encode(
@@ -2532,7 +2446,8 @@ impl ForwardRenderer {
                         continue;
                     }
                     let n = prim.morph_targets.len();
-                    let w = sample_morph_weights(values, n, channel.interpolation, i0, i1, frac, dt);
+                    let w =
+                        sample_morph_weights(values, n, channel.interpolation, i0, i1, frac, dt);
                     if w != prim.morph_weights {
                         prim.morph_weights = w;
                         prim.morph_dirty = true;
@@ -2549,8 +2464,7 @@ impl ForwardRenderer {
                     prim.model = *m;
                     prim.normal_matrix = normal_matrix_of(*m);
                     prim.uniforms_dirty = true;
-                    let mut bounds =
-                        transform_aabb(*m, prim.local_aabb_min, prim.local_aabb_max);
+                    let mut bounds = transform_aabb(*m, prim.local_aabb_min, prim.local_aabb_max);
                     if let Some(skin) = prim.skin_index.and_then(|s| self.skins.get(s)) {
                         bounds = widen_bounds_for_skin(
                             bounds,
@@ -2634,39 +2548,27 @@ impl IblUniforms {
 }
 
 fn create_ibl_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
-    let texture =
-        |binding: u32, dimension: wgpu::TextureViewDimension| wgpu::BindGroupLayoutEntry {
+    let texture = |binding: u32, dimension: wgpu::TextureViewDimension| {
+        bind_layout::texture(
             binding,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Texture {
-                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                view_dimension: dimension,
-                multisampled: false,
-            },
-            count: None,
-        };
+            wgpu::ShaderStages::FRAGMENT,
+            wgpu::TextureSampleType::Float { filterable: true },
+            dimension,
+            false,
+        )
+    };
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("ibl_forward_bind_group_layout"),
         entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
+            bind_layout::uniform(0, wgpu::ShaderStages::FRAGMENT),
             texture(1, wgpu::TextureViewDimension::Cube),
             texture(2, wgpu::TextureViewDimension::Cube),
             texture(3, wgpu::TextureViewDimension::D2),
-            wgpu::BindGroupLayoutEntry {
-                binding: 4,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
+            bind_layout::sampler(
+                4,
+                wgpu::ShaderStages::FRAGMENT,
+                wgpu::SamplerBindingType::Filtering,
+            ),
         ],
     })
 }
@@ -2777,23 +2679,18 @@ fn create_depth_resolve_pipeline(
 ) -> (wgpu::RenderPipeline, wgpu::BindGroupLayout) {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("depth_resolve_shader"),
-        source: wgpu::ShaderSource::Wgsl(
-            include_str!("../shaders/depth_resolve.wgsl").into(),
-        ),
+        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/depth_resolve.wgsl").into()),
     });
 
     let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("depth_resolve_bind_group_layout"),
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Texture {
-                sample_type: wgpu::TextureSampleType::Depth,
-                view_dimension: wgpu::TextureViewDimension::D2,
-                multisampled: true,
-            },
-            count: None,
-        }],
+        entries: &[bind_layout::texture(
+            0,
+            wgpu::ShaderStages::FRAGMENT,
+            wgpu::TextureSampleType::Depth,
+            wgpu::TextureViewDimension::D2,
+            true,
+        )],
     });
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -3031,7 +2928,10 @@ mod tests {
                 "an animated primitive's model changed, so its uniforms must be re-marked dirty"
             );
             let expected = normal_matrix_of(prim.model);
-            assert!(prim.normal_matrix.is_finite(), "cached normal matrix must stay finite");
+            assert!(
+                prim.normal_matrix.is_finite(),
+                "cached normal matrix must stay finite"
+            );
             assert!(
                 (prim.normal_matrix - expected).abs_diff_eq(Mat4::ZERO, 1e-6),
                 "cached normal matrix must match a fresh computation from the current model"

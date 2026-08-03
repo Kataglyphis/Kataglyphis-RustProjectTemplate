@@ -2,6 +2,7 @@
 //! is multiplied into the HDR image by the tonemap pass.
 
 use crate::context::GpuContext;
+use crate::render::bind_layout;
 use crate::render::gpu_timing::PassScope;
 
 const AO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
@@ -36,36 +37,15 @@ impl SsaoPass {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("ssao_bind_group_layout"),
             entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
+                bind_layout::texture(
+                    0,
+                    wgpu::ShaderStages::FRAGMENT,
+                    wgpu::TextureSampleType::Depth,
+                    wgpu::TextureViewDimension::D2,
+                    false,
+                ),
+                bind_layout::uniform(1, wgpu::ShaderStages::FRAGMENT),
+                bind_layout::texture_2d(2, wgpu::ShaderStages::FRAGMENT, true),
             ],
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {

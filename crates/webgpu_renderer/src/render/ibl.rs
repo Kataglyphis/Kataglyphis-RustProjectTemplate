@@ -41,6 +41,7 @@
 //! [`IblEnvironment::bake_hdr`] composes decode and bake for the common case.
 
 use crate::context::GpuContext;
+use crate::render::bind_layout;
 
 /// Environment cube face resolution.
 ///
@@ -240,45 +241,23 @@ impl Precompute {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("ibl_bind_group_layout"),
             entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        // Not filterable, and not sampled: `sample_equirect`
-                        // uses textureLoad. Declaring it filterable would need
-                        // the FLOAT32_FILTERABLE feature, which browsers gate.
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::Cube,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
+                bind_layout::uniform(0, wgpu::ShaderStages::FRAGMENT),
+                // Not filterable, and not sampled: `sample_equirect` uses
+                // textureLoad. Declaring it filterable would need the
+                // FLOAT32_FILTERABLE feature, which browsers gate.
+                bind_layout::texture_2d(1, wgpu::ShaderStages::FRAGMENT, false),
+                bind_layout::texture(
+                    2,
+                    wgpu::ShaderStages::FRAGMENT,
+                    wgpu::TextureSampleType::Float { filterable: true },
+                    wgpu::TextureViewDimension::Cube,
+                    false,
+                ),
+                bind_layout::sampler(
+                    3,
+                    wgpu::ShaderStages::FRAGMENT,
+                    wgpu::SamplerBindingType::Filtering,
+                ),
             ],
         });
 

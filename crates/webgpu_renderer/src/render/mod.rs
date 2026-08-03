@@ -1,5 +1,6 @@
 pub mod animation;
 pub mod auto_exposure;
+pub mod bind_layout;
 pub mod bloom;
 pub mod bounds;
 pub mod cascades;

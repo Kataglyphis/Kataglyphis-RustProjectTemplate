@@ -7,6 +7,7 @@
 
 use crate::context::GpuContext;
 use crate::render::auto_exposure::{BUILD_WORKGROUP, CLEAR_WORKGROUP, HISTOGRAM_BINS};
+use crate::render::bind_layout;
 use crate::render::gpu_timing::PassScope;
 
 /// Per-frame inputs to the reduction pass.
@@ -59,49 +60,13 @@ impl HistogramPass {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("histogram_bind_group_layout"),
             entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Texture {
-                        // textureLoad, not textureSample: no filtering, and
-                        // sampling an HDR target with a filtering sampler is
-                        // not guaranteed on every backend.
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
+                // textureLoad, not textureSample: no filtering, and sampling
+                // an HDR target with a filtering sampler is not guaranteed on
+                // every backend.
+                bind_layout::texture_2d(0, wgpu::ShaderStages::COMPUTE, false),
+                bind_layout::storage_buffer(1, wgpu::ShaderStages::COMPUTE, false),
+                bind_layout::storage_buffer(2, wgpu::ShaderStages::COMPUTE, false),
+                bind_layout::uniform(3, wgpu::ShaderStages::COMPUTE),
             ],
         });
 

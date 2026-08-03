@@ -1,6 +1,7 @@
 //! Fullscreen ACES tonemap pass: HDR (Rgba16Float) input -> display target.
 
 use crate::context::GpuContext;
+use crate::render::bind_layout;
 use crate::render::gpu_timing::PassScope;
 
 pub struct TonemapPass {
@@ -33,64 +34,18 @@ impl TonemapPass {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("tonemap_bind_group_layout"),
             entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
+                bind_layout::texture_2d(0, wgpu::ShaderStages::FRAGMENT, true),
+                bind_layout::sampler(
+                    1,
+                    wgpu::ShaderStages::FRAGMENT,
+                    wgpu::SamplerBindingType::Filtering,
+                ),
+                bind_layout::texture_2d(2, wgpu::ShaderStages::FRAGMENT, true),
+                bind_layout::uniform(3, wgpu::ShaderStages::FRAGMENT),
+                bind_layout::texture_2d(4, wgpu::ShaderStages::FRAGMENT, true),
                 // Exposure comes from the auto-exposure reduction rather than
                 // a CPU uniform, so no frame has to wait on a readback.
-                wgpu::BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
+                bind_layout::storage_buffer(5, wgpu::ShaderStages::FRAGMENT, true),
             ],
         });
 

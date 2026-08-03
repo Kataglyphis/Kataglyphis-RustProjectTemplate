@@ -35,6 +35,7 @@ use std::sync::Arc;
 
 use glam::{Mat4, Vec3};
 
+use crate::render::bind_layout;
 use crate::render::forward::DEPTH_FORMAT;
 
 /// Frames of occlusion storage in flight. Same reasoning as `gpu_timing`'s
@@ -146,16 +147,7 @@ impl OcclusionQueries {
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("occlusion_bind_group_layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
+            entries: &[bind_layout::uniform(0, wgpu::ShaderStages::VERTEX)],
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {

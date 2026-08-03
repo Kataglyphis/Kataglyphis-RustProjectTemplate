@@ -3,6 +3,7 @@
 //! composited by the tonemap pass.
 
 use crate::context::GpuContext;
+use crate::render::bind_layout;
 use crate::render::forward::HDR_FORMAT;
 use crate::render::gpu_timing::PassScope;
 
@@ -31,37 +32,18 @@ impl BloomPass {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("bloom_bind_group_layout"),
             entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
+                bind_layout::texture_2d(0, wgpu::ShaderStages::FRAGMENT, true),
+                bind_layout::sampler(
+                    1,
+                    wgpu::ShaderStages::FRAGMENT,
+                    wgpu::SamplerBindingType::Filtering,
+                ),
                 // [adapted EV, target EV], the same buffer tonemap.rs binds at
                 // binding 5. Only fs_brightpass reads it, but one layout keeps
                 // all three bloom pipelines on the same pipeline layout - see
                 // ssao.rs's ssao_bg/ssao_blur_bg for the same "one layout, one
                 // binding some pipelines ignore" precedent.
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
+                bind_layout::storage_buffer(2, wgpu::ShaderStages::FRAGMENT, true),
             ],
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
