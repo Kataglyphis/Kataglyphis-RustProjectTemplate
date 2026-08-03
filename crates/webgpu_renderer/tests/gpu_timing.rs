@@ -36,6 +36,9 @@ fn every_pass_reports_a_finite_non_negative_duration() {
     // otherwise TimedPass::OcclusionCull never reports and the all-passes
     // assertion below is off by one.
     renderer.occlusion_queries_enabled = true;
+    // Same story for the histogram build: it's skipped whenever auto-exposure
+    // is off (the default), so TimedPass::Histogram would never report.
+    renderer.auto_exposure = true;
     let camera = OrbitCamera::default();
     let mut tonemap = TonemapPass::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb);
 
