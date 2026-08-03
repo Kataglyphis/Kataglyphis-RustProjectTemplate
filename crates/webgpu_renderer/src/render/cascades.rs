@@ -45,9 +45,13 @@
 //!    its texel footprint never changes as the camera turns.
 //! 3. The box center snapped to whole texels in that fixed basis, so the box
 //!    only ever moves in texel increments and a static shadow edge always
-//!    lands on the same texels. The box is padded by one texel because the
-//!    snap can shift the center by up to a texel per axis; without the pad a
-//!    slice corner would fall just outside.
+//!    lands on the same texels. The box is padded by one texel of the box
+//!    that is actually PROJECTED, not of the raw radius: `texel_world` must
+//!    equal `2 * half_extent / shadow_map_size`, or the grid the center
+//!    snaps to and the grid the box projects disagree and a "whole texel"
+//!    snap drifts by a fraction of a texel every step. Solving
+//!    `half_extent = radius + 2 * half_extent / shadow_map_size` gives
+//!    `half_extent = radius * shadow_map_size / (shadow_map_size - 2)`.
 //!
 //! Depth (near/far) is deliberately NOT tightened to the sphere the way the
 //! C++ version tightens to its exact frustum corners: per-cascade caster
@@ -124,11 +128,24 @@ pub(crate) fn fit_cascades(camera: &OrbitCamera, scene_min: Vec3, scene_max: Vec
 /// so it only ever moves in whole-texel increments. See the module doc
 /// comment for why each step is necessary.
 fn stabilized_light_matrix_for(light_basis: Mat4, center: Vec3, radius: f32, shadow_map_size: u32) -> Mat4 {
-    let texel_world = (2.0 * radius) / shadow_map_size as f32;
+    // shadow_map_size <= 2 has no consistent solution (the pad would
+    // swallow the whole box); fall back to the unsnapped tight fit.
+    let (half_extent, texel_world) = if shadow_map_size > 2 {
+        let half_extent = radius * shadow_map_size as f32 / (shadow_map_size as f32 - 2.0);
+        let texel_world = (2.0 * half_extent) / shadow_map_size as f32;
+        (half_extent, texel_world)
+    } else {
+        (radius, 0.0)
+    };
     let center_ls = light_basis.transform_point3(center);
-    let snapped_x = (center_ls.x / texel_world).floor() * texel_world;
-    let snapped_y = (center_ls.y / texel_world).floor() * texel_world;
-    let half_extent = radius + texel_world;
+    let (snapped_x, snapped_y) = if texel_world > 0.0 {
+        (
+            (center_ls.x / texel_world).floor() * texel_world,
+            (center_ls.y / texel_world).floor() * texel_world,
+        )
+    } else {
+        (center_ls.x, center_ls.y)
+    };
 
     // Depth range: unlike the C++ reference this cascade has no exact frustum
     // corners to bound, only a sphere approximation whose caster may sit
@@ -295,6 +312,57 @@ mod tests {
         assert!(
             (dy - dy.round()).abs() < 5e-2,
             "y moved by a fractional texel: {dy}"
+        );
+    }
+
+    #[test]
+    fn cascades_stay_texel_aligned_over_long_camera_travel() {
+        // The off-by-2/shadow_map_size bug: texel_world was computed from the
+        // UNPADDED radius, but the box that is actually projected is
+        // 2*half_extent wide (half_extent = radius + texel_world), so the
+        // true texel size is texel_world * (1 + 2/shadow_map_size), not
+        // texel_world. Snapping the center by k grid steps then moves a fixed
+        // world point by only k/(1+2/shadow_map_size) texels - short of an
+        // integer by ~2k/shadow_map_size texels. That error is invisible for
+        // the sub-texel offset used above (k is 0 or 1), so move the box
+        // center by well over one texel instead (the near cascade's texel
+        // here is ~1.4e-3 world units, so 0.5 is hundreds of grid steps),
+        // which accumulates the drift past the 5e-2 tolerance unless the fix
+        // (deriving texel_world from the padded half_extent) is in place.
+        //
+        // Unlike `cascades_shift_by_whole_texels_under_camera_motion`, this
+        // calls `stabilized_light_matrix_for` directly with a FIXED radius
+        // rather than routing the travel through `fit_cascades`: `near_radius`
+        // there scales with camera-to-scene distance (see the module doc
+        // comment), a separate and correct behavior that would itself change
+        // the box size between the two samples and swamp the texel-alignment
+        // signal this test targets.
+        let light_dir = Vec3::new(-0.4, -1.0, -0.2).normalize();
+        let up = if light_dir.dot(Vec3::Y).abs() > 0.99 {
+            Vec3::Z
+        } else {
+            Vec3::Y
+        };
+        let light_basis = Mat4::look_at_rh(light_dir, Vec3::ZERO, up);
+        let radius = 1.4_f32;
+        let probe = Vec3::new(0.2, 0.3, 0.1);
+
+        let center_a = Vec3::ZERO;
+        let center_b = center_a + Vec3::new(0.5, 0.0, 0.0);
+
+        let matrix_a = stabilized_light_matrix_for(light_basis, center_a, radius, SHADOW_MAP_SIZE);
+        let matrix_b = stabilized_light_matrix_for(light_basis, center_b, radius, SHADOW_MAP_SIZE);
+
+        let (ax, ay) = texel_space(matrix_a, probe);
+        let (bx, by) = texel_space(matrix_b, probe);
+        let (dx, dy) = (ax - bx, ay - by);
+        assert!(
+            (dx - dx.round()).abs() < 5e-2,
+            "x drifted off whole-texel alignment: {dx}"
+        );
+        assert!(
+            (dy - dy.round()).abs() < 5e-2,
+            "y drifted off whole-texel alignment: {dy}"
         );
     }
 
