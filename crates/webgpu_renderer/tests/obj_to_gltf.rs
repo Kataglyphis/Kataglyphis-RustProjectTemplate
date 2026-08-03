@@ -709,6 +709,81 @@ fn a_colorless_obj_index_accessors_are_unchanged() {
 }
 
 #[test]
+fn a_vn_less_obj_gets_a_geometric_flat_normal_not_an_up_vector() {
+    // Two coplanar triangles in the XZ plane, no `vn` at all. The old
+    // fallback returned a fabricated (0, 1, 0) for every corner - which
+    // happens to be right here by coincidence of the geometry, so this test
+    // alone would not prove anything; see the XY-plane case below for the
+    // one that actually distinguishes fabricated from geometric.
+    let mesh = parse_obj("v 0 0 0\nv 1 0 0\nv 1 0 1\nv 0 0 1\nf 1 2 3\nf 1 3 4\n").expect("parse");
+    assert!(!mesh.has_normals, "no vn line appeared in the source");
+    for normal in &mesh.normals {
+        assert!(
+            (normal[1].abs() - 1.0).abs() < 1e-6
+                && normal[0].abs() < 1e-6
+                && normal[2].abs() < 1e-6,
+            "expected (0, +/-1, 0), got {normal:?}"
+        );
+    }
+}
+
+#[test]
+fn a_vn_less_obj_in_the_xy_plane_gets_a_z_normal_not_a_fabricated_up_vector() {
+    // The case that red-proves the fix: the old code fabricated (0, 1, 0)
+    // for every corner regardless of the triangle's actual orientation. A
+    // triangle lying in the XY plane must come out normal-Z, not normal-Y.
+    let mesh = parse_obj("v 0 0 0\nv 1 0 0\nv 1 1 0\nf 1 2 3\n").expect("parse");
+    for normal in &mesh.normals {
+        assert!(
+            (normal[2].abs() - 1.0).abs() < 1e-6
+                && normal[0].abs() < 1e-6
+                && normal[1].abs() < 1e-6,
+            "expected (0, 0, +/-1), got {normal:?}"
+        );
+    }
+}
+
+#[test]
+fn a_mixed_obj_preserves_explicit_normals_and_fills_the_rest_geometrically() {
+    // One face carries `vn`, the other does not. The explicit normal must
+    // survive verbatim, and the vn-less face must get its own geometric
+    // normal rather than either the other face's normal or a fabricated up
+    // vector.
+    let mesh = parse_obj(
+        "\
+v 0 0 0
+v 1 0 0
+v 1 1 0
+v 0 0 0
+v 1 0 0
+v 1 0 1
+vn 1.0 0.0 0.0
+f 1//1 2//1 3//1
+f 4 5 6
+",
+    )
+    .expect("parse");
+    assert!(mesh.has_normals);
+
+    // First triangle: explicit normal preserved verbatim, even though it
+    // does not match the triangle's actual (XY-plane) geometry - proving
+    // this is the explicit `vn`, not a recomputed value.
+    for i in 0..3 {
+        assert_eq!(mesh.normals[i], [1.0, 0.0, 0.0]);
+    }
+    // Second triangle: no vn, lies in the XZ plane -> its own geometric flat
+    // normal, not the first face's explicit normal and not a fabricated up
+    // vector.
+    for i in 3..6 {
+        let n = mesh.normals[i];
+        assert!(
+            (n[1].abs() - 1.0).abs() < 1e-6 && n[0].abs() < 1e-6 && n[2].abs() < 1e-6,
+            "expected the second face's own geometric normal (0, +/-1, 0), got {n:?}"
+        );
+    }
+}
+
+#[test]
 fn vertex_colors_round_trip_through_the_real_gltf_loader() {
     let dir = temp_dir("vertex_colors");
     let obj_path = dir.join("triangle.obj");

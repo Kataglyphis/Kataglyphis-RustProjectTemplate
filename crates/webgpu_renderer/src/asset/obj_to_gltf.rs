@@ -62,6 +62,11 @@ pub struct ObjMesh {
     /// always fully populated (with white) regardless, so this - not
     /// `colors.is_empty()` - is what gates emitting `COLOR_0`.
     pub has_vertex_colors: bool,
+    /// Whether any `vn` line appeared in the source. `normals` is always
+    /// fully populated regardless - corners with no `vn` index get a flat
+    /// face normal filled in by `fill_missing_flat_normals` - so this is
+    /// informational only, mirroring `has_vertex_colors`.
+    pub has_normals: bool,
     pub indices: Vec<u32>,
     /// Materials referenced by the file, in declaration order.
     pub materials: Vec<ObjMaterial>,
@@ -191,6 +196,10 @@ pub fn parse_obj_with_materials(source: &str, materials: Vec<ObjMaterial>) -> Re
         materials,
         ..ObjMesh::default()
     };
+    // Keyed on the (position, uv, normal) triple, so with no `vn` at all every
+    // corner at one position collapses onto one vertex; the fill pass below
+    // then resolves each shared vertex to whichever triangle visits it last -
+    // the same flat approximation the two C++ loaders make.
     let mut seen: HashMap<(i64, i64, i64), u32> = HashMap::new();
     let mut active_material: usize = 0;
     let mut run_start: u32 = 0;
@@ -246,6 +255,7 @@ pub fn parse_obj_with_materials(source: &str, materials: Vec<ObjMaterial>) -> Re
                     parse_f32(values[1], at)?,
                     parse_f32(values[2], at)?,
                 ]);
+                mesh.has_normals = true;
             }
             "vt" => {
                 if values.len() < 2 {
@@ -284,10 +294,11 @@ pub fn parse_obj_with_materials(source: &str, materials: Vec<ObjMaterial>) -> Re
                                 let normal = resolve(key.2, normals.len(), at, "normal")?;
                                 mesh.normals.push(normals[normal]);
                             } else {
-                                // A loader that sees a zero normal shades the
-                                // surface black; an up vector is wrong but
-                                // visibly wrong rather than invisibly so.
-                                mesh.normals.push([0.0, 1.0, 0.0]);
+                                // Zero is a marker `fill_missing_flat_normals`
+                                // finds after parsing and replaces with the
+                                // owning triangle's geometric normal; it never
+                                // survives to the emitted file.
+                                mesh.normals.push([0.0, 0.0, 0.0]);
                             }
 
                             let index = (mesh.positions.len() - 1) as u32;
@@ -349,6 +360,8 @@ pub fn parse_obj_with_materials(source: &str, materials: Vec<ObjMaterial>) -> Re
             .push((run_start, total - run_start, active_material));
     }
 
+    fill_missing_flat_normals(&mut mesh);
+
     if mesh.positions.is_empty() {
         bail!("the OBJ contained no geometry");
     }
@@ -359,6 +372,48 @@ pub fn parse_obj_with_materials(source: &str, materials: Vec<ObjMaterial>) -> Re
         mesh.submeshes.push((0, mesh.indices.len() as u32, 0));
     }
     Ok(mesh)
+}
+
+/// Fills every (near-)zero-length corner normal - left behind by a face
+/// vertex with no `vn` index - with its triangle's flat face normal.
+///
+/// Mirrors `gltf_loader::compute_flat_normals`'s face-normal rule and C++
+/// `vertex::fillMissingFlatNormals`'s degenerate-triangle skip: a triangle
+/// whose face normal has zero length (degenerate, zero area) is skipped
+/// rather than normalized into a NaN, leaving its corners' placeholder zero
+/// normals to whichever other triangle sharing that vertex fills them.
+fn fill_missing_flat_normals(mesh: &mut ObjMesh) {
+    for tri in mesh.indices.chunks_exact(3) {
+        let [i0, i1, i2] = [tri[0] as usize, tri[1] as usize, tri[2] as usize];
+        let p0 = mesh.positions[i0];
+        let p1 = mesh.positions[i1];
+        let p2 = mesh.positions[i2];
+        let e1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
+        let e2 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
+        let face_normal = [
+            e1[1] * e2[2] - e1[2] * e2[1],
+            e1[2] * e2[0] - e1[0] * e2[2],
+            e1[0] * e2[1] - e1[1] * e2[0],
+        ];
+        let len_sq = face_normal[0] * face_normal[0]
+            + face_normal[1] * face_normal[1]
+            + face_normal[2] * face_normal[2];
+        if len_sq <= 0.0 {
+            continue;
+        }
+        let inv_len = len_sq.sqrt().recip();
+        let normal = [
+            face_normal[0] * inv_len,
+            face_normal[1] * inv_len,
+            face_normal[2] * inv_len,
+        ];
+        for i in [i0, i1, i2] {
+            let n = mesh.normals[i];
+            if n[0] * n[0] + n[1] * n[1] + n[2] * n[2] <= 1e-12 {
+                mesh.normals[i] = normal;
+            }
+        }
+    }
 }
 
 /// Escapes a string for embedding in a JSON string literal, per RFC 8259.
