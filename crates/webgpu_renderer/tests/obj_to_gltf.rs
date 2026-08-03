@@ -656,3 +656,83 @@ fn an_empty_mesh_emits_finite_accessor_bounds() {
     assert!(!json.contains("inf"), "accessor bounds must not contain inf");
     assert!(!json.contains("NaN"), "accessor bounds must not contain NaN");
 }
+
+#[test]
+fn per_vertex_colors_are_parsed_from_the_v_line() {
+    let mesh = parse_obj("v 0 0 0 1 0 0\nv 1 0 0 1 0 0\nv 1 1 0 1 0 0\nf 1 2 3\n").expect("parse");
+    for color in &mesh.colors {
+        assert_eq!(*color, [1.0, 0.0, 0.0, 1.0]);
+    }
+    assert!(mesh.has_vertex_colors);
+}
+
+#[test]
+fn a_seven_component_v_line_carries_alpha() {
+    let mesh =
+        parse_obj("v 0 0 0 0.2 0.4 0.6 0.5\nv 1 0 0 0.2 0.4 0.6 0.5\nv 1 1 0 0.2 0.4 0.6 0.5\nf 1 2 3\n")
+            .expect("parse");
+    for color in &mesh.colors {
+        assert_eq!(*color, [0.2, 0.4, 0.6, 0.5]);
+    }
+}
+
+#[test]
+fn a_colorless_obj_has_no_vertex_colors_and_no_color_0() {
+    let mesh = parse_obj(CUBE_OBJ).expect("parse");
+    assert!(
+        !mesh.has_vertex_colors,
+        "a colourless OBJ must not be flagged as carrying colours"
+    );
+
+    let (json, _bin) = to_gltf(&mesh, "cube.bin");
+    assert!(
+        !json.contains("COLOR_0"),
+        "no COLOR_0 attribute should be emitted for a colourless mesh"
+    );
+}
+
+#[test]
+fn a_colorless_obj_index_accessors_are_unchanged() {
+    // Pins the index-accessor numbering for the common (colourless) case, so
+    // adding the COLOR_0 attribute slot cannot silently repoint `indices`.
+    let mesh = parse_obj(CUBE_OBJ).expect("parse");
+    let (json, _bin) = to_gltf(&mesh, "cube.bin");
+
+    assert!(
+        json.contains(r#""indices": 3"#),
+        "a colourless mesh's single primitive must still address index accessor 3: {json}"
+    );
+    assert!(
+        json.contains(r#""bufferView": 3, "byteOffset": 0, "componentType": 5125"#),
+        "the index accessor must still view bufferView 3: {json}"
+    );
+}
+
+#[test]
+fn vertex_colors_round_trip_through_the_real_gltf_loader() {
+    let dir = temp_dir("vertex_colors");
+    let obj_path = dir.join("triangle.obj");
+    std::fs::write(
+        &obj_path,
+        "v 0 0 0 1 0 0\nv 1 0 0 0 1 0\nv 1 1 0 0 0 1\nf 1 2 3\n",
+    )
+    .expect("write obj");
+    let gltf_path = dir.join("triangle.gltf");
+
+    let source = convert_file(&obj_path, &gltf_path).expect("conversion must succeed");
+    assert!(source.has_vertex_colors);
+
+    let scene = load_gltf(&gltf_path).expect("the converted glTF must load");
+    let loaded = &scene.primitives[0];
+    assert_eq!(loaded.vertices.len(), source.colors.len());
+    for (index, vertex) in loaded.vertices.iter().enumerate() {
+        for channel in 0..4 {
+            assert!(
+                (vertex.color[channel] - source.colors[index][channel]).abs() < 1e-6,
+                "vertex {index} colour differs on channel {channel}: {:?} vs {:?}",
+                vertex.color,
+                source.colors[index]
+            );
+        }
+    }
+}

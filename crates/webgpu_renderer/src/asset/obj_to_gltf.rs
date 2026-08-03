@@ -12,8 +12,10 @@
 //! dropped rather than guessed into metallic/roughness - a converted asset
 //! should differ from the source in ways that are written down, not invented.
 //!
-//! Deliberately NOT supported, and rejected rather than silently mangled:
-//! smoothing groups and negative (relative) indices. A converter that quietly
+//! Smoothing groups (`s`) are ignored, not rejected: every real OBJ carries
+//! them, and refusing the file over a directive with no glTF equivalent would
+//! make the converter useless. Negative (relative) indices ARE rejected
+//! rather than silently mangled - see `resolve`. A converter that quietly
 //! drops what it does not understand produces assets that differ from the
 //! source in ways nobody notices until the two renderers disagree.
 
@@ -52,6 +54,14 @@ pub struct ObjMesh {
     pub positions: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
     pub uvs: Vec<[f32; 2]>,
+    /// `[1,1,1,1]` per vertex when the OBJ carried no `v x y z r g b [a]`
+    /// colour, so a colourless OBJ converts byte-identically to before this
+    /// existed - the actual presence flag is [`ObjMesh::has_vertex_colors`].
+    pub colors: Vec<[f32; 4]>,
+    /// Whether any `v` line in the source carried a colour. `colors` is
+    /// always fully populated (with white) regardless, so this - not
+    /// `colors.is_empty()` - is what gates emitting `COLOR_0`.
+    pub has_vertex_colors: bool,
     pub indices: Vec<u32>,
     /// Materials referenced by the file, in declaration order.
     pub materials: Vec<ObjMaterial>,
@@ -175,6 +185,7 @@ pub fn parse_obj_with_materials(source: &str, materials: Vec<ObjMaterial>) -> Re
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
     let mut uvs: Vec<[f32; 2]> = Vec::new();
+    let mut colors: Vec<[f32; 4]> = Vec::new();
 
     let mut mesh = ObjMesh {
         materials,
@@ -198,14 +209,33 @@ pub fn parse_obj_with_materials(source: &str, materials: Vec<ObjMaterial>) -> Re
 
         match keyword {
             "v" => {
-                if values.len() < 3 {
-                    bail!("line {at}: 'v' needs 3 coordinates, got {}", values.len());
+                if values.len() != 3 && values.len() != 6 && values.len() != 7 {
+                    bail!(
+                        "line {at}: 'v' needs 3, 6 or 7 components, got {}",
+                        values.len()
+                    );
                 }
                 positions.push([
                     parse_f32(values[0], at)?,
                     parse_f32(values[1], at)?,
                     parse_f32(values[2], at)?,
                 ]);
+                if values.len() >= 6 {
+                    let alpha = if values.len() == 7 {
+                        parse_f32(values[6], at)?
+                    } else {
+                        1.0
+                    };
+                    colors.push([
+                        parse_f32(values[3], at)?,
+                        parse_f32(values[4], at)?,
+                        parse_f32(values[5], at)?,
+                        alpha,
+                    ]);
+                    mesh.has_vertex_colors = true;
+                } else {
+                    colors.push([1.0, 1.0, 1.0, 1.0]);
+                }
             }
             "vn" => {
                 if values.len() < 3 {
@@ -241,6 +271,7 @@ pub fn parse_obj_with_materials(source: &str, materials: Vec<ObjMaterial>) -> Re
                         None => {
                             let position = resolve(key.0, positions.len(), at, "position")?;
                             mesh.positions.push(positions[position]);
+                            mesh.colors.push(colors[position]);
 
                             if key.1 > 0 {
                                 let uv = resolve(key.1, uvs.len(), at, "texcoord")?;
@@ -417,6 +448,17 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
             bin.extend_from_slice(&component.to_le_bytes());
         }
     }
+    // Colours are appended only when the source actually carried them, so a
+    // colourless OBJ's buffer layout - and every offset computed from it -
+    // stays byte-identical to before COLOR_0 existed.
+    let colors_offset = bin.len();
+    if mesh.has_vertex_colors {
+        for c in &mesh.colors {
+            for component in c {
+                bin.extend_from_slice(&component.to_le_bytes());
+            }
+        }
+    }
     // Index data must start on a multiple of its component size; u32 needs 4,
     // which the float arrays above already guarantee, but pad defensively so
     // a future non-float attribute cannot silently misalign it.
@@ -432,28 +474,39 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
     let vertex_count = mesh.positions.len();
     let index_count = mesh.indices.len();
 
+    // bufferView/accessor 0-2 are always POSITION/NORMAL/TEXCOORD_0; COLOR_0,
+    // when present, takes slot 3. The index bufferView/accessors are
+    // addressed off this computed base - not a literal - so adding an
+    // attribute here can never silently repoint every primitive's `indices`.
+    let indices_buffer_view = if mesh.has_vertex_colors { 4 } else { 3 };
+    let index_accessor_base = indices_buffer_view;
+
     // One index accessor and one primitive per material run. They all view
     // the SAME index bufferView at different offsets, so shared vertices stay
     // shared - splitting the vertex data per material would duplicate them
     // and change the geometry a comparison harness is meant to hold constant.
+    let color_attribute = if mesh.has_vertex_colors {
+        r#", "COLOR_0": 3"#
+    } else {
+        ""
+    };
     let mut index_accessors = String::new();
     let mut primitives = String::new();
     for (run, &(first_index, count, material)) in mesh.submeshes.iter().enumerate() {
         if run > 0 {
-            index_accessors.push_str(
-                ",
-    ",
-            );
+            index_accessors.push_str(",\n    ");
             primitives.push_str(", ");
         }
         index_accessors.push_str(&format!(
-            r#"{{ "bufferView": 3, "byteOffset": {}, "componentType": 5125, "count": {}, "type": "SCALAR" }}"#,
+            r#"{{ "bufferView": {}, "byteOffset": {}, "componentType": 5125, "count": {}, "type": "SCALAR" }}"#,
+            indices_buffer_view,
             first_index as usize * 4,
             count
         ));
         primitives.push_str(&format!(
-            r#"{{ "attributes": {{ "POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2 }}, "indices": {}, "material": {}, "mode": 4 }}"#,
-            3 + run,
+            r#"{{ "attributes": {{ "POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2{} }}, "indices": {}, "material": {}, "mode": 4 }}"#,
+            color_attribute,
+            index_accessor_base + run,
             material
         ));
     }
@@ -519,6 +572,28 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
         .collect::<Vec<_>>()
         .join(", ");
 
+    // Colours add a bufferView/accessor only when present, so a colourless
+    // mesh's JSON is untouched by this feature entirely.
+    let color_buffer_view_json = if mesh.has_vertex_colors {
+        format!(
+            r#",
+    {{ "buffer": 0, "byteOffset": {colors_offset}, "byteLength": {colors_length}, "target": 34962 }}"#,
+            colors_offset = colors_offset,
+            colors_length = vertex_count * 16,
+        )
+    } else {
+        String::new()
+    };
+    let color_accessor_json = if mesh.has_vertex_colors {
+        format!(
+            r#",
+    {{ "bufferView": 3, "componentType": 5126, "count": {vertex_count}, "type": "VEC4" }}"#,
+            vertex_count = vertex_count,
+        )
+    } else {
+        String::new()
+    };
+
     let json = format!(
         r#"{{
   "asset": {{ "version": "2.0", "generator": "kataglyphis obj_to_gltf" }},
@@ -531,13 +606,13 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
   "bufferViews": [
     {{ "buffer": 0, "byteOffset": {positions_offset}, "byteLength": {positions_length}, "target": 34962 }},
     {{ "buffer": 0, "byteOffset": {normals_offset}, "byteLength": {normals_length}, "target": 34962 }},
-    {{ "buffer": 0, "byteOffset": {uvs_offset}, "byteLength": {uvs_length}, "target": 34962 }},
+    {{ "buffer": 0, "byteOffset": {uvs_offset}, "byteLength": {uvs_length}, "target": 34962 }}{color_buffer_view_json},
     {{ "buffer": 0, "byteOffset": {indices_offset}, "byteLength": {indices_length}, "target": 34963 }}
   ],
   "accessors": [
     {{ "bufferView": 0, "componentType": 5126, "count": {vertex_count}, "type": "VEC3", "min": [{min0}, {min1}, {min2}], "max": [{max0}, {max1}, {max2}] }},
     {{ "bufferView": 1, "componentType": 5126, "count": {vertex_count}, "type": "VEC3" }},
-    {{ "bufferView": 2, "componentType": 5126, "count": {vertex_count}, "type": "VEC2" }},
+    {{ "bufferView": 2, "componentType": 5126, "count": {vertex_count}, "type": "VEC2" }}{color_accessor_json},
     {index_accessors}
   ]
 }}"#,
@@ -549,6 +624,8 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
         normals_length = vertex_count * 12,
         uvs_offset = uvs_offset,
         uvs_length = vertex_count * 8,
+        color_buffer_view_json = color_buffer_view_json,
+        color_accessor_json = color_accessor_json,
         indices_offset = indices_offset,
         indices_length = index_count * 4,
         vertex_count = vertex_count,
