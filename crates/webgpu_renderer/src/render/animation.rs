@@ -8,23 +8,27 @@ use glam::{Quat, Vec3, Vec4};
 
 use crate::scene::Interpolation;
 
-pub(crate) fn keyframe_lerp_indices(times: &[f32], t: f32) -> (usize, usize, f32) {
+/// Returns `(i0, i1, frac, td)`: the bracketing keyframe indices, the lerp
+/// fraction in `[0,1]` (clamped away from a zero-length span), and the true
+/// segment duration `times[i1] - times[i0]` (0.0 when `i0 == i1`). `td` is
+/// the glTF CUBICSPLINE tangent scale and must be the *unclamped* span —
+/// callers must not reuse `frac`'s clamped span for it.
+pub(crate) fn keyframe_lerp_indices(times: &[f32], t: f32) -> (usize, usize, f32, f32) {
     if times.is_empty() {
-        return (0, 0, 0.0);
+        return (0, 0, 0.0, 0.0);
     }
     if t <= times[0] {
-        return (0, 0, 0.0);
+        return (0, 0, 0.0, 0.0);
     }
     if t >= *times.last().unwrap() {
         let last = times.len() - 1;
-        return (last, last, 0.0);
+        return (last, last, 0.0, 0.0);
     }
-    let mut i = 0;
-    while i + 1 < times.len() && times[i + 1] < t {
-        i += 1;
-    }
-    let span = (times[i + 1] - times[i]).max(1e-6);
-    (i, i + 1, (t - times[i]) / span)
+    // `times` is sorted (glTF requires it), so binary-search the first index
+    // whose time is >= t; the bracketing segment is the one just before it.
+    let i = times.partition_point(|&x| x < t) - 1;
+    let span = times[i + 1] - times[i];
+    (i, i + 1, (t - times[i]) / span.max(1e-6), span)
 }
 
 /// glTF CUBICSPLINE Hermite basis weights for (value0, out_tangent0, value1,
@@ -219,6 +223,71 @@ mod tests {
         let end = sample_morph_weights(&vals, 1, Interpolation::CubicSpline, 0, 1, 1.0, 1.0);
         assert!((start[0] - 0.2).abs() < 1e-5, "t=0 is value0, got {}", start[0]);
         assert!((end[0] - 0.8).abs() < 1e-5, "t=1 is value1, got {}", end[0]);
+    }
+
+    #[test]
+    fn keyframe_lookup_matches_a_linear_scan_over_many_times() {
+        // Irregularly spaced sorted times.
+        let times: Vec<f32> = (0..64)
+            .map(|i| i as f32 * 0.37 + (i as f32 * 1.7).sin() * 0.1)
+            .scan(0.0, |acc, x| {
+                *acc += x.max(0.01);
+                Some(*acc)
+            })
+            .collect();
+
+        fn linear_scan(times: &[f32], t: f32) -> (usize, usize, f32) {
+            if times.is_empty() {
+                return (0, 0, 0.0);
+            }
+            if t <= times[0] {
+                return (0, 0, 0.0);
+            }
+            if t >= *times.last().unwrap() {
+                let last = times.len() - 1;
+                return (last, last, 0.0);
+            }
+            let mut i = 0;
+            while i + 1 < times.len() && times[i + 1] < t {
+                i += 1;
+            }
+            let span = (times[i + 1] - times[i]).max(1e-6);
+            (i, i + 1, (t - times[i]) / span)
+        }
+
+        let mut probes: Vec<f32> = vec![times[0] - 1.0, *times.last().unwrap() + 1.0];
+        for &kt in &times {
+            probes.push(kt);
+        }
+        for w in times.windows(2) {
+            probes.push((w[0] + w[1]) * 0.5);
+        }
+
+        for t in probes {
+            let (i0, i1, frac, _dt) = keyframe_lerp_indices(&times, t);
+            let (ei0, ei1, efrac) = linear_scan(&times, t);
+            assert_eq!((i0, i1), (ei0, ei1), "index mismatch at t={t}");
+            assert!(
+                (frac - efrac).abs() < 1e-6,
+                "frac mismatch at t={t}: got {frac}, expected {efrac}"
+            );
+        }
+    }
+
+    #[test]
+    fn keyframe_lookup_returns_the_segment_duration() {
+        let times = [0.0, 1.0, 3.0, 6.0];
+        let (i0, i1, _frac, dt) = keyframe_lerp_indices(&times, 2.0);
+        assert_eq!((i0, i1), (1, 2));
+        assert!((dt - (times[2] - times[1])).abs() < 1e-6);
+
+        let (i0, i1, _frac, dt) = keyframe_lerp_indices(&times, -1.0);
+        assert_eq!((i0, i1), (0, 0));
+        assert_eq!(dt, 0.0);
+
+        let (i0, i1, _frac, dt) = keyframe_lerp_indices(&times, 10.0);
+        assert_eq!((i0, i1), (3, 3));
+        assert_eq!(dt, 0.0);
     }
 
     #[test]

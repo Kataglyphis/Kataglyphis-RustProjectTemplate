@@ -2463,11 +2463,7 @@ impl ForwardRenderer {
                 } else {
                     0.0
                 };
-                let (i0, i1, frac) = keyframe_lerp_indices(&channel.times, t);
-                let dt = match (channel.times.get(i0), channel.times.get(i1)) {
-                    (Some(a), Some(b)) => b - a,
-                    _ => 0.0,
-                };
+                let (i0, i1, frac, dt) = keyframe_lerp_indices(&channel.times, t);
                 match &channel.values {
                     ChannelValues::Translation(values) => {
                         if let Some(v) =
@@ -2511,11 +2507,7 @@ impl ForwardRenderer {
                 let ChannelValues::MorphWeights(values) = &channel.values else {
                     continue;
                 };
-                let (i0, i1, frac) = keyframe_lerp_indices(&channel.times, t);
-                let dt = match (channel.times.get(i0), channel.times.get(i1)) {
-                    (Some(a), Some(b)) => b - a,
-                    _ => 0.0,
-                };
+                let (i0, i1, frac, dt) = keyframe_lerp_indices(&channel.times, t);
                 for prim in &mut self.primitives {
                     if prim.node_index != Some(channel.node) || prim.morph_targets.is_empty() {
                         continue;
