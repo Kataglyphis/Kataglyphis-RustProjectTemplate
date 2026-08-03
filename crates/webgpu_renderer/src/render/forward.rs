@@ -1821,14 +1821,10 @@ impl ForwardRenderer {
             prim.uniforms_dirty = false;
         }
 
-        // The frame's pass wiring is declared in render::graph and validated
-        // here in debug builds: a read of an unwritten resource (or a double
-        // write) fails loudly instead of rendering black.
-        debug_assert!(
-            crate::render::graph::validate(&crate::render::graph::forward_frame_graph(), &[])
-                .is_ok(),
-            "forward frame graph is invalid"
-        );
+        // The frame's pass wiring is declared in render::graph; its own test
+        // (`graph::tests::forward_graph_is_valid`) proves the wiring, so
+        // re-validating it here on every debug frame would only repeat that
+        // proof against an input that cannot vary at runtime.
 
         // Claimed before any pass asks for a scope: begin_frame decides which
         // ring slot this frame writes into, and every scope handed out below

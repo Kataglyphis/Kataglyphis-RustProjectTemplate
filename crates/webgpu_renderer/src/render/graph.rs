@@ -15,6 +15,8 @@
 //! Execution order stays explicit (the order passes are added), because at
 //! this scale a topological sort would hide more than it automates.
 
+#[cfg(test)]
+use super::gpu_timing::TimedPass;
 use std::collections::HashSet;
 
 /// Named GPU resources the passes exchange within a frame.
@@ -22,14 +24,25 @@ use std::collections::HashSet;
 pub enum Resource {
     /// Cascaded shadow depth array.
     ShadowMap,
-    /// Depth buffer of the camera pass (also SSAO's input).
+    /// MSAA depth buffer written by the forward pass.
+    DepthMsaa,
+    /// Single-sample depth resolved from `DepthMsaa`; SSAO and the cull
+    /// pass's input.
     Depth,
     /// HDR scene color.
     HdrColor,
+    /// Occlusion/visibility result of the cull pass. Consumed by the
+    /// *following* frame's forward pass (a one-frame-latent feedback loop),
+    /// so nothing reads it within this frame's graph.
+    Visibility,
     /// Blurred bloom contribution.
     Bloom,
     /// Blurred ambient occlusion factor.
     Ambient,
+    /// Luminance histogram bins.
+    Histogram,
+    /// Adapted exposure value reduced from `Histogram`.
+    Exposure,
     /// Final display target (swapchain frame or readback texture).
     Output,
 }
@@ -101,6 +114,13 @@ pub fn validate(passes: &[PassDesc<'_>], external: &[Resource]) -> Result<(), Gr
 
 /// The frame graph the forward renderer records, as data. Kept next to the
 /// recording code so the two stay in step; `validate` proves the wiring.
+///
+/// This is the *maximal* frame: passes the renderer may skip at runtime
+/// (bloom and SSAO at zero strength, occlusion cull when disabled, and the
+/// histogram build when auto-exposure is off) are still declared here, since
+/// the graph documents wiring, not what a given frame actually recorded. Do
+/// not add conditional rows for that - `validate` only needs to prove a
+/// legal read/write order exists, not reproduce runtime toggles.
 pub fn forward_frame_graph() -> Vec<PassDesc<'static>> {
     vec![
         PassDesc {
@@ -111,7 +131,17 @@ pub fn forward_frame_graph() -> Vec<PassDesc<'static>> {
         PassDesc {
             name: "forward+sky",
             reads: &[Resource::ShadowMap],
-            writes: &[Resource::HdrColor, Resource::Depth],
+            writes: &[Resource::HdrColor, Resource::DepthMsaa],
+        },
+        PassDesc {
+            name: "depth_resolve",
+            reads: &[Resource::DepthMsaa],
+            writes: &[Resource::Depth],
+        },
+        PassDesc {
+            name: "occlusion_cull",
+            reads: &[Resource::Depth],
+            writes: &[Resource::Visibility],
         },
         PassDesc {
             name: "bloom",
@@ -124,11 +154,44 @@ pub fn forward_frame_graph() -> Vec<PassDesc<'static>> {
             writes: &[Resource::Ambient],
         },
         PassDesc {
+            name: "histogram",
+            reads: &[Resource::HdrColor],
+            writes: &[Resource::Histogram],
+        },
+        PassDesc {
+            name: "exposure_reduce",
+            reads: &[Resource::Histogram],
+            writes: &[Resource::Exposure],
+        },
+        PassDesc {
             name: "tonemap",
-            reads: &[Resource::HdrColor, Resource::Bloom, Resource::Ambient],
+            reads: &[
+                Resource::HdrColor,
+                Resource::Bloom,
+                Resource::Ambient,
+                Resource::Exposure,
+            ],
             writes: &[Resource::Output],
         },
     ]
+}
+
+/// Maps a timed pass to the name of the graph row that records it. A
+/// `match` (rather than a string lookup) makes a new `TimedPass` variant a
+/// compile error here, which is what keeps this mapping - and the test built
+/// on it - honest.
+#[cfg(test)]
+fn graph_pass_name(pass: TimedPass) -> &'static str {
+    match pass {
+        TimedPass::ShadowCascades => "shadow",
+        TimedPass::Forward => "forward+sky",
+        TimedPass::OcclusionCull => "occlusion_cull",
+        TimedPass::Bloom => "bloom",
+        TimedPass::Ssao => "ssao",
+        TimedPass::Histogram => "histogram",
+        TimedPass::ExposureReduce => "exposure_reduce",
+        TimedPass::Tonemap => "tonemap",
+    }
 }
 
 #[cfg(test)]
@@ -138,6 +201,18 @@ mod tests {
     #[test]
     fn forward_graph_is_valid() {
         validate(&forward_frame_graph(), &[]).expect("the shipped frame graph must validate");
+    }
+
+    #[test]
+    fn every_timed_pass_has_a_graph_row() {
+        let graph = forward_frame_graph();
+        for pass in TimedPass::ALL {
+            let expected = graph_pass_name(pass);
+            assert!(
+                graph.iter().any(|p| p.name == expected),
+                "TimedPass::{pass:?} maps to graph row '{expected}', but no such row exists"
+            );
+        }
     }
 
     #[test]
