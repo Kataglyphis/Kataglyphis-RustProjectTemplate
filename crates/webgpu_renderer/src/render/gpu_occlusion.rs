@@ -40,6 +40,10 @@ struct AabbGpu {
 /// being dropped outright.
 const SLOT_COUNT: usize = 3;
 
+/// Workgroup size of `gpu_cull.wgsl`'s `cs_main`; must match the shader's
+/// `@workgroup_size(64, 1, 1)`.
+pub const CULL_WORKGROUP: u32 = 64;
+
 /// Map state of one readback slot, shared with the `map_async` callback.
 const MAP_PENDING: u8 = 0;
 const MAP_READY: u8 = 1;
@@ -244,8 +248,7 @@ impl GpuCulling {
             });
             cpass.set_pipeline(&self.pipeline);
             cpass.set_bind_group(0, &bg, &[]);
-            // round up to 64 (workgroup_size)
-            let wg_count = (count as u32 + 63) / 64;
+            let wg_count = (count as u32).div_ceil(CULL_WORKGROUP);
             cpass.dispatch_workgroups(wg_count, 1, 1);
         }
 
