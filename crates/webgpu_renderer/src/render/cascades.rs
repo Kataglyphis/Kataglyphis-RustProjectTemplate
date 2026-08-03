@@ -16,22 +16,33 @@
 //! camera focus, a mid box around the orbit target, a far box around the
 //! whole scene), but derives the near/mid *radii* - and therefore the
 //! splits, which are `2 * radius` - from the camera's actual distance to the
-//! scene, floored at the scene's own radius. The floor matters: `viewDepth`
-//! is only ever linearly interpolated from per-vertex distances (not
-//! recomputed per-fragment), which is a poor approximation on a large,
-//! coarsely-triangulated receiver - measured against
-//! `tests/assets/cube_on_plane.gltf`'s single-quad ground plane, the
-//! interpolated value can be off by several units. The old scene-radius
-//! sizing happened to be generous enough to absorb that error for every
-//! camera position the existing GPU golden tests exercise (all of which sit
-//! within the scene's own radius); an earlier version of this module that
-//! additionally re-derived box *position/size* from the exact camera frustum
-//! shrank the boxes enough to expose it and regressed
+//! scene, floored at the scene's own radius and then QUANTIZED to powers of
+//! two of that radius. The floor matters: `viewDepth` is only ever linearly
+//! interpolated from per-vertex distances (not recomputed per-fragment),
+//! which is a poor approximation on a large, coarsely-triangulated receiver -
+//! measured against `tests/assets/cube_on_plane.gltf`'s single-quad ground
+//! plane, the interpolated value can be off by several units. The old
+//! scene-radius sizing happened to be generous enough to absorb that error
+//! for every camera position the existing GPU golden tests exercise (all of
+//! which sit within the scene's own radius); an earlier version of this
+//! module that additionally re-derived box *position/size* from the exact
+//! camera frustum shrank the boxes enough to expose it and regressed
 //! `shadow_darkens_plane_under_cube` to zero shadowed pixels. Flooring
 //! `dist_to_center` at `scene_radius` reproduces the old (already-correct)
 //! sizing exactly whenever the camera sits at or inside the scene's radius,
 //! and only grows the boxes once the camera moves farther out than that -
-//! which is exactly the situation the bug report describes.
+//! which is exactly the situation the bug report describes. The quantization
+//! matters separately: sizing the near/mid radii from the RAW (continuous)
+//! distance re-scales the texel grid on every dolly of the camera, which
+//! defeats the whole-texel snap described below (ingredient 3) for exactly
+//! the motion that snap exists to fix - a static shadow edge would still
+//! crawl, just from the box's own size changing instead of its center.
+//! Snapping distance to the nearest power-of-two multiple of `scene_radius`
+//! (rounding away from the origin, so the floor case above stays bit-for-bit
+//! exact) makes the box size a step function of camera distance instead: it
+//! only changes at discrete zoom thresholds, where a one-frame reprojection
+//! is an acceptable, rare cost, and is otherwise perfectly stable under
+//! dollying.
 //!
 //! Each cascade's box is then STABILIZED against camera motion, mirroring
 //! `CascadedShadowMapMath.cpp:154-201`. Three ingredients, each necessary:
@@ -42,7 +53,9 @@
 //!    undo that.
 //! 2. A box sized from each cascade's `radius` alone - a function of the
 //!    slice geometry (see above), not of instantaneous camera position - so
-//!    its texel footprint never changes as the camera turns.
+//!    its texel footprint never changes as the camera turns, nor (thanks to
+//!    the quantization above) as the camera dollies, except at the discrete
+//!    zoom steps where a one-time reprojection is expected.
 //! 3. The box center snapped to whole texels in that fixed basis, so the box
 //!    only ever moves in texel increments and a static shadow edge always
 //!    lands on the same texels. The box is padded by one texel of the box
@@ -90,7 +103,20 @@ pub(crate) fn fit_cascades(camera: &OrbitCamera, scene_min: Vec3, scene_max: Vec
 
     // See the module doc comment for why this is floored at scene_radius
     // rather than used raw.
-    let dist_to_center = (scene_center - camera.eye()).length().max(scene_radius);
+    let mut raw_dist = (scene_center - camera.eye()).length().max(scene_radius);
+    if !raw_dist.is_finite() {
+        raw_dist = scene_radius;
+    }
+    // Sizing the cascade from a CONTINUOUS camera distance re-scales the
+    // texel grid every frame, which defeats the whole-texel snap in
+    // stabilized_light_matrix_for. Quantize to powers of two of the scene's
+    // own radius: the box then changes size only at discrete zoom steps
+    // (where a one-frame reprojection is invisible) and is otherwise fixed.
+    let mut steps = (raw_dist / scene_radius).log2().ceil().max(0.0);
+    if !steps.is_finite() {
+        steps = 0.0;
+    }
+    let dist_to_center = scene_radius * steps.exp2();
 
     let near_radius = (dist_to_center * 0.35).max(0.5);
     let mid_radius = (dist_to_center * 0.7).max(1.0);
@@ -485,6 +511,46 @@ mod tests {
                 assert!(
                     (a - b).abs() < 1e-4,
                     "cascade {i} row {row} scale breathes with camera motion: {a} vs {b}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cascade_box_size_is_invariant_under_small_camera_dolly() {
+        // The dolly half of the shimmer bug: `near_radius`/`mid_radius` used
+        // to scale continuously with `dist_to_center`, so moving the camera
+        // one millimetre toward or away from the scene re-scaled the texel
+        // grid every frame - defeating the whole-texel snap in
+        // `stabilized_light_matrix_for` for exactly the motion that snap
+        // exists to fix. Both cameras sit well outside `scene_radius` (so
+        // the floor does not bind) and close enough together that they must
+        // land on the same quantized zoom step.
+        let scene_min = Vec3::splat(-1.0);
+        let scene_max = Vec3::splat(1.0);
+        let light_dir = Vec3::new(-0.3, -1.0, 0.2);
+
+        let camera_a = OrbitCamera {
+            radius: 50.0,
+            ..OrbitCamera::default()
+        };
+        let camera_b = OrbitCamera {
+            radius: 50.3,
+            ..OrbitCamera::default()
+        };
+
+        let fit_a = fit_cascades(&camera_a, scene_min, scene_max, light_dir);
+        let fit_b = fit_cascades(&camera_b, scene_min, scene_max, light_dir);
+
+        let row_norm = |m: &Mat4, row: usize| Vec3::new(m.x_axis[row], m.y_axis[row], m.z_axis[row]).length();
+
+        for i in 0..CASCADE_COUNT {
+            for row in 0..2 {
+                let a = row_norm(&fit_a.matrices[i], row);
+                let b = row_norm(&fit_b.matrices[i], row);
+                assert!(
+                    (a - b).abs() < 1e-4,
+                    "cascade {i} row {row} scale breathes with a small camera dolly: {a} vs {b}"
                 );
             }
         }
