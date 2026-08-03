@@ -10,6 +10,7 @@
 
 use crate::context::GpuContext;
 use crate::render::bind_layout;
+use crate::render::pipeline_desc;
 use bytemuck::{Pod, Zeroable};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
@@ -102,11 +103,7 @@ impl GpuCulling {
             ],
         });
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("gpu_cull_pipeline_layout"),
-            bind_group_layouts: &[Some(&bgl)],
-            immediate_size: 0,
-        });
+        let layout = pipeline_desc::single_layout(device, "gpu_cull_pipeline_layout", &bgl);
 
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("gpu_cull_pipeline"),

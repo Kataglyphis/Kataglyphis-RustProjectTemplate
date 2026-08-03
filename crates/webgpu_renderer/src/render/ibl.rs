@@ -42,6 +42,7 @@
 
 use crate::context::GpuContext;
 use crate::render::bind_layout;
+use crate::render::pipeline_desc::{self, FullscreenPipeline};
 
 /// Environment cube face resolution.
 ///
@@ -261,38 +262,26 @@ impl Precompute {
             ],
         });
 
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("ibl_pipeline_layout"),
-            bind_group_layouts: &[Some(&bind_group_layout)],
-            immediate_size: 0,
-        });
+        let pipeline_layout =
+            pipeline_desc::single_layout(device, "ibl_pipeline_layout", &bind_group_layout);
 
         let make = |entry_point: &str, format: wgpu::TextureFormat, label: &str| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(label),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
+            pipeline_desc::create_fullscreen_pipeline(
+                device,
+                FullscreenPipeline {
+                    label,
+                    layout: &pipeline_layout,
                     module: &shader,
-                    entry_point: Some("vs_fullscreen"),
-                    buffers: &[],
-                    compilation_options: Default::default(),
+                    vs_entry: "vs_fullscreen",
+                    fs_entry: entry_point,
+                    format,
+                    // Equivalent to `None` (an opaque destination and a fully
+                    // covering fullscreen triangle never blend), kept verbatim
+                    // from the pre-migration literal - see pipeline_desc.rs's
+                    // module doc comment.
+                    blend: Some(wgpu::BlendState::REPLACE),
                 },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some(entry_point),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format,
-                        blend: Some(wgpu::BlendState::REPLACE),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview_mask: None,
-                cache: None,
-            })
+            )
         };
 
         Self {

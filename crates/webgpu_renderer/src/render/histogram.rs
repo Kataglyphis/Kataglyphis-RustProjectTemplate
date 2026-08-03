@@ -9,6 +9,7 @@ use crate::context::GpuContext;
 use crate::render::auto_exposure::{BUILD_WORKGROUP, CLEAR_WORKGROUP, HISTOGRAM_BINS};
 use crate::render::bind_layout;
 use crate::render::gpu_timing::PassScope;
+use crate::render::pipeline_desc;
 
 /// Per-frame inputs to the reduction pass.
 #[derive(Copy, Clone, Debug)]
@@ -70,11 +71,8 @@ impl HistogramPass {
             ],
         });
 
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("histogram_pipeline_layout"),
-            bind_group_layouts: &[Some(&bind_group_layout)],
-            immediate_size: 0,
-        });
+        let pipeline_layout =
+            pipeline_desc::single_layout(device, "histogram_pipeline_layout", &bind_group_layout);
 
         let build_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("histogram_build_pipeline"),

@@ -18,6 +18,7 @@ use crate::render::ibl::{BrdfLut, EquirectImage, IblEnvironment, IblFallback};
 use crate::render::lights::pack_punctual_lights;
 pub use crate::render::lights::MAX_PUNCTUAL_LIGHTS;
 use crate::render::occlusion::OcclusionQueries;
+use crate::render::pipeline_desc;
 use crate::render::ssao::SsaoPass;
 use crate::render::tile_grid::{
     build_tile_light_grid, TileLightGridScratch, MAX_LIGHTS_PER_TILE, TILE_SIZE,
@@ -619,11 +620,8 @@ impl ForwardRenderer {
                 label: Some("sky_bind_group_layout"),
                 entries: &[bind_layout::uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT)],
             });
-        let sky_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("sky_pipeline_layout"),
-            bind_group_layouts: &[Some(&sky_bind_group_layout)],
-            immediate_size: 0,
-        });
+        let sky_pipeline_layout =
+            pipeline_desc::single_layout(device, "sky_pipeline_layout", &sky_bind_group_layout);
         let sky_pipeline = create_sky_pipeline(device, &sky_shader, &sky_pipeline_layout);
         let sky_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("sky_uniforms"),
@@ -2693,11 +2691,8 @@ fn create_depth_resolve_pipeline(
         )],
     });
 
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("depth_resolve_pipeline_layout"),
-        bind_group_layouts: &[Some(&bind_group_layout)],
-        immediate_size: 0,
-    });
+    let pipeline_layout =
+        pipeline_desc::single_layout(device, "depth_resolve_pipeline_layout", &bind_group_layout);
 
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("depth_resolve_pipeline"),

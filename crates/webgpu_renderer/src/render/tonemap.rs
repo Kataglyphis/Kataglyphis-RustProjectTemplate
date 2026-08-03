@@ -3,6 +3,7 @@
 use crate::context::GpuContext;
 use crate::render::bind_layout;
 use crate::render::gpu_timing::PassScope;
+use crate::render::pipeline_desc::{self, FullscreenPipeline};
 
 pub struct TonemapPass {
     pipeline: wgpu::RenderPipeline,
@@ -49,37 +50,21 @@ impl TonemapPass {
             ],
         });
 
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("tonemap_pipeline_layout"),
-            bind_group_layouts: &[Some(&bind_group_layout)],
-            immediate_size: 0,
-        });
+        let pipeline_layout =
+            pipeline_desc::single_layout(device, "tonemap_pipeline_layout", &bind_group_layout);
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("tonemap_pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
+        let pipeline = pipeline_desc::create_fullscreen_pipeline(
+            device,
+            FullscreenPipeline {
+                label: "tonemap_pipeline",
+                layout: &pipeline_layout,
                 module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: Default::default(),
+                vs_entry: "vs_main",
+                fs_entry: "fs_main",
+                format: output_format,
+                blend: None,
             },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: output_format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
+        );
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("tonemap_sampler"),

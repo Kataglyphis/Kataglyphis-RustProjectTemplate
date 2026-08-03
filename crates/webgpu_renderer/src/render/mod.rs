@@ -14,6 +14,7 @@ pub mod ibl;
 pub mod lights;
 pub mod occlusion;
 pub mod overlay;
+pub mod pipeline_desc;
 pub mod ssao;
 pub mod texture;
 pub mod tile_grid;

@@ -37,6 +37,7 @@ use glam::{Mat4, Vec3};
 
 use crate::render::bind_layout;
 use crate::render::forward::DEPTH_FORMAT;
+use crate::render::pipeline_desc;
 
 /// Frames of occlusion storage in flight. Same reasoning as `gpu_timing`'s
 /// ring: two would cover `desired_maximum_frame_latency: 2`, and one spare
@@ -150,11 +151,8 @@ impl OcclusionQueries {
             entries: &[bind_layout::uniform(0, wgpu::ShaderStages::VERTEX)],
         });
 
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("occlusion_pipeline_layout"),
-            bind_group_layouts: &[Some(&bind_group_layout)],
-            immediate_size: 0,
-        });
+        let pipeline_layout =
+            pipeline_desc::single_layout(device, "occlusion_pipeline_layout", &bind_group_layout);
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("occlusion_pipeline"),

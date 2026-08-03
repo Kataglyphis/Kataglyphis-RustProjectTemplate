@@ -4,6 +4,7 @@
 use crate::context::GpuContext;
 use crate::render::bind_layout;
 use crate::render::gpu_timing::PassScope;
+use crate::render::pipeline_desc::{self, FullscreenPipeline};
 
 const AO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 
@@ -48,38 +49,22 @@ impl SsaoPass {
                 bind_layout::texture_2d(2, wgpu::ShaderStages::FRAGMENT, true),
             ],
         });
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("ssao_pipeline_layout"),
-            bind_group_layouts: &[Some(&bind_group_layout)],
-            immediate_size: 0,
-        });
+        let layout =
+            pipeline_desc::single_layout(device, "ssao_pipeline_layout", &bind_group_layout);
 
         let make = |entry: &str, label: &str| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(label),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
+            pipeline_desc::create_fullscreen_pipeline(
+                device,
+                FullscreenPipeline {
+                    label,
+                    layout: &layout,
                     module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: Default::default(),
+                    vs_entry: "vs_main",
+                    fs_entry: entry,
+                    format: AO_FORMAT,
+                    blend: None,
                 },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some(entry),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: AO_FORMAT,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview_mask: None,
-                cache: None,
-            })
+            )
         };
 
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
