@@ -219,3 +219,76 @@ fn depth_resolve_fragment_writes_frag_depth() {
         "fs_main must not emit a colour @location output; result members are {members:?}"
     );
 }
+
+/// Slices the source text of a `fn <name>(` between its opening and closing
+/// brace. Naga's parsed AST loses the original identifier names (`uv1`,
+/// `material_flags`), so the checks below inspect the generated text
+/// directly rather than the parsed module.
+fn extract_balanced(source: &str, start_idx: usize, open: char, close: char) -> &str {
+    let mut depth = 0i32;
+    let mut body_start = None;
+    for (i, c) in source[start_idx..].char_indices() {
+        if c == open {
+            if depth == 0 {
+                body_start = Some(start_idx + i);
+            }
+            depth += 1;
+        } else if c == close {
+            depth -= 1;
+            if depth == 0 {
+                let start = body_start.expect("close before open");
+                return &source[start..=start_idx + i];
+            }
+        }
+    }
+    panic!("unbalanced '{open}'/'{close}' starting at byte {start_idx}");
+}
+
+fn fn_body<'a>(source: &'a str, fn_name: &str) -> &'a str {
+    let needle = format!("fn {fn_name}(");
+    let idx = source
+        .find(&needle)
+        .unwrap_or_else(|| panic!("`{needle}` not found in forward.wgsl"));
+    extract_balanced(source, idx, '{', '}')
+}
+
+/// The masked-shadow pass must alpha-test with the same UV set and vertex
+/// alpha as the forward pass (`fs_main`), or a foliage card that alpha-tests
+/// correctly in colour but casts a solid shadow reads as "shadows are
+/// broken" rather than "wrong UV set". Regression coverage for that bug:
+/// `vs_shadow_masked` must pick `uv1` when `material_flags` says so (the same
+/// selector `fs_main` uses for the base-colour slot), and `fs_shadow_masked`
+/// must multiply the vertex-colour alpha into the discard test alongside the
+/// base-colour factor and the texture sample.
+#[test]
+fn shadow_masked_uses_the_forward_pass_uv_set() {
+    let source = include_str!("../src/shaders/forward.wgsl");
+
+    let vs_body = fn_body(source, "vs_shadow_masked");
+    assert!(
+        vs_body.contains("uv1"),
+        "vs_shadow_masked must reference the uv1 input member to pick the base-colour UV set the same way fs_main does; body:\n{vs_body}"
+    );
+    assert!(
+        vs_body.contains("material_flags"),
+        "vs_shadow_masked must branch on material_flags to select the UV set; body:\n{vs_body}"
+    );
+
+    let fs_body = fn_body(source, "fs_shadow_masked");
+    let if_idx = fs_body.find("if(").unwrap_or_else(|| {
+        panic!("fs_shadow_masked must contain the discard test; body:\n{fs_body}")
+    });
+    let condition = extract_balanced(fs_body, if_idx + 2, '(', ')');
+    assert!(
+        condition.contains("base_color"),
+        "fs_shadow_masked's discard test must include the base-colour alpha factor; condition:\n{condition}"
+    );
+    assert!(
+        condition.contains("textureSample"),
+        "fs_shadow_masked's discard test must include the base-colour texture sample; condition:\n{condition}"
+    );
+    assert!(
+        condition.contains("alpha"),
+        "fs_shadow_masked's discard test must multiply in the vertex-colour alpha, matching fs_main's three-factor product; condition:\n{condition}"
+    );
+}
