@@ -676,7 +676,7 @@ impl ForwardRenderer {
             Some("flat_normal_fallback"),
         );
 
-        let shadow_texture = device.create_texture(&wgpu::TextureDescriptor {
+        let shadow_texture = device.create_texture(&wgpu::TextureDescriptor { // TEXTURE_2D_SHAPE_OK: depth array, not single-layer 2D
             label: Some("shadow_map_array"),
             size: wgpu::Extent3d {
                 width: SHADOW_MAP_SIZE,
@@ -2185,20 +2185,16 @@ impl ForwardRenderer {
     ) -> anyhow::Result<Vec<u8>> {
         let mut tonemap = TonemapPass::new(gpu, format);
 
-        let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("offscreen_color"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
+        let texture = create_2d_texture(
+            &gpu.device,
+            Some("offscreen_color"),
+            width,
+            height,
             format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            1,
+            1,
+        );
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         // Force a rebind: this pass instance has never seen the HDR view.
@@ -2867,7 +2863,8 @@ use crate::render::bounds::{
     primitive_local_aabb, primitive_world_aabb, transform_aabb, widen_bounds_for_skin, Frustum,
 };
 use crate::render::texture::{
-    create_depth_texture, create_hdr_texture, create_material_texture, create_sampler,
+    create_2d_texture, create_depth_texture, create_hdr_texture, create_material_texture,
+    create_sampler,
 };
 
 #[cfg(test)]

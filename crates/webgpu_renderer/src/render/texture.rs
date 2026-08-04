@@ -155,20 +155,16 @@ pub(crate) fn create_compressed_texture(
     // match `texture.width`/`texture.height`) because `ktx2_loader::validate_mip_chain`
     // already rejected anything that wouldn't.
     let block_bytes = compressed.format.block_bytes();
-    let gpu_texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+    let gpu_texture = create_2d_texture(
+        &gpu.device,
         label,
-        size: wgpu::Extent3d {
-            width: texture.width.max(1),
-            height: texture.height.max(1),
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: compressed.mips.len() as u32,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
+        texture.width,
+        texture.height,
         format,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    });
+        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        compressed.mips.len() as u32,
+        1,
+    );
     for (level, data) in compressed.mips.iter().enumerate() {
         let w = (texture.width >> level).max(1);
         let h = (texture.height >> level).max(1);
@@ -221,26 +217,21 @@ pub(crate) fn create_material_texture(
         );
     }
     let mips = generate_mips(texture, srgb);
-    let size = wgpu::Extent3d {
-        width: texture.width.max(1),
-        height: texture.height.max(1),
-        depth_or_array_layers: 1,
-    };
     let format = if srgb {
         wgpu::TextureFormat::Rgba8UnormSrgb
     } else {
         wgpu::TextureFormat::Rgba8Unorm
     };
-    let gpu_texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+    let gpu_texture = create_2d_texture(
+        &gpu.device,
         label,
-        size,
-        mip_level_count: mips.len() as u32,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
+        texture.width,
+        texture.height,
         format,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    });
+        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        mips.len() as u32,
+        1,
+    );
     for (level, (w, h, data)) in mips.iter().enumerate() {
         gpu.queue.write_texture(
             wgpu::TexelCopyTextureInfo {
@@ -266,40 +257,82 @@ pub(crate) fn create_material_texture(
 }
 
 pub(crate) fn create_depth_texture(device: &wgpu::Device, width: u32, height: u32, sample_count: u32) -> wgpu::TextureView {
-    device
-        .create_texture(&wgpu::TextureDescriptor {
-            label: Some("depth"),
-            size: wgpu::Extent3d {
-                width: width.max(1),
-                height: height.max(1),
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count,
-            dimension: wgpu::TextureDimension::D2,
-            format: DEPTH_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        })
-        .create_view(&wgpu::TextureViewDescriptor::default())
+    create_2d_view(
+        device,
+        Some("depth"),
+        width,
+        height,
+        DEPTH_FORMAT,
+        wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        1,
+        sample_count,
+    )
 }
 
 pub(crate) fn create_hdr_texture(device: &wgpu::Device, width: u32, height: u32, sample_count: u32) -> wgpu::TextureView {
-    device
-        .create_texture(&wgpu::TextureDescriptor {
-            label: Some("hdr_color"),
-            size: wgpu::Extent3d {
-                width: width.max(1),
-                height: height.max(1),
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count,
-            dimension: wgpu::TextureDimension::D2,
-            format: HDR_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        })
+    create_2d_view(
+        device,
+        Some("hdr_color"),
+        width,
+        height,
+        HDR_FORMAT,
+        wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        1,
+        sample_count,
+    )
+}
+
+/// Single-layer 2D texture: `dimension: D2`, `depth_or_array_layers: 1`,
+/// `view_formats: &[]`. Covers every 2D texture in the crate except the two
+/// shapes that are genuinely different - cube textures
+/// (`ibl.rs`'s `dummy_cube`, `create_cube`) and the shadow cascade depth
+/// array (`forward.rs`'s `shadow_map_array`) - which stay hand-written.
+///
+/// Clamps `width`/`height` to at least 1: a zero-sized request is a wgpu
+/// validation error, and rendering a 1x1 texture instead is strictly better
+/// than that for every call site here.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn create_2d_texture(
+    device: &wgpu::Device,
+    label: Option<&str>,
+    width: u32,
+    height: u32,
+    format: wgpu::TextureFormat,
+    usage: wgpu::TextureUsages,
+    mip_level_count: u32,
+    sample_count: u32,
+) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label,
+        size: wgpu::Extent3d {
+            width: width.max(1),
+            height: height.max(1),
+            depth_or_array_layers: 1,
+        },
+        mip_level_count,
+        sample_count,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage,
+        view_formats: &[],
+    })
+}
+
+/// As [`create_2d_texture`], but returns the default view directly - the
+/// shape most call sites want when they never need the `wgpu::Texture` itself
+/// again (no later `write_texture` or readback).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn create_2d_view(
+    device: &wgpu::Device,
+    label: Option<&str>,
+    width: u32,
+    height: u32,
+    format: wgpu::TextureFormat,
+    usage: wgpu::TextureUsages,
+    mip_level_count: u32,
+    sample_count: u32,
+) -> wgpu::TextureView {
+    create_2d_texture(device, label, width, height, format, usage, mip_level_count, sample_count)
         .create_view(&wgpu::TextureViewDescriptor::default())
 }
 

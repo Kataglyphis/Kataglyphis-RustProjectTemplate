@@ -5,6 +5,7 @@ use crate::context::GpuContext;
 use crate::render::bind_layout;
 use crate::render::gpu_timing::PassScope;
 use crate::render::pipeline_desc::{self, FullscreenPipeline};
+use crate::render::texture::create_2d_view;
 
 const AO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 
@@ -96,23 +97,16 @@ impl SsaoPass {
     ) {
         let (w, h) = ((width / 2).max(1), (height / 2).max(1));
         let make_tex = |label: &str| {
-            gpu.device
-                .create_texture(&wgpu::TextureDescriptor {
-                    label: Some(label),
-                    size: wgpu::Extent3d {
-                        width: w,
-                        height: h,
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: AO_FORMAT,
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                        | wgpu::TextureUsages::TEXTURE_BINDING,
-                    view_formats: &[],
-                })
-                .create_view(&wgpu::TextureViewDescriptor::default())
+            create_2d_view(
+                &gpu.device,
+                Some(label),
+                w,
+                h,
+                AO_FORMAT,
+                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                1,
+                1,
+            )
         };
         let raw = make_tex("ssao_raw");
         let blurred = make_tex("ssao_blurred");

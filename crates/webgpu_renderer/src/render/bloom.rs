@@ -7,6 +7,7 @@ use crate::render::bind_layout;
 use crate::render::forward::HDR_FORMAT;
 use crate::render::gpu_timing::PassScope;
 use crate::render::pipeline_desc::{self, FullscreenPipeline};
+use crate::render::texture::create_2d_view;
 
 pub struct BloomPass {
     brightpass: wgpu::RenderPipeline,
@@ -103,23 +104,16 @@ impl BloomPass {
         let (w, h) = ((width / 2).max(1), (height / 2).max(1));
         self.size = (w, h);
         let make_tex = |label: &str| {
-            gpu.device
-                .create_texture(&wgpu::TextureDescriptor {
-                    label: Some(label),
-                    size: wgpu::Extent3d {
-                        width: w,
-                        height: h,
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: HDR_FORMAT,
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                        | wgpu::TextureUsages::TEXTURE_BINDING,
-                    view_formats: &[],
-                })
-                .create_view(&wgpu::TextureViewDescriptor::default())
+            create_2d_view(
+                &gpu.device,
+                Some(label),
+                w,
+                h,
+                HDR_FORMAT,
+                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                1,
+                1,
+            )
         };
         let a = make_tex("bloom_a");
         let b = make_tex("bloom_b");

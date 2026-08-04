@@ -43,6 +43,7 @@
 use crate::context::GpuContext;
 use crate::render::bind_layout;
 use crate::render::pipeline_desc::{self, FullscreenPipeline};
+use crate::render::texture::{create_2d_texture, create_2d_view};
 
 /// Environment cube face resolution.
 ///
@@ -320,27 +321,21 @@ struct IblParams {
 }
 
 fn dummy_2d(device: &wgpu::Device) -> wgpu::TextureView {
-    device
-        .create_texture(&wgpu::TextureDescriptor {
-            label: Some("ibl_dummy_2d"),
-            size: wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: EQUIRECT_FORMAT,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        })
-        .create_view(&wgpu::TextureViewDescriptor::default())
+    create_2d_view(
+        device,
+        Some("ibl_dummy_2d"),
+        1,
+        1,
+        EQUIRECT_FORMAT,
+        wgpu::TextureUsages::TEXTURE_BINDING,
+        1,
+        1,
+    )
 }
 
 fn dummy_cube(device: &wgpu::Device) -> wgpu::TextureView {
     device
-        .create_texture(&wgpu::TextureDescriptor {
+        .create_texture(&wgpu::TextureDescriptor { // TEXTURE_2D_SHAPE_OK: cube texture, not single-layer 2D
             label: Some("ibl_dummy_cube"),
             size: wgpu::Extent3d {
                 width: 1,
@@ -378,22 +373,16 @@ pub struct IblFallback {
 
 impl IblFallback {
     pub fn new(device: &wgpu::Device) -> Self {
-        let lut = device
-            .create_texture(&wgpu::TextureDescriptor {
-                label: Some("ibl_fallback_lut"),
-                size: wgpu::Extent3d {
-                    width: 1,
-                    height: 1,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: LUT_FORMAT,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            })
-            .create_view(&wgpu::TextureViewDescriptor::default());
+        let lut = create_2d_view(
+            device,
+            Some("ibl_fallback_lut"),
+            1,
+            1,
+            LUT_FORMAT,
+            wgpu::TextureUsages::TEXTURE_BINDING,
+            1,
+            1,
+        );
         Self {
             irradiance: dummy_cube(device),
             prefiltered: dummy_cube(device),
@@ -424,22 +413,18 @@ impl BrdfLut {
     /// renderer, the first time an environment is set.
     pub fn new(gpu: &GpuContext) -> Self {
         let precompute = Precompute::new(&gpu.device);
-        let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("ibl_brdf_lut"),
-            size: wgpu::Extent3d {
-                width: BRDF_LUT_SIZE,
-                height: BRDF_LUT_SIZE,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: LUT_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+        let texture = create_2d_texture(
+            &gpu.device,
+            Some("ibl_brdf_lut"),
+            BRDF_LUT_SIZE,
+            BRDF_LUT_SIZE,
+            LUT_FORMAT,
+            wgpu::TextureUsages::RENDER_ATTACHMENT
                 | wgpu::TextureUsages::TEXTURE_BINDING
                 | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
+            1,
+            1,
+        );
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         let mut encoder = gpu
@@ -646,7 +631,7 @@ impl IblEnvironment {
 }
 
 fn create_cube(device: &wgpu::Device, label: &str, size: u32, mips: u32) -> wgpu::Texture {
-    device.create_texture(&wgpu::TextureDescriptor {
+    device.create_texture(&wgpu::TextureDescriptor { // TEXTURE_2D_SHAPE_OK: cube texture, not single-layer 2D
         label: Some(label),
         size: wgpu::Extent3d {
             width: size,
@@ -764,20 +749,16 @@ fn draw_fullscreen(
 }
 
 fn upload_equirect(gpu: &GpuContext, image: &EquirectImage) -> wgpu::TextureView {
-    let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("ibl_equirect_source"),
-        size: wgpu::Extent3d {
-            width: image.width,
-            height: image.height,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: EQUIRECT_FORMAT,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    });
+    let texture = create_2d_texture(
+        &gpu.device,
+        Some("ibl_equirect_source"),
+        image.width,
+        image.height,
+        EQUIRECT_FORMAT,
+        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        1,
+        1,
+    );
     gpu.queue.write_texture(
         wgpu::TexelCopyTextureInfo {
             texture: &texture,
