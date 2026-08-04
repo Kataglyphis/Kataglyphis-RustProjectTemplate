@@ -67,6 +67,14 @@ pub const PREFILTER_SAMPLES: u32 = 256;
 /// Split-sum BRDF lookup table edge length.
 pub const BRDF_LUT_SIZE: u32 = 256;
 
+/// Analytic sky gradient constants, pinned against `sky.wgsl`'s copy (Slang's
+/// `common/sky_model.slang`) by `tests/sky_constants.rs`. `EnvironmentImage::sky`
+/// panoramises the same gradient over a different parameterisation, so only the
+/// numbers are shared, not the code.
+pub const SKY_ZENITH: [f32; 3] = [0.09, 0.16, 0.35];
+pub const SKY_HORIZON: [f32; 3] = [0.55, 0.62, 0.72];
+pub const SKY_GROUND: [f32; 3] = [0.18, 0.16, 0.15];
+
 // A mip chain deeper than its base resolution would ask wgpu to render into a
 // zero-texel level. Checked at compile time because the sizes are constants and
 // a runtime test would only notice on a machine that ran the bake.
@@ -141,10 +149,6 @@ impl EquirectImage {
     /// a real convolution of the same sky, which is the cleanest way to see
     /// that the IBL path is doing something and doing it plausibly.
     pub fn sky(width: u32, height: u32) -> Self {
-        const ZENITH: [f32; 3] = [0.09, 0.16, 0.35];
-        const HORIZON: [f32; 3] = [0.55, 0.62, 0.72];
-        const GROUND: [f32; 3] = [0.18, 0.16, 0.15];
-
         let mut rgba32f = Vec::with_capacity((width * height * 4) as usize);
         for y in 0..height {
             // v = 0 is +Y, matching `equirect_uv` in ibl.wgsl.
@@ -152,9 +156,9 @@ impl EquirectImage {
             let dir_y = (0.5 - v) * std::f32::consts::PI;
             let dir_y = dir_y.sin();
             let color = if dir_y >= 0.0 {
-                lerp3(HORIZON, ZENITH, dir_y.clamp(0.0, 1.0).powf(0.7))
+                lerp3(SKY_HORIZON, SKY_ZENITH, dir_y.clamp(0.0, 1.0).powf(0.7))
             } else {
-                lerp3(HORIZON, GROUND, (-dir_y * 3.0).clamp(0.0, 1.0))
+                lerp3(SKY_HORIZON, SKY_GROUND, (-dir_y * 3.0).clamp(0.0, 1.0))
             };
             for _ in 0..width {
                 rgba32f.extend_from_slice(&[color[0], color[1], color[2], 1.0]);

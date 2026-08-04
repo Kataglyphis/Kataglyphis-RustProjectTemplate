@@ -630,24 +630,38 @@ fn hemisphere_irradiance_0( n_2 : vec3<f32>) -> vec3<f32>
     return mix(vec3<f32>(0.18000000715255737f, 0.15999999642372131f, 0.15000000596046448f) * vec3<f32>(0.69999998807907104f), mix(vec3<f32>(0.55000001192092896f, 0.62000000476837158f, 0.72000002861022949f), vec3<f32>(0.09000000357627869f, 0.15999999642372131f, 0.34999999403953552f), vec3<f32>(pow(clamp(_S47, 0.0f, 1.0f), 0.69999998807907104f))), vec3<f32>(clamp(_S47 * 0.5f + 0.5f, 0.0f, 1.0f)));
 }
 
-fn sky_radiance_0( dir_0 : vec3<f32>,  withSun_0 : bool) -> vec3<f32>
+fn sky_gradient_0( dir_0 : vec3<f32>) -> vec3<f32>
 {
     var _S48 : f32 = dir_0.y;
-    var color_4 : vec3<f32>;
     if(_S48 >= 0.0f)
     {
-        color_4 = mix(vec3<f32>(0.55000001192092896f, 0.62000000476837158f, 0.72000002861022949f), vec3<f32>(0.09000000357627869f, 0.15999999642372131f, 0.34999999403953552f), vec3<f32>(pow(clamp(_S48, 0.0f, 1.0f), 0.69999998807907104f)));
+        return mix(vec3<f32>(0.55000001192092896f, 0.62000000476837158f, 0.72000002861022949f), vec3<f32>(0.09000000357627869f, 0.15999999642372131f, 0.34999999403953552f), vec3<f32>(pow(clamp(_S48, 0.0f, 1.0f), 0.69999998807907104f)));
     }
     else
     {
-        color_4 = mix(vec3<f32>(0.55000001192092896f, 0.62000000476837158f, 0.72000002861022949f), vec3<f32>(0.18000000715255737f, 0.15999999642372131f, 0.15000000596046448f), vec3<f32>(clamp(- _S48 * 3.0f, 0.0f, 1.0f)));
+        return mix(vec3<f32>(0.55000001192092896f, 0.62000000476837158f, 0.72000002861022949f), vec3<f32>(0.18000000715255737f, 0.15999999642372131f, 0.15000000596046448f), vec3<f32>(clamp(- _S48 * 3.0f, 0.0f, 1.0f)));
     }
+}
+
+fn sun_disk_0( dir_1 : vec3<f32>,  lightDir_0 : vec3<f32>,  intensity_0 : f32) -> vec3<f32>
+{
+    var _S49 : f32 = max(dot(dir_1, normalize(lightDir_0)), 0.0f);
+    return vec3<f32>(1.0f, 0.94999998807907104f, 0.85000002384185791f) * vec3<f32>((pow(_S49, 1200.0f) * 24.0f + pow(_S49, 48.0f) * 0.5f)) * vec3<f32>((intensity_0 * 0.40000000596046448f));
+}
+
+fn sky_radiance_0( dir_2 : vec3<f32>,  withSun_0 : bool) -> vec3<f32>
+{
+    var color_4 : vec3<f32> = sky_gradient_0(dir_2);
+    var color_5 : vec3<f32>;
     if(withSun_0)
     {
-        var _S49 : f32 = max(dot(dir_0, normalize(frame_0.light_dir_ambient_0.xyz)), 0.0f);
-        color_4 = color_4 + vec3<f32>(1.0f, 0.94999998807907104f, 0.85000002384185791f) * vec3<f32>((pow(_S49, 1200.0f) * 24.0f + pow(_S49, 48.0f) * 0.5f)) * vec3<f32>((frame_0.light_color_intensity_0.w * 0.40000000596046448f));
+        color_5 = color_4 + sun_disk_0(dir_2, frame_0.light_dir_ambient_0.xyz, frame_0.light_color_intensity_0.w);
     }
-    return color_4;
+    else
+    {
+        color_5 = color_4;
+    }
+    return color_5;
 }
 
 fn env_brdf_approx_0( f0_3 : vec3<f32>,  roughness_4 : f32,  nDotV_0 : f32) -> vec3<f32>
