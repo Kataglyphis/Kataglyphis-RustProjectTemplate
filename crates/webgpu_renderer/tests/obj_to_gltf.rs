@@ -262,6 +262,40 @@ fn tr_is_inverted_relative_to_d() {
 }
 
 #[test]
+fn mtl_emissive_becomes_emissive_factor() {
+    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{parse_mtl, ObjMesh};
+
+    let materials = parse_mtl("newmtl a\nKe 0.5 0.25 0.0\n");
+    assert_eq!(materials[0].emissive, [0.5, 0.25, 0.0]);
+
+    let mesh = ObjMesh {
+        materials,
+        ..ObjMesh::default()
+    };
+    let (json, _bin) = to_gltf(&mesh, "a.bin");
+    assert!(
+        json.contains(r#""emissiveFactor": [0.5, 0.25, 0]"#),
+        "expected an emissiveFactor entry, got: {json}"
+    );
+}
+
+#[test]
+fn mtl_without_ke_emits_no_emissive_factor() {
+    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{parse_mtl, ObjMesh};
+
+    let materials = parse_mtl("newmtl a\nKd 1 0 0\n");
+    let mesh = ObjMesh {
+        materials,
+        ..ObjMesh::default()
+    };
+    let (json, _bin) = to_gltf(&mesh, "a.bin");
+    assert!(
+        !json.contains("emissiveFactor"),
+        "a material with no Ke must not emit emissiveFactor: {json}"
+    );
+}
+
+#[test]
 fn each_usemtl_run_becomes_its_own_primitive() {
     let dir = temp_dir("materials");
     std::fs::write(dir.join("pair.mtl"), PAIR_MTL).expect("write mtl");

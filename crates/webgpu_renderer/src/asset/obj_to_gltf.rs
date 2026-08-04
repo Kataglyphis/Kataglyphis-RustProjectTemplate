@@ -7,10 +7,11 @@
 //! crate rather than by trusting the emitter.
 //!
 //! Materials carry across as far as glTF's PBR model allows: OBJ's diffuse
-//! `Kd` becomes `baseColorFactor` and `d`/`Tr` its alpha. OBJ is a
-//! Phong-era format, so `Ks`/`Ns` have no faithful PBR equivalent and are
-//! dropped rather than guessed into metallic/roughness - a converted asset
-//! should differ from the source in ways that are written down, not invented.
+//! `Kd` becomes `baseColorFactor`, `d`/`Tr` its alpha, and `Ke` its
+//! `emissiveFactor`. OBJ is a Phong-era format, so `Ks`/`Ns` have no
+//! faithful PBR equivalent and are dropped rather than guessed into
+//! metallic/roughness - a converted asset should differ from the source in
+//! ways that are written down, not invented.
 //!
 //! Smoothing groups (`s`) are ignored, not rejected: every real OBJ carries
 //! them, and refusing the file over a directive with no glTF equivalent would
@@ -32,6 +33,8 @@ pub struct ObjMaterial {
     pub base_color: [f32; 4],
     /// `map_Kd`, as written in the .mtl (relative to it).
     pub base_color_texture: Option<String>,
+    /// `Ke`.
+    pub emissive: [f32; 3],
 }
 
 impl Default for ObjMaterial {
@@ -43,6 +46,9 @@ impl Default for ObjMaterial {
             // black.
             base_color: [1.0, 1.0, 1.0, 1.0],
             base_color_texture: None,
+            // glTF's own default emissiveFactor, so a .mtl without Ke
+            // converts byte-identically to before this field existed.
+            emissive: [0.0, 0.0, 0.0],
         }
     }
 }
@@ -130,6 +136,19 @@ pub fn parse_mtl(source: &str) -> Vec<ObjMaterial> {
                     for (axis, value) in values.iter().take(3).enumerate() {
                         if let Ok(component) = value.parse::<f32>() {
                             material.base_color[axis] = component;
+                        }
+                    }
+                }
+            }
+            // glTF's `emissiveFactor` is `[0,1]` per component, so clamp
+            // here; values above 1 belong in
+            // `KHR_materials_emissive_strength`, which this converter does
+            // not emit.
+            "Ke" if values.len() >= 3 => {
+                if let Some(material) = materials.last_mut() {
+                    for (axis, value) in values.iter().take(3).enumerate() {
+                        if let Ok(component) = value.parse::<f32>() {
+                            material.emissive[axis] = component.clamp(0.0, 1.0);
                         }
                     }
                 }
@@ -616,12 +635,22 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
                 }
                 None => String::new(),
             };
+            // Emitted only when non-zero, so a .mtl without Ke - i.e. every
+            // document converted before this field existed - produces
+            // byte-identical JSON.
+            let [er, eg, eb] = material.emissive.map(|component| finite_or(component, 0.0));
+            let emissive_json = if er != 0.0 || eg != 0.0 || eb != 0.0 {
+                format!(r#", "emissiveFactor": [{er}, {eg}, {eb}]"#)
+            } else {
+                String::new()
+            };
             format!(
-                r#"{{ "name": "{}", "pbrMetallicRoughness": {{ "baseColorFactor": [{}, {}, {}, {}]{}, "metallicFactor": 0.0, "roughnessFactor": 1.0 }}{} }}"#,
+                r#"{{ "name": "{}", "pbrMetallicRoughness": {{ "baseColorFactor": [{}, {}, {}, {}]{}, "metallicFactor": 0.0, "roughnessFactor": 1.0 }}{}{} }}"#,
                 json_escape(&material.name),
                 r, g, b, a,
                 texture_json,
-                if a < 1.0 { r#", "alphaMode": "BLEND""# } else { "" }
+                if a < 1.0 { r#", "alphaMode": "BLEND""# } else { "" },
+                emissive_json
             )
         })
         .collect::<Vec<_>>()
