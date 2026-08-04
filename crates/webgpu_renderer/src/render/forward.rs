@@ -306,9 +306,6 @@ pub struct ForwardRenderer {
     pub exposure_ev: f32,
     /// Drive exposure from the scene histogram instead of `exposure_ev`.
     pub auto_exposure: bool,
-    /// `auto_exposure` as of the previous frame, so the next frame can tell
-    /// whether it just switched on. See [`histogram_build_needed`].
-    auto_exposure_was_on: bool,
     /// Adaptation rate; higher settles faster.
     pub auto_exposure_speed: f32,
     /// Seconds since the previous frame, for exposure adaptation. A field
@@ -812,7 +809,6 @@ impl ForwardRenderer {
             ssao_strength: 0.7,
             exposure_ev: 0.0,
             auto_exposure: false,
-            auto_exposure_was_on: false,
             auto_exposure_speed: 3.0,
             frame_delta_seconds: 1.0 / 60.0,
             histogram,
@@ -2093,9 +2089,7 @@ impl ForwardRenderer {
         // whatever was left behind the last time it ran. The adapted EV still
         // takes a few frames to settle towards the target after that - that's
         // ordinary temporal adaptation, not staleness.
-        let build_needed = histogram_build_needed(self.auto_exposure, self.auto_exposure_was_on);
-        self.auto_exposure_was_on = self.auto_exposure;
-        if build_needed {
+        if self.auto_exposure {
             self.histogram.encode(
                 &mut encoder,
                 width,
@@ -2816,19 +2810,6 @@ fn create_sky_pipeline(
     })
 }
 
-/// Whether the histogram clear+build pass needs to run this frame.
-///
-/// Gating on `auto_enabled` alone already gets the on-transition right: the
-/// pass clears then rebuilds from scratch, so the very frame auto-exposure
-/// flips on gets fresh bins, not leftovers from the last time it ran.
-/// `was_enabled` doesn't change the answer today - it's threaded through so
-/// the transition is explicit at the call site rather than implicit in a
-/// bare bool, and so a future gate (e.g. a debounce) has somewhere to hook in
-/// without changing the call site.
-fn histogram_build_needed(auto_enabled: bool, _was_enabled: bool) -> bool {
-    auto_enabled
-}
-
 use crate::render::bounds::{
     aabb_contains_point, compute_world_bounds, instanced_bounds, normal_matrix_of,
     primitive_local_aabb, primitive_world_aabb, transform_aabb, widen_bounds_for_skin, Frustum,
@@ -2841,22 +2822,6 @@ use crate::render::texture::{
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn histogram_build_needed_off_never_builds() {
-        assert!(!histogram_build_needed(false, false));
-        assert!(!histogram_build_needed(false, true));
-    }
-
-    #[test]
-    fn histogram_build_needed_on_always_builds() {
-        assert!(histogram_build_needed(true, true));
-    }
-
-    #[test]
-    fn histogram_build_needed_on_transition_frame_builds() {
-        assert!(histogram_build_needed(true, false));
-    }
 
     #[test]
     fn set_animation_time_recomputes_and_dirties_the_cached_normal_matrix() {
