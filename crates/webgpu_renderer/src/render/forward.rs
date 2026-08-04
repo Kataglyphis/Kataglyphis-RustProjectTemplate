@@ -971,11 +971,6 @@ impl ForwardRenderer {
         self.gpu_timing.is_available()
     }
 
-    /// Stops collecting timings and releases the query resources.
-    pub fn disable_gpu_timing(&mut self) {
-        self.gpu_timing = GpuTiming::unavailable();
-    }
-
     /// Averaged per-pass GPU durations in milliseconds, in record order.
     ///
     /// Empty until timing is enabled AND the first readback has landed (a few
@@ -2347,14 +2342,6 @@ impl ForwardRenderer {
     /// True when the uploaded scene carries animations.
     pub fn has_animations(&self) -> bool {
         !self.animations.is_empty()
-    }
-
-    /// Longest animation duration in seconds (0 when none).
-    pub fn animation_duration(&self) -> f32 {
-        self.animations
-            .iter()
-            .map(|a| a.duration)
-            .fold(0.0, f32::max)
     }
 
     /// Samples every animation at `time` (seconds), recomputes node world
