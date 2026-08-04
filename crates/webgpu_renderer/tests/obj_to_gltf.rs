@@ -296,6 +296,92 @@ fn mtl_without_ke_emits_no_emissive_factor() {
 }
 
 #[test]
+fn an_hdr_ke_emits_emissive_strength() {
+    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{parse_mtl, ObjMesh};
+
+    // The C++ engine keeps an HDR `Ke` verbatim (Src/GraphicsEngineVulkan/
+    // scene/ObjLoader.cpp), so this converter must carry the same magnitude
+    // via KHR_materials_emissive_strength instead of clamping it to 1 and
+    // rendering four times dimmer than the C++ side.
+    let materials = parse_mtl("newmtl a\nKe 4 4 4\n");
+    assert_eq!(
+        materials[0].emissive,
+        [4.0, 4.0, 4.0],
+        "Ke must be stored unclamped"
+    );
+
+    let mesh = ObjMesh {
+        materials,
+        ..ObjMesh::default()
+    };
+    let (json, _bin) = to_gltf(&mesh, "a.bin");
+    assert!(
+        json.contains(r#""emissiveFactor": [1, 1, 1]"#),
+        "expected a normalised emissiveFactor of [1, 1, 1], got: {json}"
+    );
+    assert!(
+        json.contains(
+            r#""extensions": { "KHR_materials_emissive_strength": { "emissiveStrength": 4 } }"#
+        ),
+        "expected a KHR_materials_emissive_strength extension, got: {json}"
+    );
+    assert!(
+        json.contains(r#""extensionsUsed": ["KHR_materials_emissive_strength"]"#),
+        "expected extensionsUsed to name the extension, got: {json}"
+    );
+}
+
+#[test]
+fn a_non_hdr_ke_emits_no_emissive_strength_extension() {
+    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{parse_mtl, ObjMesh};
+
+    // The byte-identical case: every document converted before this
+    // extension existed must not gain an unconditional extensions/
+    // extensionsUsed array.
+    let materials = parse_mtl("newmtl a\nKe 0.5 0.5 0.5\n");
+    let mesh = ObjMesh {
+        materials,
+        ..ObjMesh::default()
+    };
+    let (json, _bin) = to_gltf(&mesh, "a.bin");
+    assert!(
+        !json.contains("extensions"),
+        "a non-HDR Ke must not emit an extensions block: {json}"
+    );
+    assert!(
+        !json.contains("extensionsUsed"),
+        "a non-HDR Ke must not emit extensionsUsed: {json}"
+    );
+}
+
+#[test]
+fn an_hdr_ke_round_trips_through_the_real_gltf_loader() {
+    // That is the property that actually matters: the loader folds
+    // emissiveFactor * emissiveStrength back into the HDR value, so this is
+    // what makes the C++ and Rust renderers agree on brightness.
+    let dir = temp_dir("hdr_emissive");
+    std::fs::write(dir.join("hdr.mtl"), "newmtl painted\nKd 1 1 1\nKe 4 4 4\n")
+        .expect("mtl");
+    let obj_path = dir.join("hdr.obj");
+    std::fs::write(
+        &obj_path,
+        "mtllib hdr.mtl\nv 0 0 0\nv 1 0 0\nv 1 1 0\nusemtl painted\nf 1 2 3\n",
+    )
+    .expect("obj");
+    let gltf_path = dir.join("hdr.gltf");
+
+    convert_file(&obj_path, &gltf_path).expect("conversion must succeed");
+    let scene = load_gltf(&gltf_path).expect("the converted glTF must load");
+    let emissive = scene.primitives[0].material.emissive_factor;
+    for channel in emissive {
+        assert!(
+            (channel - 4.0).abs() < 1e-4,
+            "expected the HDR emissive factor to survive the round trip as 4.0, got {emissive:?}"
+        );
+    }
+}
+
+#[test]
 fn each_usemtl_run_becomes_its_own_primitive() {
     let dir = temp_dir("materials");
     std::fs::write(dir.join("pair.mtl"), PAIR_MTL).expect("write mtl");

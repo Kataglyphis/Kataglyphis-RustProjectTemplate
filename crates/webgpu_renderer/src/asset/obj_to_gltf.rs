@@ -140,15 +140,15 @@ pub fn parse_mtl(source: &str) -> Vec<ObjMaterial> {
                     }
                 }
             }
-            // glTF's `emissiveFactor` is `[0,1]` per component, so clamp
-            // here; values above 1 belong in
-            // `KHR_materials_emissive_strength`, which this converter does
-            // not emit.
+            // Stored verbatim, including HDR values above 1: `to_gltf` splits
+            // any component above 1 into a `[0,1]` `emissiveFactor` plus a
+            // `KHR_materials_emissive_strength` factor, so the magnitude
+            // survives instead of being clamped away here.
             "Ke" if values.len() >= 3 => {
                 if let Some(material) = materials.last_mut() {
                     for (axis, value) in values.iter().take(3).enumerate() {
                         if let Ok(component) = value.parse::<f32>() {
-                            material.emissive[axis] = component.clamp(0.0, 1.0);
+                            material.emissive[axis] = component;
                         }
                     }
                 }
@@ -615,7 +615,7 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
         r#"{ "wrapS": 10497, "wrapT": 10497 }"#.to_string()
     };
 
-    let materials_json = mesh
+    let material_entries: Vec<(String, bool)> = mesh
         .materials
         .iter()
         .map(|material| {
@@ -635,26 +635,64 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
                 }
                 None => String::new(),
             };
+            let [er, eg, eb] = material.emissive.map(|component| finite_or(component, 0.0));
+            // glTF's `emissiveFactor` is `[0,1]` per component. An HDR `Ke`
+            // (any component above 1) is split into that `[0,1]` factor plus
+            // a `KHR_materials_emissive_strength` multiplier that carries the
+            // magnitude, rather than losing it to a clamp. At `strength <=
+            // 1.0` this divides by 1 in spirit - the branch below keeps the
+            // output byte-identical to before the extension existed.
+            let strength = er.max(eg).max(eb);
+            let uses_emissive_strength = strength > 1.0;
+            let (er, eg, eb, extensions_json) = if uses_emissive_strength {
+                (
+                    er / strength,
+                    eg / strength,
+                    eb / strength,
+                    format!(
+                        r#", "extensions": {{ "KHR_materials_emissive_strength": {{ "emissiveStrength": {strength} }} }}"#
+                    ),
+                )
+            } else {
+                (er, eg, eb, String::new())
+            };
             // Emitted only when non-zero, so a .mtl without Ke - i.e. every
             // document converted before this field existed - produces
             // byte-identical JSON.
-            let [er, eg, eb] = material.emissive.map(|component| finite_or(component, 0.0));
             let emissive_json = if er != 0.0 || eg != 0.0 || eb != 0.0 {
                 format!(r#", "emissiveFactor": [{er}, {eg}, {eb}]"#)
             } else {
                 String::new()
             };
-            format!(
-                r#"{{ "name": "{}", "pbrMetallicRoughness": {{ "baseColorFactor": [{}, {}, {}, {}]{}, "metallicFactor": 0.0, "roughnessFactor": 1.0 }}{}{} }}"#,
+            let json = format!(
+                r#"{{ "name": "{}", "pbrMetallicRoughness": {{ "baseColorFactor": [{}, {}, {}, {}]{}, "metallicFactor": 0.0, "roughnessFactor": 1.0 }}{}{}{} }}"#,
                 json_escape(&material.name),
                 r, g, b, a,
                 texture_json,
                 if a < 1.0 { r#", "alphaMode": "BLEND""# } else { "" },
-                emissive_json
-            )
+                emissive_json,
+                extensions_json
+            );
+            (json, uses_emissive_strength)
         })
+        .collect();
+
+    let materials_json = material_entries
+        .iter()
+        .map(|(json, _)| json.as_str())
         .collect::<Vec<_>>()
         .join(", ");
+    // Root-level `extensionsUsed` is only ever added when a material actually
+    // needed the extension: the document has no such array today, and the
+    // existing tests compare generated JSON, so an unconditional array would
+    // churn every one of them.
+    let extensions_used_json = if material_entries.iter().any(|(_, used)| *used) {
+        r#",
+  "extensionsUsed": ["KHR_materials_emissive_strength"]"#
+            .to_string()
+    } else {
+        String::new()
+    };
 
     // Colours add a bufferView/accessor only when present, so a colourless
     // mesh's JSON is untouched by this feature entirely.
@@ -698,7 +736,7 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
     {{ "bufferView": 1, "componentType": 5126, "count": {vertex_count}, "type": "VEC3" }},
     {{ "bufferView": 2, "componentType": 5126, "count": {vertex_count}, "type": "VEC2" }}{color_accessor_json},
     {index_accessors}
-  ]
+  ]{extensions_used_json}
 }}"#,
         bin_uri = bin_uri,
         buffer_length = bin.len(),
@@ -716,6 +754,7 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
         index_accessors = index_accessors,
         primitives = primitives,
         materials_json = materials_json,
+        extensions_used_json = extensions_used_json,
         texture_arrays = if image_uris.is_empty() {
             String::new()
         } else {
