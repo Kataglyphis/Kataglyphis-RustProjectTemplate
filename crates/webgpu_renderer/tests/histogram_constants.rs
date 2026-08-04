@@ -15,7 +15,8 @@
 //! adapter.
 
 use kataglyphis_webgpu_renderer::render::auto_exposure::{
-    BUILD_WORKGROUP, CLEAR_WORKGROUP, HISTOGRAM_BINS, MAX_LOG_LUMINANCE, MIN_LOG_LUMINANCE,
+    BLACK_THRESHOLD, BUILD_WORKGROUP, CLEAR_WORKGROUP, EXPOSURE_KEY, HISTOGRAM_BINS,
+    MAX_LOG_LUMINANCE, MIN_LOG_LUMINANCE,
 };
 
 const SHADER_SOURCE: &str = include_str!("../src/shaders/histogram.wgsl");
@@ -100,6 +101,30 @@ fn max_log_luminance_matches_the_shader() {
         shader_value, MAX_LOG_LUMINANCE,
         "histogram.wgsl's MAX_LOG_LUMINANCE ({shader_value}) disagrees with \
          render::auto_exposure::MAX_LOG_LUMINANCE ({MAX_LOG_LUMINANCE}) - edit both together"
+    );
+}
+
+#[test]
+fn exposure_key_matches_the_shader() {
+    let shader_value: f32 = extract_const("EXPOSURE_KEY")
+        .parse()
+        .expect("EXPOSURE_KEY is not an f32 literal");
+    assert_eq!(
+        shader_value, EXPOSURE_KEY,
+        "histogram.wgsl's EXPOSURE_KEY ({shader_value}) disagrees with \
+         render::auto_exposure::EXPOSURE_KEY ({EXPOSURE_KEY}) - edit both together"
+    );
+}
+
+#[test]
+fn black_threshold_matches_the_shader() {
+    let shader_value: f32 = extract_const("BLACK_THRESHOLD")
+        .parse()
+        .expect("BLACK_THRESHOLD is not an f32 literal");
+    assert_eq!(
+        shader_value, BLACK_THRESHOLD,
+        "histogram.wgsl's BLACK_THRESHOLD ({shader_value}) disagrees with \
+         render::auto_exposure::BLACK_THRESHOLD ({BLACK_THRESHOLD}) - edit both together"
     );
 }
 

@@ -166,6 +166,10 @@ fn cs_reduce_exposure() {
     }
 
     let current_ev = exposure_state[0];
+    // A NaN (or infinite) current_ev cannot be climbed out of by the blend
+    // below - it would poison every subsequent frame. Fall back to the
+    // freshly-computed target instead. Mirrors auto_exposure.rs:130-132.
+    let current_ok = current_ev == current_ev && abs(current_ev) < 1e30;
 
     if (counted <= 0.0) {
         // Nothing but black: hold the previous exposure rather than adapt to
@@ -182,7 +186,7 @@ fn cs_reduce_exposure() {
         // No time passed: hold the current value rather than snapping. A
         // stalled frame or a coarse/repeated timer reading must not pop the
         // exposure just because this reduction still ran.
-        exposure_state[0] = current_ev;
+        exposure_state[0] = select(target_ev, current_ev, current_ok);
         exposure_state[1] = target_ev;
         return;
     }
@@ -192,7 +196,8 @@ fn cs_reduce_exposure() {
     var adapted = target_ev;
     if (speed > 0.0) {
         let blend = clamp(1.0 - exp(-dt * speed), 0.0, 1.0);
-        adapted = current_ev + (target_ev - current_ev) * blend;
+        let safe_current_ev = select(target_ev, current_ev, current_ok);
+        adapted = safe_current_ev + (target_ev - safe_current_ev) * blend;
     }
 
     exposure_state[0] = adapted;

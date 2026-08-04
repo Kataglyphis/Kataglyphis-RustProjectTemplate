@@ -36,6 +36,10 @@ pub const CLEAR_WORKGROUP: u32 = 64;
 /// what "correctly exposed" means here.
 pub const EXPOSURE_KEY: f32 = 0.18;
 
+/// Luminance at or below which a sample is treated as "effectively black"
+/// rather than measured. Shared with `histogram.wgsl`'s `BLACK_THRESHOLD`.
+pub const BLACK_THRESHOLD: f32 = 1e-6;
+
 /// Which histogram bin a linear luminance falls into.
 ///
 /// Bin 0 is reserved for "effectively black". Without that, near-zero
@@ -43,7 +47,7 @@ pub const EXPOSURE_KEY: f32 = 0.18;
 /// log2 of a tiny number is a large negative that drags the mean down and
 /// blows the exposure up.
 pub fn histogram_bin(luminance: f32) -> usize {
-    if luminance.is_nan() || luminance <= 1e-6 {
+    if luminance.is_nan() || luminance <= BLACK_THRESHOLD {
         return 0;
     }
     let log_luminance = luminance.log2();
@@ -99,7 +103,7 @@ pub fn exposure_for_luminance(average_luminance: f32) -> f32 {
     // Guard the divide: a caller that ignored average_luminance's None and
     // passed 0 would otherwise get infinity, and infinity times any colour is
     // a NaN frame.
-    if average_luminance.is_nan() || average_luminance <= 1e-6 {
+    if average_luminance.is_nan() || average_luminance <= BLACK_THRESHOLD {
         return 1.0;
     }
     EXPOSURE_KEY / average_luminance
