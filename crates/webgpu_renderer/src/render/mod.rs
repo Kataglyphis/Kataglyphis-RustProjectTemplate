@@ -3,6 +3,7 @@ pub mod auto_exposure;
 pub mod bind_layout;
 pub mod bloom;
 pub mod bounds;
+pub mod buffer_desc;
 pub mod cascades;
 pub mod forward;
 pub mod frame_clock;

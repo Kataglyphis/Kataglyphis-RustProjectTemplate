@@ -10,6 +10,7 @@
 
 use crate::context::GpuContext;
 use crate::render::bind_layout;
+use crate::render::buffer_desc;
 use crate::render::pipeline_desc;
 use bytemuck::{Pod, Zeroable};
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -121,19 +122,9 @@ impl GpuCulling {
         let buf_size = (max_primitives as u64) * 32; // AabbGpu = 32 bytes
         let vis_size = (max_primitives as u64) * 4;
 
-        let aabb_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("gpu_cull_aabbs"),
-            size: buf_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let aabb_buf = buffer_desc::storage_dst(device, "gpu_cull_aabbs", buf_size);
 
-        let vis_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("gpu_cull_visibility"),
-            size: vis_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
+        let vis_buf = buffer_desc::storage_src(device, "gpu_cull_visibility", vis_size);
 
         let params = CullParams {
             view_proj: [[0.0; 4]; 4],
@@ -364,12 +355,7 @@ fn create_slots(device: &wgpu::Device, max_primitives: usize) -> Vec<Slot> {
     let bytes = (max_primitives as u64) * 4;
     (0..SLOT_COUNT)
         .map(|i| Slot {
-            readback: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some(&format!("gpu_cull_readback_{i}")),
-                size: bytes,
-                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                mapped_at_creation: false,
-            }),
+            readback: buffer_desc::readback(device, &format!("gpu_cull_readback_{i}"), bytes),
             map_state: None,
             count: 0,
             generation: 0,

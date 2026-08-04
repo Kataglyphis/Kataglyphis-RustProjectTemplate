@@ -37,6 +37,8 @@
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 
+use crate::render::buffer_desc;
+
 /// The passes we time, in the order they are recorded in a frame.
 ///
 /// Opaque and blended geometry are *not* split, though they are conceptually
@@ -352,18 +354,8 @@ impl GpuTiming {
         let bytes = u64::from(QUERIES_PER_SLOT) * 8;
         let slots = (0..SLOT_COUNT)
             .map(|i| Slot {
-                resolve: device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some(&format!("gpu_timing_resolve_{i}")),
-                    size: bytes,
-                    usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
-                    mapped_at_creation: false,
-                }),
-                readback: device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some(&format!("gpu_timing_readback_{i}")),
-                    size: bytes,
-                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                    mapped_at_creation: false,
-                }),
+                resolve: buffer_desc::query_resolve(device, &format!("gpu_timing_resolve_{i}"), bytes),
+                readback: buffer_desc::readback(device, &format!("gpu_timing_readback_{i}"), bytes),
                 map_state: None,
             })
             .collect();

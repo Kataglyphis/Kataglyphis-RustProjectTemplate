@@ -3,6 +3,7 @@
 
 use crate::context::GpuContext;
 use crate::render::bind_layout;
+use crate::render::buffer_desc;
 use crate::render::gpu_timing::PassScope;
 use crate::render::pipeline_desc::{self, FullscreenPipeline};
 use crate::render::texture::create_2d_view;
@@ -68,12 +69,11 @@ impl SsaoPass {
             )
         };
 
-        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("ssao_uniforms"),
-            size: std::mem::size_of::<SsaoUniforms>() as wgpu::BufferAddress,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let uniform_buffer = buffer_desc::uniform(
+            device,
+            "ssao_uniforms",
+            std::mem::size_of::<SsaoUniforms>() as wgpu::BufferAddress,
+        );
 
         Self {
             ssao_pipeline: make("fs_ssao", "ssao_pipeline"),

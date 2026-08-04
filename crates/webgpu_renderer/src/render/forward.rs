@@ -11,6 +11,7 @@ use crate::render::animation::{
     keyframe_lerp_indices, sample_morph_weights, sample_quat, sample_vec3,
 };
 use crate::render::bind_layout;
+use crate::render::buffer_desc;
 use crate::render::bloom::BloomPass;
 use crate::render::gpu_occlusion::GpuCulling;
 use crate::render::gpu_timing::{GpuTiming, TimedPass};
@@ -430,12 +431,11 @@ impl ForwardRenderer {
                 label: Some("frame_bind_group_layout"),
                 entries: &[bind_layout::uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT)],
             });
-        let frame_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("frame_uniforms"),
-            size: std::mem::size_of::<FrameUniforms>() as wgpu::BufferAddress,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let frame_uniform_buffer = buffer_desc::uniform(
+            device,
+            "frame_uniforms",
+            std::mem::size_of::<FrameUniforms>() as wgpu::BufferAddress,
+        );
         let frame_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("frame_bind_group"),
             layout: &frame_bind_group_layout,
@@ -456,12 +456,11 @@ impl ForwardRenderer {
                     true,
                 )],
             });
-        let light_storage_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("light_storage"),
-            size: (MAX_PUNCTUAL_LIGHTS as u64) * 16 * 4, // 4 vec4 per light
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let light_storage_buffer = buffer_desc::storage_dst(
+            device,
+            "light_storage",
+            (MAX_PUNCTUAL_LIGHTS as u64) * 16 * 4, // 4 vec4 per light
+        );
         let light_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("light_bind_group"),
             layout: &light_bind_group_layout,
@@ -483,18 +482,16 @@ impl ForwardRenderer {
             });
         // Initial sizes: will be rebuilt on first render if larger needed.
         let max_tiles = 192 * 128; // enough for 3072×2048 ÷ 16²
-        let tile_grid_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("tile_light_grid"),
-            size: (max_tiles as u64) * 8, // vec2<u32> per tile
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let tile_idx_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("tile_light_indices"),
-            size: (max_tiles as u64) * (MAX_LIGHTS_PER_TILE as u64) * 4,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let tile_grid_buf = buffer_desc::storage_dst(
+            device,
+            "tile_light_grid",
+            (max_tiles as u64) * 8, // vec2<u32> per tile
+        );
+        let tile_idx_buf = buffer_desc::storage_dst(
+            device,
+            "tile_light_indices",
+            (max_tiles as u64) * (MAX_LIGHTS_PER_TILE as u64) * 4,
+        );
         let tile_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("tile_light_bg"),
             layout: &tile_bind_group_layout,
@@ -623,12 +620,11 @@ impl ForwardRenderer {
         let sky_pipeline_layout =
             pipeline_desc::single_layout(device, "sky_pipeline_layout", &sky_bind_group_layout);
         let sky_pipeline = create_sky_pipeline(device, &sky_shader, &sky_pipeline_layout);
-        let sky_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("sky_uniforms"),
-            size: std::mem::size_of::<SkyUniforms>() as wgpu::BufferAddress,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let sky_uniform_buffer = buffer_desc::uniform(
+            device,
+            "sky_uniforms",
+            std::mem::size_of::<SkyUniforms>() as wgpu::BufferAddress,
+        );
         let sky_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("sky_bind_group"),
             layout: &sky_bind_group_layout,
@@ -1189,12 +1185,11 @@ impl ForwardRenderer {
                 contents: bytemuck::cast_slice(&prim.indices),
                 usage: wgpu::BufferUsages::INDEX,
             });
-            let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some(&format!("uniforms_{i}")),
-                size: std::mem::size_of::<PrimUniforms>() as wgpu::BufferAddress,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
+            let uniform_buffer = buffer_desc::uniform(
+                device,
+                &format!("uniforms_{i}"),
+                std::mem::size_of::<PrimUniforms>() as wgpu::BufferAddress,
+            );
 
             let local_bounds = primitive_local_aabb(prim);
             // Skinned bounds matter even before any animation runs: a scene can
@@ -1657,23 +1652,17 @@ impl ForwardRenderer {
             let mut bind_group_dirty = false;
             let needed_grid = (total_tiles as u64) * 8; // vec2<u32> × total_tiles
             if needed_grid > self.tile_light_grid_buffer.size() {
-                self.tile_light_grid_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("tile_light_grid"),
-                    size: needed_grid,
-                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
+                self.tile_light_grid_buffer =
+                    buffer_desc::storage_dst(&gpu.device, "tile_light_grid", needed_grid);
                 bind_group_dirty = true;
             }
             let needed_idx = (self.tile_light_grid_scratch.indices.len() as u64) * 4;
             if needed_idx > self.tile_light_indices_buffer.size() {
-                self.tile_light_indices_buffer =
-                    gpu.device.create_buffer(&wgpu::BufferDescriptor {
-                        label: Some("tile_light_indices"),
-                        size: needed_idx.max(64),
-                        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                        mapped_at_creation: false,
-                    });
+                self.tile_light_indices_buffer = buffer_desc::storage_dst(
+                    &gpu.device,
+                    "tile_light_indices",
+                    needed_idx.max(64),
+                );
                 bind_group_dirty = true;
             }
             if bind_group_dirty {
@@ -2203,12 +2192,7 @@ impl ForwardRenderer {
 
         let bytes_per_row = (width * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
         let buffer_size = (bytes_per_row * height) as wgpu::BufferAddress;
-        let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("readback"),
-            size: buffer_size,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
+        let readback = buffer_desc::readback(&gpu.device, "readback", buffer_size);
 
         let mut encoder = gpu
             .device

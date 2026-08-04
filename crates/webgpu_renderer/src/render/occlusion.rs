@@ -36,6 +36,7 @@ use std::sync::Arc;
 use glam::{Mat4, Vec3};
 
 use crate::render::bind_layout;
+use crate::render::buffer_desc;
 use crate::render::forward::DEPTH_FORMAT;
 use crate::render::pipeline_desc;
 
@@ -192,12 +193,11 @@ impl OcclusionQueries {
             cache: None,
         });
 
-        let view_proj_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("occlusion_view_proj"),
-            size: std::mem::size_of::<[[f32; 4]; 4]>() as wgpu::BufferAddress,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let view_proj_buffer = buffer_desc::uniform(
+            device,
+            "occlusion_view_proj",
+            std::mem::size_of::<[[f32; 4]; 4]>() as wgpu::BufferAddress,
+        );
         let view_proj_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("occlusion_bind_group"),
             layout: &bind_group_layout,
@@ -489,18 +489,8 @@ fn create_slots(device: &wgpu::Device, capacity: u32) -> Vec<Slot> {
     let bytes = u64::from(capacity) * QUERY_BYTES;
     (0..SLOT_COUNT)
         .map(|i| Slot {
-            resolve: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some(&format!("occlusion_resolve_{i}")),
-                size: bytes,
-                usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
-                mapped_at_creation: false,
-            }),
-            readback: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some(&format!("occlusion_readback_{i}")),
-                size: bytes,
-                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                mapped_at_creation: false,
-            }),
+            resolve: buffer_desc::query_resolve(device, &format!("occlusion_resolve_{i}"), bytes),
+            readback: buffer_desc::readback(device, &format!("occlusion_readback_{i}"), bytes),
             map_state: None,
             count: 0,
             generation: 0,

@@ -8,6 +8,7 @@
 use crate::context::GpuContext;
 use crate::render::auto_exposure::{BUILD_WORKGROUP, CLEAR_WORKGROUP, HISTOGRAM_BINS};
 use crate::render::bind_layout;
+use crate::render::buffer_desc;
 use crate::render::gpu_timing::PassScope;
 use crate::render::pipeline_desc;
 
@@ -102,19 +103,9 @@ impl HistogramPass {
         });
 
         let byte_size = (HISTOGRAM_BINS * std::mem::size_of::<u32>()) as wgpu::BufferAddress;
-        let histogram_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("histogram_buffer"),
-            size: byte_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
+        let histogram_buffer = buffer_desc::storage_src(device, "histogram_buffer", byte_size);
 
-        let readback_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("histogram_readback"),
-            size: byte_size,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
+        let readback_buffer = buffer_desc::readback(device, "histogram_readback", byte_size);
 
         let exposure_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("exposure_state"),
@@ -125,19 +116,9 @@ impl HistogramPass {
             mapped_at_creation: false,
         });
 
-        let exposure_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("exposure_params"),
-            size: 16,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let exposure_params_buffer = buffer_desc::uniform(device, "exposure_params", 16);
 
-        let exposure_readback_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("exposure_readback"),
-            size: 8,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
+        let exposure_readback_buffer = buffer_desc::readback(device, "exposure_readback", 8);
 
         Self {
             build_pipeline,

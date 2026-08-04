@@ -42,6 +42,7 @@
 
 use crate::context::GpuContext;
 use crate::render::bind_layout;
+use crate::render::buffer_desc;
 use crate::render::pipeline_desc::{self, FullscreenPipeline};
 use crate::render::texture::{create_2d_texture, create_2d_view};
 
@@ -807,12 +808,11 @@ fn read_texture_halves(
 ) -> Vec<f32> {
     let unpadded = width * channels * 2;
     let bytes_per_row = unpadded.next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
-    let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("ibl_readback"),
-        size: (bytes_per_row * height) as wgpu::BufferAddress,
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
+    let buffer = buffer_desc::readback(
+        &gpu.device,
+        "ibl_readback",
+        (bytes_per_row * height) as wgpu::BufferAddress,
+    );
 
     let mut encoder = gpu
         .device

@@ -2,6 +2,7 @@
 
 use crate::context::GpuContext;
 use crate::render::bind_layout;
+use crate::render::buffer_desc;
 use crate::render::gpu_timing::PassScope;
 use crate::render::pipeline_desc::{self, FullscreenPipeline};
 
@@ -73,12 +74,7 @@ impl TonemapPass {
             ..Default::default()
         });
 
-        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("tonemap_uniforms"),
-            size: 16,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let uniform_buffer = buffer_desc::uniform(device, "tonemap_uniforms", 16);
 
         Self {
             pipeline,
