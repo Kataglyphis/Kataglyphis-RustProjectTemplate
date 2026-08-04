@@ -85,7 +85,38 @@ impl OrbitController {
                 (touch.location.x, touch.location.y),
                 camera,
             ),
+            WindowEvent::Focused(false) => {
+                self.dragging = false;
+                self.last_cursor = None;
+                false
+            }
             _ => false,
+        }
+    }
+
+    /// Feeds an event the overlay already consumed, so the controller's
+    /// idea of cursor/drag state does not go stale while it has no say over
+    /// the camera - the same property `WindowInputCallbacks.ixx`'s
+    /// `handle_mouse_callback` buys by re-seeding `last_x`/`last_y` under
+    /// capture: the first event after capture ends produces no delta.
+    pub fn note_consumed_event(&mut self, event: &WindowEvent) {
+        match event {
+            WindowEvent::CursorMoved { position, .. } => {
+                self.last_cursor = Some((position.x, position.y));
+            }
+            WindowEvent::Focused(false) => {
+                self.dragging = false;
+                self.last_cursor = None;
+            }
+            WindowEvent::MouseInput {
+                state: ElementState::Released,
+                button: MouseButton::Left,
+                ..
+            } => {
+                self.dragging = false;
+                self.last_cursor = None;
+            }
+            _ => {}
         }
     }
 
@@ -224,6 +255,63 @@ fn touch_distance(a: (f64, f64), b: (f64, f64)) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use winit::dpi::PhysicalPosition;
+    use winit::event::DeviceId;
+
+    fn cursor_moved(x: f64, y: f64) -> WindowEvent {
+        WindowEvent::CursorMoved {
+            device_id: DeviceId::dummy(),
+            position: PhysicalPosition::new(x, y),
+        }
+    }
+
+    fn left_button(state: ElementState) -> WindowEvent {
+        WindowEvent::MouseInput {
+            device_id: DeviceId::dummy(),
+            state,
+            button: MouseButton::Left,
+        }
+    }
+
+    #[test]
+    fn losing_focus_ends_a_drag() {
+        let mut controller = OrbitController::default();
+        let mut camera = OrbitCamera::default();
+
+        controller.handle_event(&left_button(ElementState::Pressed), &mut camera);
+        controller.handle_event(&cursor_moved(100.0, 100.0), &mut camera);
+        controller.handle_event(&cursor_moved(140.0, 100.0), &mut camera);
+        let yaw_before_focus_loss = camera.yaw_deg;
+
+        controller.handle_event(&WindowEvent::Focused(false), &mut camera);
+        controller.handle_event(&cursor_moved(400.0, 100.0), &mut camera);
+
+        assert_eq!(
+            camera.yaw_deg, yaw_before_focus_loss,
+            "a move after losing focus must not keep orbiting the camera"
+        );
+    }
+
+    #[test]
+    fn a_consumed_move_does_not_become_a_delta_when_the_cursor_returns() {
+        let mut controller = OrbitController::default();
+        let mut camera = OrbitCamera::default();
+
+        controller.handle_event(&left_button(ElementState::Pressed), &mut camera);
+        controller.handle_event(&cursor_moved(100.0, 100.0), &mut camera);
+        let yaw_before = camera.yaw_deg;
+
+        // The overlay swallows this move (e.g. a panel was hovered).
+        controller.note_consumed_event(&cursor_moved(400.0, 100.0));
+        controller.handle_event(&cursor_moved(410.0, 100.0), &mut camera);
+
+        let expected_delta = 10.0 * controller.rotate_speed_deg_per_px;
+        assert!(
+            (camera.yaw_deg - yaw_before - expected_delta).abs() < 1e-3,
+            "expected a 10px delta ({expected_delta} deg), got {}",
+            camera.yaw_deg - yaw_before
+        );
+    }
 
     #[test]
     fn one_finger_drag_orbits() {

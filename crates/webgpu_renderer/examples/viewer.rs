@@ -298,7 +298,9 @@ impl ApplicationHandler for Viewer {
             (Some(overlay), Some(window)) => overlay.on_event(window, &event),
             _ => false,
         };
-        if !consumed {
+        if consumed {
+            self.controller.note_consumed_event(&event);
+        } else {
             self.controller.handle_event(&event, &mut self.camera);
         }
 
