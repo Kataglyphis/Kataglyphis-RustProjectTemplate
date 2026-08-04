@@ -690,7 +690,7 @@ struct pixelInput_1
 };
 
 @fragment
-fn fs_main( _S51 : pixelInput_1, @builtin(position) svPosition_1 : vec4<f32>) -> pixelOutput_0
+fn fs_main( _S51 : pixelInput_1, @builtin(front_facing) isFrontFace_0 : bool, @builtin(position) svPosition_1 : vec4<f32>) -> pixelOutput_0
 {
     var uvMask_0 : u32 = u32(prim_0.material_flags_0.y);
     var baseIn_1 : vec2<f32>;
@@ -760,10 +760,19 @@ fn fs_main( _S51 : pixelInput_1, @builtin(position) svPosition_1 : vec4<f32>) ->
     var occlusion_0 : f32 = mix(1.0f, occlusionSample_0.x, prim_0.material_factors_0.z);
     var emissive_0 : vec3<f32> = prim_0.emissive_factor_0.xyz * emissiveSample_0.xyz;
     var nGeom_0 : vec3<f32> = normalize(_S51.worldNormal_1);
+    var nGeom_1 : vec3<f32>;
+    if(!isFrontFace_0)
+    {
+        nGeom_1 = (vec3<f32>(0) - nGeom_0);
+    }
+    else
+    {
+        nGeom_1 = nGeom_0;
+    }
     var _S56 : vec3<f32> = _S51.worldTangent_1.xyz;
-    var t_0 : vec3<f32> = normalize(_S56 - nGeom_0 * vec3<f32>(dot(nGeom_0, _S56)));
+    var t_0 : vec3<f32> = normalize(_S56 - nGeom_1 * vec3<f32>(dot(nGeom_1, _S56)));
     var nTs_0 : vec3<f32> = normalSample_0.xyz * vec3<f32>(2.0f) - vec3<f32>(1.0f);
-    var n_3 : vec3<f32> = normalize((((vec3<f32>(nTs_0.xy * vec2<f32>(prim_0.material_factors_0.w), nTs_0.z)) * (mat3x3<f32>(t_0, cross(nGeom_0, t_0) * vec3<f32>(_S51.worldTangent_1.w), nGeom_0)))));
+    var n_3 : vec3<f32> = normalize((((vec3<f32>(nTs_0.xy * vec2<f32>(prim_0.material_factors_0.w), nTs_0.z)) * (mat3x3<f32>(t_0, cross(nGeom_1, t_0) * vec3<f32>(_S51.worldTangent_1.w), nGeom_1)))));
     var l_3 : vec3<f32> = normalize(frame_0.light_dir_ambient_0.xyz);
     var v_2 : vec3<f32> = normalize(frame_0.camera_position_0.xyz - _S51.worldPosition_1);
     var _S57 : vec3<f32> = albedo_3.xyz;
