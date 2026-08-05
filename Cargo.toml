@@ -30,7 +30,7 @@ burn-ndarray = { version = "0.20.1" }
 ndarray = { version = "0.17" }
 plotters = { version = "0.3" }
 tempfile = { version = "3" }
-ort = { version = "=2.0.0-rc.12", default-features = false }
+ort = { version = "=2.0.0-rc.13", default-features = false }
 gstreamer = "0.24"
 gstreamer-app = "0.24"
 gstreamer-video = "0.24"
