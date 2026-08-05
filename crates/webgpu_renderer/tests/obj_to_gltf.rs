@@ -1063,6 +1063,52 @@ fn to_gltf_shares_one_image_when_map_kd_and_map_ke_name_the_same_file() {
 }
 
 #[test]
+fn parse_mtl_reads_the_pbr_channels() {
+    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::parse_mtl;
+
+    let materials = parse_mtl("newmtl a\nPm 1.0\nPr 0.25\n");
+    assert_eq!(materials[0].metallic, Some(1.0));
+    assert_eq!(materials[0].roughness, Some(0.25));
+
+    let absent = parse_mtl("newmtl a\nKd 1 0 0\n");
+    assert_eq!(
+        absent[0].metallic, None,
+        "Pm must stay None, not fall back to 0.0, when absent"
+    );
+    assert_eq!(
+        absent[0].roughness, None,
+        "Pr must stay None, not fall back to 1.0, when absent"
+    );
+}
+
+#[test]
+fn to_gltf_emits_the_authored_pbr_channels_and_falls_back_when_absent() {
+    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{parse_mtl, ObjMesh};
+
+    let authored = parse_mtl("newmtl a\nPm 1.0\nPr 0.25\n");
+    let mesh = ObjMesh {
+        materials: authored,
+        ..ObjMesh::default()
+    };
+    let (json, _bin) = to_gltf(&mesh, "a.bin");
+    assert!(
+        json.contains(r#""metallicFactor": 1, "roughnessFactor": 0.25"#),
+        "expected the authored Pm/Pr values, got: {json}"
+    );
+
+    let unauthored = parse_mtl("newmtl a\nKd 1 0 0\n");
+    let mesh = ObjMesh {
+        materials: unauthored,
+        ..ObjMesh::default()
+    };
+    let (json, _bin) = to_gltf(&mesh, "a.bin");
+    assert!(
+        json.contains(r#""metallicFactor": 0.0, "roughnessFactor": 1.0"#),
+        "expected the byte-identical 0.0/1.0 fallback, got: {json}"
+    );
+}
+
+#[test]
 fn vertex_colors_round_trip_through_the_real_gltf_loader() {
     let dir = temp_dir("vertex_colors");
     let obj_path = dir.join("triangle.obj");

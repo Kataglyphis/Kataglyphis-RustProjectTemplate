@@ -9,11 +9,12 @@
 //! Materials carry across as far as glTF's PBR model allows: OBJ's diffuse
 //! `Kd` becomes `baseColorFactor`, `d`/`Tr` its alpha, `Ke` its
 //! `emissiveFactor`, `map_Kd` its `baseColorTexture`,
-//! `norm`/`map_Bump`/`map_bump`/`bump` its `normalTexture`, and `map_Ke` its
-//! `emissiveTexture`. OBJ is a Phong-era format, so `Ks`/`Ns` have no
-//! faithful PBR equivalent and are dropped rather than guessed into
-//! metallic/roughness - a converted asset should differ from the source in
-//! ways that are written down, not invented.
+//! `norm`/`map_Bump`/`map_bump`/`bump` its `normalTexture`, `map_Ke` its
+//! `emissiveTexture`, and `Pm`/`Pr` its `metallicFactor`/`roughnessFactor`.
+//! OBJ is a Phong-era format, so `Ks`/`Ns` have no faithful PBR equivalent
+//! and are dropped rather than guessed into metallic/roughness - a converted
+//! asset should differ from the source in ways that are written down, not
+//! invented.
 //!
 //! Smoothing groups (`s`) are ignored, not rejected: every real OBJ carries
 //! them, and refusing the file over a directive with no glTF equivalent would
@@ -45,6 +46,12 @@ pub struct ObjMaterial {
     pub normal_scale: f32,
     /// `map_Ke`, as written in the .mtl (relative to it).
     pub emissive_texture: Option<String>,
+    /// `Pm`. `None` when absent, distinct from an authored `Pm 0.0` - the
+    /// distinction tinyobjloader's C++ twin cannot make, but this hand-rolled
+    /// parser can, so it does.
+    pub metallic: Option<f32>,
+    /// `Pr`. `None` when absent, same reasoning as `metallic`.
+    pub roughness: Option<f32>,
 }
 
 impl Default for ObjMaterial {
@@ -65,6 +72,8 @@ impl Default for ObjMaterial {
             // existed.
             normal_scale: 1.0,
             emissive_texture: None,
+            metallic: None,
+            roughness: None,
         }
     }
 }
@@ -210,6 +219,20 @@ pub fn parse_mtl(source: &str) -> Vec<ObjMaterial> {
                     (materials.last_mut(), values[0].parse::<f32>())
                 {
                     material.base_color[3] = (1.0 - transparency).clamp(0.0, 1.0);
+                }
+            }
+            "Pm" if !values.is_empty() => {
+                if let Some(material) = materials.last_mut() {
+                    if let Ok(metallic) = values[0].parse::<f32>() {
+                        material.metallic = Some(metallic);
+                    }
+                }
+            }
+            "Pr" if !values.is_empty() => {
+                if let Some(material) = materials.last_mut() {
+                    if let Ok(roughness) = values[0].parse::<f32>() {
+                        material.roughness = Some(roughness);
+                    }
                 }
             }
             // `norm`, `map_Bump`/`map_bump` and bare `bump` all name a normal
@@ -685,10 +708,20 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
             // valid JSON) falls back to fully-opaque white rather than
             // corrupting the document.
             let [r, g, b, a] = material.base_color.map(|component| finite_or(component, 1.0));
-            // OBJ has no metallic/roughness. 0 metallic and 1 roughness is the
-            // closest thing to "plain diffuse", which is what Kd describes;
-            // inheriting glTF's default (metallic 1) would render every
-            // converted asset as a dark mirror.
+            // 0 metallic and 1 roughness - the closest thing to "plain
+            // diffuse", which is what Kd describes - is the fallback when
+            // `Pm`/`Pr` are absent. Kept as the literal "0.0"/"1.0" strings
+            // (rather than formatting the fallback f32s, which `Display`
+            // would render as "0"/"1") so a .mtl without Pm/Pr converts
+            // byte-identically to before those directives were read.
+            let metallic_factor = match material.metallic {
+                Some(value) => format!("{}", finite_or(value, 0.0)),
+                None => "0.0".to_string(),
+            };
+            let roughness_factor = match material.roughness {
+                Some(value) => format!("{}", finite_or(value, 1.0)),
+                None => "1.0".to_string(),
+            };
             let texture_json = match &material.base_color_texture {
                 Some(uri) => {
                     let index = image_uris.iter().position(|existing| existing == uri).unwrap_or(0);
@@ -746,10 +779,12 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
                 String::new()
             };
             let json = format!(
-                r#"{{ "name": "{}", "pbrMetallicRoughness": {{ "baseColorFactor": [{}, {}, {}, {}]{}, "metallicFactor": 0.0, "roughnessFactor": 1.0 }}{}{}{}{}{} }}"#,
+                r#"{{ "name": "{}", "pbrMetallicRoughness": {{ "baseColorFactor": [{}, {}, {}, {}]{}, "metallicFactor": {}, "roughnessFactor": {} }}{}{}{}{}{} }}"#,
                 json_escape(&material.name),
                 r, g, b, a,
                 texture_json,
+                metallic_factor,
+                roughness_factor,
                 if a < 1.0 { r#", "alphaMode": "BLEND""# } else { "" },
                 normal_texture_json,
                 emissive_texture_json,
