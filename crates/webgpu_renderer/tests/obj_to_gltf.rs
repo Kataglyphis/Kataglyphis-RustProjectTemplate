@@ -1109,6 +1109,89 @@ fn to_gltf_emits_the_authored_pbr_channels_and_falls_back_when_absent() {
 }
 
 #[test]
+fn ns_without_pr_derives_roughness_via_the_shininess_curve() {
+    use kataglyphis_webgpu_renderer::asset::gltf_loader::load_gltf;
+    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{convert_file, parse_mtl};
+
+    // sqrt(2/(96+2)) ~= 0.14286, the same curve as material_rules.slang's
+    // material_roughness() for the C++ engine's OBJ path.
+    let materials = parse_mtl("newmtl a\nNs 96\n");
+    assert_eq!(materials[0].shininess, Some(96.0));
+
+    let dir = temp_dir("ns_roughness");
+    std::fs::write(dir.join("shiny.mtl"), "newmtl painted\nKd 1 1 1\nNs 96\n").expect("mtl");
+    let obj_path = dir.join("shiny.obj");
+    std::fs::write(
+        &obj_path,
+        TEXTURED_OBJ.replace("mtllib textured.mtl", "mtllib shiny.mtl"),
+    )
+    .expect("obj");
+    let gltf_path = dir.join("shiny.gltf");
+
+    convert_file(&obj_path, &gltf_path).expect("conversion must succeed");
+    let scene = load_gltf(&gltf_path).expect("the converted glTF must load");
+    let roughness = scene.primitives[0].material.roughness_factor;
+    assert!(
+        (roughness - (2.0f32 / 98.0).sqrt()).abs() < 1e-5,
+        "expected roughness derived from Ns 96, got {roughness}"
+    );
+}
+
+#[test]
+fn an_authored_pr_wins_over_ns() {
+    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{parse_mtl, ObjMesh};
+
+    let materials = parse_mtl("newmtl a\nNs 96\nPr 0.3\n");
+    let mesh = ObjMesh {
+        materials,
+        ..ObjMesh::default()
+    };
+    let (json, _bin) = to_gltf(&mesh, "a.bin");
+    assert!(
+        json.contains(r#""roughnessFactor": 0.3"#),
+        "an authored Pr must win over a derived-from-Ns roughness, got: {json}"
+    );
+}
+
+#[test]
+fn neither_pr_nor_ns_keeps_the_byte_identical_fallback() {
+    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{parse_mtl, ObjMesh};
+
+    let materials = parse_mtl("newmtl a\nKd 1 0 0\n");
+    let mesh = ObjMesh {
+        materials,
+        ..ObjMesh::default()
+    };
+    let (json, _bin) = to_gltf(&mesh, "a.bin");
+    assert!(
+        json.contains(r#""roughnessFactor": 1.0"#),
+        "a .mtl with neither Pr nor Ns must still emit the literal 1.0, got: {json}"
+    );
+}
+
+#[test]
+fn an_invalid_ns_falls_back_to_the_literal_one_rather_than_nan() {
+    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{parse_mtl, ObjMesh};
+
+    for source in ["newmtl a\nNs -1\n", "newmtl a\nNs notanumber\n"] {
+        let materials = parse_mtl(source);
+        let mesh = ObjMesh {
+            materials,
+            ..ObjMesh::default()
+        };
+        let (json, _bin) = to_gltf(&mesh, "a.bin");
+        assert!(
+            !json.contains("NaN"),
+            "invalid Ns must never produce NaN in the document: {json}"
+        );
+        assert!(
+            json.contains(r#""roughnessFactor": 1.0"#),
+            "invalid Ns ({source:?}) must fall back to the literal 1.0, got: {json}"
+        );
+    }
+}
+
+#[test]
 fn vertex_colors_round_trip_through_the_real_gltf_loader() {
     let dir = temp_dir("vertex_colors");
     let obj_path = dir.join("triangle.obj");

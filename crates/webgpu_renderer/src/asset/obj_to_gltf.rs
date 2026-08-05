@@ -11,10 +11,11 @@
 //! `emissiveFactor`, `map_Kd` its `baseColorTexture`,
 //! `norm`/`map_Bump`/`map_bump`/`bump` its `normalTexture`, `map_Ke` its
 //! `emissiveTexture`, and `Pm`/`Pr` its `metallicFactor`/`roughnessFactor`.
-//! OBJ is a Phong-era format, so `Ks`/`Ns` have no faithful PBR equivalent
-//! and are dropped rather than guessed into metallic/roughness - a converted
-//! asset should differ from the source in ways that are written down, not
-//! invented.
+//! When `Pr` is absent, `Ns` maps to `roughnessFactor` through the same
+//! curve the C++ engine's `material_rules.slang` (`material_roughness()`)
+//! applies to every OBJ material it loads directly, so a converted asset
+//! matches what the C++ renderer shows for the source `.mtl`. `Ks` still has
+//! no faithful PBR equivalent and is dropped rather than guessed at.
 //!
 //! Smoothing groups (`s`) are ignored, not rejected: every real OBJ carries
 //! them, and refusing the file over a directive with no glTF equivalent would
@@ -52,6 +53,11 @@ pub struct ObjMaterial {
     pub metallic: Option<f32>,
     /// `Pr`. `None` when absent, same reasoning as `metallic`.
     pub roughness: Option<f32>,
+    /// `Ns`. `None` when absent. Used to derive `roughnessFactor` when `Pr`
+    /// is absent, mirroring `material_rules.slang`'s `material_roughness()` -
+    /// the same fallback the C++ engine applies to every OBJ material it
+    /// loads directly.
+    pub shininess: Option<f32>,
 }
 
 impl Default for ObjMaterial {
@@ -74,6 +80,7 @@ impl Default for ObjMaterial {
             emissive_texture: None,
             metallic: None,
             roughness: None,
+            shininess: None,
         }
     }
 }
@@ -232,6 +239,13 @@ pub fn parse_mtl(source: &str) -> Vec<ObjMaterial> {
                 if let Some(material) = materials.last_mut() {
                     if let Ok(roughness) = values[0].parse::<f32>() {
                         material.roughness = Some(roughness);
+                    }
+                }
+            }
+            "Ns" if !values.is_empty() => {
+                if let Some(material) = materials.last_mut() {
+                    if let Ok(shininess) = values[0].parse::<f32>() {
+                        material.shininess = Some(shininess);
                     }
                 }
             }
@@ -718,9 +732,21 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
                 Some(value) => format!("{}", finite_or(value, 0.0)),
                 None => "0.0".to_string(),
             };
+            // An authored Pr always wins. Absent Pr with a finite,
+            // non-negative Ns derives roughness the same way
+            // material_rules.slang's material_roughness() does for every OBJ
+            // material the C++ engine loads directly, so a converted asset
+            // matches what the C++ renderer shows for the same .mtl. Absent
+            // Pr with no usable Ns keeps the literal "1.0" string, so a .mtl
+            // with neither directive still converts byte-identically.
             let roughness_factor = match material.roughness {
                 Some(value) => format!("{}", finite_or(value, 1.0)),
-                None => "1.0".to_string(),
+                None => match material.shininess {
+                    Some(shininess) if shininess.is_finite() && shininess >= 0.0 => {
+                        format!("{}", (2.0 / (shininess + 2.0)).sqrt().clamp(0.045, 1.0))
+                    }
+                    _ => "1.0".to_string(),
+                },
             };
             let texture_json = match &material.base_color_texture {
                 Some(uri) => {
