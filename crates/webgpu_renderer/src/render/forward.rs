@@ -75,6 +75,14 @@ struct PrimUniforms {
     emissive_factor: [f32; 4],
     base_uv_row0: [f32; 4],
     base_uv_row1: [f32; 4],
+    mr_uv_row0: [f32; 4],
+    mr_uv_row1: [f32; 4],
+    normal_uv_row0: [f32; 4],
+    normal_uv_row1: [f32; 4],
+    emissive_uv_row0: [f32; 4],
+    emissive_uv_row1: [f32; 4],
+    occlusion_uv_row0: [f32; 4],
+    occlusion_uv_row1: [f32; 4],
     /// x: 1.0 when KHR_materials_unlit, else 0.0. y: per-slot UV1 mask bits.
     material_flags: [f32; 4],
 }
@@ -127,6 +135,10 @@ struct GpuPrimitive {
     material_factors: [f32; 4],
     emissive_factor: [f32; 4],
     base_uv_transform: [[f32; 3]; 2],
+    mr_uv_transform: [[f32; 3]; 2],
+    normal_uv_transform: [[f32; 3]; 2],
+    emissive_uv_transform: [[f32; 3]; 2],
+    occlusion_uv_transform: [[f32; 3]; 2],
     /// Per-slot UV1 selector (bit per texture slot); packed into
     /// material_flags.y for the shader.
     uv_set_mask: u32,
@@ -1442,6 +1454,10 @@ impl ForwardRenderer {
                     },
                 ],
                 base_uv_transform: material.base_uv_transform,
+                mr_uv_transform: material.mr_uv_transform,
+                normal_uv_transform: material.normal_uv_transform,
+                emissive_uv_transform: material.emissive_uv_transform,
+                occlusion_uv_transform: material.occlusion_uv_transform,
                 uv_set_mask: material.uv_set_mask,
                 node_index: prim.node_index,
                 skin_index: prim.skin_index,
@@ -1684,28 +1700,40 @@ impl ForwardRenderer {
             );
         }
 
+        // Splits a KHR_texture_transform's two affine rows into the padded
+        // [f32; 4] pair PrimUniforms packs (w is unused, kept for alignment).
+        fn uv_rows(t: [[f32; 3]; 2]) -> ([f32; 4], [f32; 4]) {
+            (
+                [t[0][0], t[0][1], t[0][2], 0.0],
+                [t[1][0], t[1][1], t[1][2], 0.0],
+            )
+        }
+
         for prim in &mut self.primitives {
             if !prim.uniforms_dirty {
                 continue;
             }
+            let (base_uv_row0, base_uv_row1) = uv_rows(prim.base_uv_transform);
+            let (mr_uv_row0, mr_uv_row1) = uv_rows(prim.mr_uv_transform);
+            let (normal_uv_row0, normal_uv_row1) = uv_rows(prim.normal_uv_transform);
+            let (emissive_uv_row0, emissive_uv_row1) = uv_rows(prim.emissive_uv_transform);
+            let (occlusion_uv_row0, occlusion_uv_row1) = uv_rows(prim.occlusion_uv_transform);
             let prim_uniforms = PrimUniforms {
                 model: prim.model.to_cols_array_2d(),
                 normal_matrix: prim.normal_matrix.to_cols_array_2d(),
                 base_color: prim.base_color,
                 material_factors: prim.material_factors,
                 emissive_factor: prim.emissive_factor,
-                base_uv_row0: [
-                    prim.base_uv_transform[0][0],
-                    prim.base_uv_transform[0][1],
-                    prim.base_uv_transform[0][2],
-                    0.0,
-                ],
-                base_uv_row1: [
-                    prim.base_uv_transform[1][0],
-                    prim.base_uv_transform[1][1],
-                    prim.base_uv_transform[1][2],
-                    0.0,
-                ],
+                base_uv_row0,
+                base_uv_row1,
+                mr_uv_row0,
+                mr_uv_row1,
+                normal_uv_row0,
+                normal_uv_row1,
+                emissive_uv_row0,
+                emissive_uv_row1,
+                occlusion_uv_row0,
+                occlusion_uv_row1,
                 material_flags: [
                     if prim.unlit { 1.0 } else { 0.0 },
                     prim.uv_set_mask as f32,

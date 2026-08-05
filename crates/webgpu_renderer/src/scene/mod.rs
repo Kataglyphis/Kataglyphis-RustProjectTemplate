@@ -167,10 +167,16 @@ pub enum AlphaMode {
 #[derive(Clone, Debug)]
 pub struct CpuMaterial {
     pub base_color: [f32; 4],
-    /// KHR_texture_transform for the base color UV set, as two affine rows
-    /// [m00, m01, tx], [m10, m11, ty]. Identity when absent. Applied to the
-    /// base color slot only (other slots: roadmap refinement).
+    /// KHR_texture_transform per texture slot, as two affine rows [m00, m01,
+    /// tx], [m10, m11, ty]. Identity when a slot has no transform — glTF
+    /// scopes the extension to `textureInfo`, so a transform authored on one
+    /// slot (e.g. an atlased base colour) must not leak into another (e.g. an
+    /// untiled normal map).
     pub base_uv_transform: [[f32; 3]; 2],
+    pub mr_uv_transform: [[f32; 3]; 2],
+    pub normal_uv_transform: [[f32; 3]; 2],
+    pub emissive_uv_transform: [[f32; 3]; 2],
+    pub occlusion_uv_transform: [[f32; 3]; 2],
     /// Which texture slots sample TEXCOORD_1 instead of TEXCOORD_0, as a bit
     /// per slot: bit 0 base, 1 metallic-roughness, 2 normal, 3 emissive,
     /// 4 occlusion. 0 = every slot on UV0 (the common case). Only UV sets 0
@@ -198,6 +204,10 @@ impl Default for CpuMaterial {
         Self {
             base_color: [1.0, 1.0, 1.0, 1.0],
             base_uv_transform: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            mr_uv_transform: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            normal_uv_transform: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            emissive_uv_transform: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            occlusion_uv_transform: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
             uv_set_mask: 0,
             alpha_mode: AlphaMode::Opaque,
             metallic_factor: 1.0,

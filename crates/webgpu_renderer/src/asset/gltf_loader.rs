@@ -198,6 +198,48 @@ fn uv_set_bit(slot: &str, tex_coord: u32, bit: u32) -> u32 {
     }
 }
 
+const IDENTITY_UV_TRANSFORM: [[f32; 3]; 2] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+
+/// Affine T*R*S rows for a KHR_texture_transform, from its raw
+/// offset/rotation/scale. Rotation is negated: `gltf`'s `rotation()` is
+/// counter-clockwise per spec, but this engine's UV space is Y-down, so a
+/// positive spec rotation must apply clockwise in UV terms (matches the C++
+/// loader's `ObjMaterial` fix, `f5e27d46`).
+fn uv_transform_rows(offset: [f32; 2], rotation: f32, scale: [f32; 2]) -> [[f32; 3]; 2] {
+    let m = glam::Mat3::from_translation(glam::Vec2::from_array(offset))
+        * glam::Mat3::from_angle(-rotation)
+        * glam::Mat3::from_scale(glam::Vec2::from_array(scale));
+    [
+        [m.x_axis.x, m.y_axis.x, m.z_axis.x],
+        [m.x_axis.y, m.y_axis.y, m.z_axis.y],
+    ]
+}
+
+/// KHR_texture_transform for a base-colour/metallic-roughness/emissive slot,
+/// which `gltf::texture::Info` exposes as a typed accessor. Identity when the
+/// slot has no texture or no transform extension.
+fn uv_transform_from_info(transform: Option<gltf::texture::TextureTransform>) -> [[f32; 3]; 2] {
+    transform.map_or(IDENTITY_UV_TRANSFORM, |t| {
+        uv_transform_rows(t.offset(), t.rotation(), t.scale())
+    })
+}
+
+/// KHR_texture_transform for the normal/occlusion slots. Unlike `Info`
+/// (above), `gltf`'s `NormalTexture`/`OcclusionTexture` structs don't expose a
+/// typed `texture_transform()` accessor in this crate version — only the
+/// generic unmodeled-extensions bag — so the extension is pulled out of the
+/// raw JSON and deserialized by hand. Identity when the slot has no texture
+/// or no transform extension.
+fn uv_transform_from_extension_json(value: Option<&gltf::json::Value>) -> [[f32; 3]; 2] {
+    value
+        .and_then(|v| {
+            gltf::json::deserialize::from_value::<gltf::json::extensions::texture::TextureTransform>(v.clone()).ok()
+        })
+        .map_or(IDENTITY_UV_TRANSFORM, |t| {
+            uv_transform_rows(t.offset.0, t.rotation.0, t.scale.0)
+        })
+}
+
 /// Expands a triangle strip or fan into a plain triangle list.
 ///
 /// Strip winding alternates: every odd triangle has its first two indices
@@ -608,26 +650,48 @@ fn load_primitive(
         gltf::material::AlphaMode::Blend => AlphaMode::Blend,
     };
 
-    // KHR_texture_transform (base color slot): T * R * S per spec.
-    let base_uv_transform = pbr
-        .base_color_texture()
-        .and_then(|info| info.texture_transform())
-        .map(|t| {
-            let offset = glam::Vec2::from_array(t.offset());
-            let scale = glam::Vec2::from_array(t.scale());
-            let m = glam::Mat3::from_translation(offset)
-                * glam::Mat3::from_angle(-t.rotation())
-                * glam::Mat3::from_scale(scale);
-            [
-                [m.x_axis.x, m.y_axis.x, m.z_axis.x],
-                [m.x_axis.y, m.y_axis.y, m.z_axis.y],
-            ]
-        })
-        .unwrap_or([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]);
+    // KHR_texture_transform, per texture slot: the extension is scoped to
+    // `textureInfo`, so a transform on one slot (e.g. an atlased base colour)
+    // does not imply the same transform on another (e.g. an untiled normal
+    // map). T * R * S per spec; identity when the slot has no transform.
+    let base_uv_transform = uv_transform_from_info(
+        pbr.base_color_texture()
+            .and_then(|info| info.texture_transform()),
+    );
+    let mr_uv_transform = uv_transform_from_info(
+        pbr.metallic_roughness_texture()
+            .and_then(|info| info.texture_transform()),
+    );
+    let emissive_uv_transform = uv_transform_from_info(
+        material
+            .emissive_texture()
+            .and_then(|info| info.texture_transform()),
+    );
+    // `.extensions()` borrows from the `NormalTexture`/`OcclusionTexture`
+    // value itself (not from the document), so it must outlive the `.and_then`
+    // chain rather than being produced inside it.
+    let normal_texture_info = material.normal_texture();
+    let normal_uv_transform = uv_transform_from_extension_json(
+        normal_texture_info
+            .as_ref()
+            .and_then(|info| info.extensions())
+            .and_then(|ext| ext.get("KHR_texture_transform")),
+    );
+    let occlusion_texture_info = material.occlusion_texture();
+    let occlusion_uv_transform = uv_transform_from_extension_json(
+        occlusion_texture_info
+            .as_ref()
+            .and_then(|info| info.extensions())
+            .and_then(|ext| ext.get("KHR_texture_transform")),
+    );
 
     let cpu_material = CpuMaterial {
         base_color: pbr.base_color_factor(),
         base_uv_transform,
+        mr_uv_transform,
+        normal_uv_transform,
+        emissive_uv_transform,
+        occlusion_uv_transform,
         alpha_mode,
         metallic_factor: pbr.metallic_factor(),
         roughness_factor: pbr.roughness_factor(),
