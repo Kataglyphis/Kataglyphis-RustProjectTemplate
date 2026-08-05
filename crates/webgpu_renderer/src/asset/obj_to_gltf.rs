@@ -7,8 +7,10 @@
 //! crate rather than by trusting the emitter.
 //!
 //! Materials carry across as far as glTF's PBR model allows: OBJ's diffuse
-//! `Kd` becomes `baseColorFactor`, `d`/`Tr` its alpha, and `Ke` its
-//! `emissiveFactor`. OBJ is a Phong-era format, so `Ks`/`Ns` have no
+//! `Kd` becomes `baseColorFactor`, `d`/`Tr` its alpha, `Ke` its
+//! `emissiveFactor`, `map_Kd` its `baseColorTexture`,
+//! `norm`/`map_Bump`/`map_bump`/`bump` its `normalTexture`, and `map_Ke` its
+//! `emissiveTexture`. OBJ is a Phong-era format, so `Ks`/`Ns` have no
 //! faithful PBR equivalent and are dropped rather than guessed into
 //! metallic/roughness - a converted asset should differ from the source in
 //! ways that are written down, not invented.
@@ -41,6 +43,8 @@ pub struct ObjMaterial {
     /// The bump directive's `-bm` option; glTF's `normalTexture.scale`. Only
     /// meaningful when `normal_texture` is `Some`.
     pub normal_scale: f32,
+    /// `map_Ke`, as written in the .mtl (relative to it).
+    pub emissive_texture: Option<String>,
 }
 
 impl Default for ObjMaterial {
@@ -60,6 +64,7 @@ impl Default for ObjMaterial {
             // bump directive converts byte-identically to before this field
             // existed.
             normal_scale: 1.0,
+            emissive_texture: None,
         }
     }
 }
@@ -188,6 +193,15 @@ pub fn parse_mtl(source: &str) -> Vec<ObjMaterial> {
                     // conversion runs on Linux, where `\` is just another
                     // filename character rather than a separator.
                     material.base_color_texture =
+                        values.last().map(|name| name.replace('\\', "/"));
+                }
+            }
+            // Same "last token past any options", backslash-normalising rule
+            // as `map_Kd` above; glTF's `emissiveTexture` is its exact
+            // equivalent.
+            "map_Ke" if !values.is_empty() => {
+                if let Some(material) = materials.last_mut() {
+                    material.emissive_texture =
                         values.last().map(|name| name.replace('\\', "/"));
                 }
             }
@@ -630,9 +644,13 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
     // repeatedly and upload duplicate GPU textures.
     let mut image_uris: Vec<String> = Vec::new();
     for material in &mesh.materials {
-        for uri in [&material.base_color_texture, &material.normal_texture]
-            .into_iter()
-            .flatten()
+        for uri in [
+            &material.base_color_texture,
+            &material.normal_texture,
+            &material.emissive_texture,
+        ]
+        .into_iter()
+        .flatten()
         {
             if !image_uris.iter().any(|existing| existing == uri) {
                 image_uris.push(uri.clone());
@@ -686,6 +704,13 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
                 }
                 None => String::new(),
             };
+            let emissive_texture_json = match &material.emissive_texture {
+                Some(uri) => {
+                    let index = image_uris.iter().position(|existing| existing == uri).unwrap_or(0);
+                    format!(r#", "emissiveTexture": {{ "index": {index} }}"#)
+                }
+                None => String::new(),
+            };
             let [er, eg, eb] = material.emissive.map(|component| finite_or(component, 0.0));
             // glTF's `emissiveFactor` is `[0,1]` per component. An HDR `Ke`
             // (any component above 1) is split into that `[0,1]` factor plus
@@ -709,19 +734,25 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
             };
             // Emitted only when non-zero, so a .mtl without Ke - i.e. every
             // document converted before this field existed - produces
-            // byte-identical JSON.
+            // byte-identical JSON. glTF's default emissiveFactor is
+            // `[0,0,0]`, so a material with a map_Ke and no Ke line would
+            // otherwise render black - emit an explicit `[1,1,1]` factor in
+            // that case instead of omitting it.
             let emissive_json = if er != 0.0 || eg != 0.0 || eb != 0.0 {
                 format!(r#", "emissiveFactor": [{er}, {eg}, {eb}]"#)
+            } else if material.emissive_texture.is_some() {
+                r#", "emissiveFactor": [1, 1, 1]"#.to_string()
             } else {
                 String::new()
             };
             let json = format!(
-                r#"{{ "name": "{}", "pbrMetallicRoughness": {{ "baseColorFactor": [{}, {}, {}, {}]{}, "metallicFactor": 0.0, "roughnessFactor": 1.0 }}{}{}{}{} }}"#,
+                r#"{{ "name": "{}", "pbrMetallicRoughness": {{ "baseColorFactor": [{}, {}, {}, {}]{}, "metallicFactor": 0.0, "roughnessFactor": 1.0 }}{}{}{}{}{} }}"#,
                 json_escape(&material.name),
                 r, g, b, a,
                 texture_json,
                 if a < 1.0 { r#", "alphaMode": "BLEND""# } else { "" },
                 normal_texture_json,
+                emissive_texture_json,
                 emissive_json,
                 extensions_json
             );
@@ -878,9 +909,13 @@ pub fn convert_file(obj_path: &Path, gltf_path: &Path) -> Result<ObjMesh> {
     // and the failure would be a missing texture, not a missing file.
     let mut copied: Vec<&str> = Vec::new();
     for material in &mesh.materials {
-        for uri in [&material.base_color_texture, &material.normal_texture]
-            .into_iter()
-            .flatten()
+        for uri in [
+            &material.base_color_texture,
+            &material.normal_texture,
+            &material.emissive_texture,
+        ]
+        .into_iter()
+        .flatten()
         {
             if copied.iter().any(|existing| *existing == uri) {
                 continue;

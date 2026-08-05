@@ -991,6 +991,78 @@ fn to_gltf_shares_one_image_when_map_kd_and_map_bump_name_the_same_file() {
 }
 
 #[test]
+fn parse_mtl_takes_the_last_token_of_an_option_carrying_map_ke() {
+    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::parse_mtl;
+
+    // Same option-skipping rule as map_Kd/map_Bump: the path is the LAST
+    // token, not the first.
+    let materials = parse_mtl("newmtl a\nmap_Ke -s 1 1 1 glow.png\n");
+    assert_eq!(
+        materials[0].emissive_texture.as_deref(),
+        Some("glow.png"),
+        "the filename must be taken from the end, past the options"
+    );
+}
+
+#[test]
+fn to_gltf_emits_an_emissive_texture_pointing_at_the_right_image() {
+    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{parse_mtl, ObjMesh};
+
+    let materials = parse_mtl("newmtl a\nmap_Kd base.png\nmap_Ke glow.png\n");
+    let mesh = ObjMesh {
+        materials,
+        ..ObjMesh::default()
+    };
+    let (json, _bin) = to_gltf(&mesh, "a.bin");
+
+    assert!(
+        json.contains(r#""baseColorTexture": { "index": 0 }"#),
+        "expected the base colour texture at image index 0, got: {json}"
+    );
+    assert!(
+        json.contains(r#""emissiveTexture": { "index": 1 }"#),
+        "expected a distinct emissiveTexture image index, got: {json}"
+    );
+}
+
+#[test]
+fn a_map_ke_without_ke_gets_a_normalised_emissive_factor() {
+    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{parse_mtl, ObjMesh};
+
+    // glTF's default emissiveFactor is [0,0,0] - a material with a map_Ke and
+    // no Ke line would render black without this.
+    let materials = parse_mtl("newmtl a\nmap_Ke glow.png\n");
+    let mesh = ObjMesh {
+        materials,
+        ..ObjMesh::default()
+    };
+    let (json, _bin) = to_gltf(&mesh, "a.bin");
+
+    assert!(
+        json.contains(r#""emissiveFactor": [1, 1, 1]"#),
+        "expected a normalised emissiveFactor of [1, 1, 1], got: {json}"
+    );
+}
+
+#[test]
+fn to_gltf_shares_one_image_when_map_kd_and_map_ke_name_the_same_file() {
+    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{parse_mtl, ObjMesh};
+
+    let materials = parse_mtl("newmtl a\nmap_Kd wood.png\nmap_Ke wood.png\n");
+    let mesh = ObjMesh {
+        materials,
+        ..ObjMesh::default()
+    };
+    let (json, _bin) = to_gltf(&mesh, "a.bin");
+
+    assert_eq!(
+        json.matches(r#""uri": "wood.png""#).count(),
+        1,
+        "the shared file must appear once in the images array, got: {json}"
+    );
+}
+
+#[test]
 fn vertex_colors_round_trip_through_the_real_gltf_loader() {
     let dir = temp_dir("vertex_colors");
     let obj_path = dir.join("triangle.obj");
