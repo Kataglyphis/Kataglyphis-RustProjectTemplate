@@ -783,7 +783,7 @@ fn fs_main( _S51 : pixelInput_1, @builtin(front_facing) isFrontFace_0 : bool, @b
     var _S54 : vec3<f32> = _S51.worldTangent_1.xyz;
     var t_0 : vec3<f32> = normalize(_S54 - nGeom_1 * vec3<f32>(dot(nGeom_1, _S54)));
     var nTs_0 : vec3<f32> = normalSample_0.xyz * vec3<f32>(2.0f) - vec3<f32>(1.0f);
-    var n_3 : vec3<f32> = normalize((((vec3<f32>(nTs_0.xy * vec2<f32>(prim_0.material_factors_0.w), nTs_0.z)) * (mat3x3<f32>(t_0, cross(nGeom_1, t_0) * vec3<f32>(_S51.worldTangent_1.w), nGeom_1)))));
+    var n_3 : vec3<f32> = normalize((((mat3x3<f32>(t_0, cross(nGeom_1, t_0) * vec3<f32>(_S51.worldTangent_1.w), nGeom_1)) * (vec3<f32>(nTs_0.xy * vec2<f32>(prim_0.material_factors_0.w), nTs_0.z)))));
     var l_3 : vec3<f32> = normalize(frame_0.light_dir_ambient_0.xyz);
     var v_2 : vec3<f32> = normalize(frame_0.camera_position_0.xyz - _S51.worldPosition_1);
     var _S55 : vec3<f32> = albedo_3.xyz;
