@@ -9,8 +9,12 @@
 //! 2. **Read/write validation** — a pass that reads a resource nothing has
 //!    written, or two passes writing the same resource in one frame, is a
 //!    hard error at build time rather than a silently black screen.
-//! 3. **One place to add cross-cutting behavior** — timing scopes, debug
-//!    markers, or a "disable this pass" toggle apply to every pass at once.
+//! 3. **A declaration checked against reality** — `TimedPass` (the set of
+//!    passes actually timed at runtime) is validated against this graph's
+//!    rows, in both directions: every timed pass must name a real row, and
+//!    every row must either be timed or be listed as deliberately untimed.
+//!    No pass is recorded through this module; it only describes and checks
+//!    the frame that the renderer's own code records.
 //!
 //! Execution order stays explicit (the order passes are added), because at
 //! this scale a topological sort would hide more than it automates.
@@ -47,7 +51,7 @@ pub enum Resource {
     Output,
 }
 
-/// A recorded pass: what it touches, and how to encode it.
+/// A declared pass: its name and the resources it reads and writes.
 pub struct PassDesc<'a> {
     pub name: &'static str,
     pub reads: &'a [Resource],
@@ -194,6 +198,12 @@ fn graph_pass_name(pass: TimedPass) -> &'static str {
     }
 }
 
+/// Graph rows with no `TimedPass` counterpart. Adding a name here is a
+/// deliberate statement that the pass is not worth timing, not a way to
+/// silence `every_graph_row_is_timed_or_explicitly_untimed`.
+#[cfg(test)]
+const UNTIMED_ROWS: &[&str] = &["depth_resolve"];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,6 +221,19 @@ mod tests {
             assert!(
                 graph.iter().any(|p| p.name == expected),
                 "TimedPass::{pass:?} maps to graph row '{expected}', but no such row exists"
+            );
+        }
+    }
+
+    #[test]
+    fn every_graph_row_is_timed_or_explicitly_untimed() {
+        let graph = forward_frame_graph();
+        let timed_names: Vec<&str> = TimedPass::ALL.iter().map(|&p| graph_pass_name(p)).collect();
+        for pass in &graph {
+            assert!(
+                timed_names.contains(&pass.name) || UNTIMED_ROWS.contains(&pass.name),
+                "graph row '{}' is neither timed by any TimedPass nor listed in UNTIMED_ROWS",
+                pass.name
             );
         }
     }
