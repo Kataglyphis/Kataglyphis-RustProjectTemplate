@@ -11,10 +11,35 @@
 
 const NEEDLE: &str = "wgpu::BufferDescriptor {";
 
+/// The part of `line` that is code: everything before the first `//`.
+///
+/// This guard matches source TEXT, so it used to count prose. `buffer_desc.rs`
+/// documents, in its own module comment, that two call sites stay literal
+/// `wgpu::BufferDescriptor { .. }` calls - and a plain `matches()` counted
+/// that sentence as a sixth constructor. The test has been wrong since the
+/// commit that introduced it (2a56786 wrote the five constructors, the
+/// sentence and the test together); it went red the first time this repo's
+/// Rust step actually ran it, on 2026-08-05, without a single buffer having
+/// been added. The same blindness applies to the per-file scan below, where a
+/// comment mentioning the needle would have been reported as a stray literal.
+///
+/// A `//` inside a string literal would truncate this early, which can only
+/// make the guard blinder, never noisier - and there is no such string in the
+/// files it reads.
+fn code_of(line: &str) -> &str {
+    match line.find("//") {
+        Some(comment_start) => &line[..comment_start],
+        None => line,
+    }
+}
+
 #[test]
 fn buffer_descriptor_literals_are_the_single_definition_or_the_two_named_outliers() {
     let buffer_desc_src = include_str!("../src/render/buffer_desc.rs");
-    let definition_count = buffer_desc_src.matches(NEEDLE).count();
+    let definition_count: usize = buffer_desc_src
+        .lines()
+        .map(|line| code_of(line).matches(NEEDLE).count())
+        .sum();
     assert_eq!(
         definition_count, 5,
         "expected exactly 5 wgpu::BufferDescriptor literals in render/buffer_desc.rs \
@@ -53,7 +78,7 @@ fn buffer_descriptor_literals_are_the_single_definition_or_the_two_named_outlier
     let mut unmarked = Vec::new();
     for (path, contents) in sources {
         for (i, line) in contents.lines().enumerate() {
-            if line.contains(NEEDLE) {
+            if code_of(line).contains(NEEDLE) {
                 unmarked.push(format!("{path}:{}", i + 1));
             }
         }
