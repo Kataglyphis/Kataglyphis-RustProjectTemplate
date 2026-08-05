@@ -35,6 +35,12 @@ pub struct ObjMaterial {
     pub base_color_texture: Option<String>,
     /// `Ke`.
     pub emissive: [f32; 3],
+    /// `norm`/`map_Bump`/`map_bump`/`bump`, as written in the .mtl (relative
+    /// to it).
+    pub normal_texture: Option<String>,
+    /// The bump directive's `-bm` option; glTF's `normalTexture.scale`. Only
+    /// meaningful when `normal_texture` is `Some`.
+    pub normal_scale: f32,
 }
 
 impl Default for ObjMaterial {
@@ -49,6 +55,11 @@ impl Default for ObjMaterial {
             // glTF's own default emissiveFactor, so a .mtl without Ke
             // converts byte-identically to before this field existed.
             emissive: [0.0, 0.0, 0.0],
+            normal_texture: None,
+            // glTF's own default normalTexture.scale, so a .mtl without a
+            // bump directive converts byte-identically to before this field
+            // existed.
+            normal_scale: 1.0,
         }
     }
 }
@@ -109,9 +120,10 @@ impl ObjMesh {
 /// Parses the `.mtl` subset that maps onto glTF's PBR base colour.
 ///
 /// Unknown directives are ignored here, unlike in the OBJ parser: MTL files
-/// are full of Phong-era fields (`Ns`, `Ka`, `Ks`, `illum`, `map_Bump`) that
-/// have no glTF equivalent, and refusing a file for containing them would
-/// reject essentially every real material library.
+/// are full of Phong-era fields (`Ns`, `Ka`, `Ks`, `illum`) that have no glTF
+/// equivalent, and refusing a file for containing them would reject
+/// essentially every real material library. `map_Bump` is not one of these -
+/// it maps onto glTF's `normalTexture` and is handled below.
 pub fn parse_mtl(source: &str) -> Vec<ObjMaterial> {
     let mut materials: Vec<ObjMaterial> = Vec::new();
 
@@ -186,11 +198,39 @@ pub fn parse_mtl(source: &str) -> Vec<ObjMaterial> {
                     material.base_color[3] = (1.0 - transparency).clamp(0.0, 1.0);
                 }
             }
+            // `norm`, `map_Bump`/`map_bump` and bare `bump` all name a normal
+            // map; `norm` is preferred when a material names both, taking the
+            // same "last token past any options" and backslash-normalising
+            // rules as `map_Kd` above. A bump directive already carrying a
+            // texture is left alone by a later `map_Bump`/`bump` line - only
+            // an explicit `norm` may override it - which is what makes the
+            // preference hold regardless of which directive appears first.
+            "norm" | "map_Bump" | "map_bump" | "bump" if !values.is_empty() => {
+                if let Some(material) = materials.last_mut() {
+                    if keyword == "norm" || material.normal_texture.is_none() {
+                        material.normal_texture =
+                            values.last().map(|name| name.replace('\\', "/"));
+                        if let Some(scale) = bump_scale_option(&values) {
+                            material.normal_scale = scale;
+                        }
+                    }
+                }
+            }
             _ => {}
         }
     }
 
     materials
+}
+
+/// Finds a bump directive's `-bm <factor>` option among its option/filename
+/// tokens, e.g. `bump -bm 0.5 rock_normal.png`.
+fn bump_scale_option(values: &[&str]) -> Option<f32> {
+    values
+        .iter()
+        .position(|token| *token == "-bm")
+        .and_then(|index| values.get(index + 1))
+        .and_then(|value| value.parse::<f32>().ok())
 }
 
 /// Parses the OBJ subset this converter supports.
@@ -590,7 +630,10 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
     // repeatedly and upload duplicate GPU textures.
     let mut image_uris: Vec<String> = Vec::new();
     for material in &mesh.materials {
-        if let Some(uri) = &material.base_color_texture {
+        for uri in [&material.base_color_texture, &material.normal_texture]
+            .into_iter()
+            .flatten()
+        {
             if !image_uris.iter().any(|existing| existing == uri) {
                 image_uris.push(uri.clone());
             }
@@ -635,6 +678,14 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
                 }
                 None => String::new(),
             };
+            let normal_texture_json = match &material.normal_texture {
+                Some(uri) => {
+                    let index = image_uris.iter().position(|existing| existing == uri).unwrap_or(0);
+                    let scale = finite_or(material.normal_scale, 1.0);
+                    format!(r#", "normalTexture": {{ "index": {index}, "scale": {scale} }}"#)
+                }
+                None => String::new(),
+            };
             let [er, eg, eb] = material.emissive.map(|component| finite_or(component, 0.0));
             // glTF's `emissiveFactor` is `[0,1]` per component. An HDR `Ke`
             // (any component above 1) is split into that `[0,1]` factor plus
@@ -665,11 +716,12 @@ pub fn to_gltf(mesh: &ObjMesh, bin_uri: &str) -> (String, Vec<u8>) {
                 String::new()
             };
             let json = format!(
-                r#"{{ "name": "{}", "pbrMetallicRoughness": {{ "baseColorFactor": [{}, {}, {}, {}]{}, "metallicFactor": 0.0, "roughnessFactor": 1.0 }}{}{}{} }}"#,
+                r#"{{ "name": "{}", "pbrMetallicRoughness": {{ "baseColorFactor": [{}, {}, {}, {}]{}, "metallicFactor": 0.0, "roughnessFactor": 1.0 }}{}{}{}{} }}"#,
                 json_escape(&material.name),
                 r, g, b, a,
                 texture_json,
                 if a < 1.0 { r#", "alphaMode": "BLEND""# } else { "" },
+                normal_texture_json,
                 emissive_json,
                 extensions_json
             );
@@ -824,42 +876,55 @@ pub fn convert_file(obj_path: &Path, gltf_path: &Path) -> Result<ObjMesh> {
     // self-contained. Emitting a URI that points back into the source tree
     // would produce a document that loads on this machine and nowhere else -
     // and the failure would be a missing texture, not a missing file.
+    let mut copied: Vec<&str> = Vec::new();
     for material in &mesh.materials {
-        let Some(uri) = &material.base_color_texture else {
-            continue;
-        };
-        // docs/model-loading.md: resolve relative to the directory containing
-        // the .mtl (== the .obj's directory - the mtllib loop above always
-        // resolves there) first, and retry under a textures/ subdirectory of
-        // that same directory second, because every shipped asset in this
-        // repo puts its textures there instead of beside the .mtl.
-        let beside_mtl = obj_path.with_file_name(uri);
-        let under_textures = obj_path.with_file_name(format!("textures/{uri}"));
-        let source_path = if beside_mtl.exists() {
-            beside_mtl.clone()
-        } else if under_textures.exists() {
-            under_textures.clone()
-        } else {
-            beside_mtl.clone()
-        };
-        let destination = gltf_path.with_file_name(uri);
-        if source_path == destination {
-            continue;
-        }
-        match std::fs::copy(&source_path, &destination) {
-            Ok(_) => {}
-            Err(error) => {
-                // Warn rather than fail: the geometry and materials are still
-                // worth having, and OBJ files routinely reference textures
-                // that were never shipped alongside them.
-                log::warn!(
-                    "{} (also tried {}): {error}; the converted glTF references a texture that is not there",
-                    beside_mtl.display(),
-                    under_textures.display()
-                );
+        for uri in [&material.base_color_texture, &material.normal_texture]
+            .into_iter()
+            .flatten()
+        {
+            if copied.iter().any(|existing| *existing == uri) {
+                continue;
             }
+            copied.push(uri);
+            copy_texture_beside_gltf(uri, obj_path, gltf_path);
         }
     }
 
     Ok(mesh)
+}
+
+/// Copies the texture named by `uri` (as written in the .mtl) to sit beside
+/// `gltf_path`, so the converted document is self-contained.
+fn copy_texture_beside_gltf(uri: &str, obj_path: &Path, gltf_path: &Path) {
+    // docs/model-loading.md: resolve relative to the directory containing the
+    // .mtl (== the .obj's directory - the mtllib loop in `convert_file`
+    // always resolves there) first, and retry under a textures/ subdirectory
+    // of that same directory second, because every shipped asset in this
+    // repo puts its textures there instead of beside the .mtl.
+    let beside_mtl = obj_path.with_file_name(uri);
+    let under_textures = obj_path.with_file_name(format!("textures/{uri}"));
+    let source_path = if beside_mtl.exists() {
+        beside_mtl.clone()
+    } else if under_textures.exists() {
+        under_textures.clone()
+    } else {
+        beside_mtl.clone()
+    };
+    let destination = gltf_path.with_file_name(uri);
+    if source_path == destination {
+        return;
+    }
+    match std::fs::copy(&source_path, &destination) {
+        Ok(_) => {}
+        Err(error) => {
+            // Warn rather than fail: the geometry and materials are still
+            // worth having, and OBJ files routinely reference textures that
+            // were never shipped alongside them.
+            log::warn!(
+                "{} (also tried {}): {error}; the converted glTF references a texture that is not there",
+                beside_mtl.display(),
+                under_textures.display()
+            );
+        }
+    }
 }

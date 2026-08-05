@@ -904,6 +904,93 @@ f 4 5 6
 }
 
 #[test]
+fn parse_mtl_reads_map_bump_as_the_normal_texture() {
+    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::parse_mtl;
+
+    let materials = parse_mtl("newmtl a\nmap_Bump rock_normal.png\n");
+    assert_eq!(
+        materials[0].normal_texture.as_deref(),
+        Some("rock_normal.png")
+    );
+}
+
+#[test]
+fn parse_mtl_prefers_norm_over_map_bump() {
+    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::parse_mtl;
+
+    // norm first, map_Bump second: the later, less-specific directive must
+    // not override it.
+    let norm_first = parse_mtl("newmtl a\nnorm better.png\nmap_Bump worse.png\n");
+    assert_eq!(norm_first[0].normal_texture.as_deref(), Some("better.png"));
+
+    // map_Bump first, norm second: norm always wins regardless of order.
+    let bump_first = parse_mtl("newmtl a\nmap_Bump worse.png\nnorm better.png\n");
+    assert_eq!(bump_first[0].normal_texture.as_deref(), Some("better.png"));
+}
+
+#[test]
+fn parse_mtl_takes_the_last_token_of_an_option_carrying_map_bump() {
+    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::parse_mtl;
+
+    // MTL allows options before the path, and a bump directive's `-bm` option
+    // sets glTF's normalTexture.scale.
+    let materials = parse_mtl("newmtl a\nmap_Bump -bm 0.5 rock_normal.png\n");
+    assert_eq!(
+        materials[0].normal_texture.as_deref(),
+        Some("rock_normal.png"),
+        "the filename must be taken from the end, past the -bm option"
+    );
+    assert!(
+        (materials[0].normal_scale - 0.5).abs() < 1e-6,
+        "the -bm option must set normal_scale, got {}",
+        materials[0].normal_scale
+    );
+}
+
+#[test]
+fn to_gltf_emits_a_normal_texture_pointing_at_a_distinct_image_when_the_maps_differ() {
+    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{parse_mtl, ObjMesh};
+
+    let materials = parse_mtl("newmtl a\nmap_Kd base.png\nmap_Bump normal.png\n");
+    let mesh = ObjMesh {
+        materials,
+        ..ObjMesh::default()
+    };
+    let (json, _bin) = to_gltf(&mesh, "a.bin");
+
+    assert!(
+        json.contains(r#""baseColorTexture": { "index": 0 }"#),
+        "expected the base colour texture at image index 0, got: {json}"
+    );
+    assert!(
+        json.contains(r#""normalTexture": { "index": 1, "scale": 1 }"#),
+        "expected a distinct normalTexture image index, got: {json}"
+    );
+}
+
+#[test]
+fn to_gltf_shares_one_image_when_map_kd_and_map_bump_name_the_same_file() {
+    use kataglyphis_webgpu_renderer::asset::obj_to_gltf::{parse_mtl, ObjMesh};
+
+    let materials = parse_mtl("newmtl a\nmap_Kd shared.png\nmap_Bump shared.png\n");
+    let mesh = ObjMesh {
+        materials,
+        ..ObjMesh::default()
+    };
+    let (json, _bin) = to_gltf(&mesh, "a.bin");
+
+    assert!(
+        json.contains(r#""normalTexture": { "index": 0, "scale": 1 }"#),
+        "expected the base colour and normal maps to share image index 0, got: {json}"
+    );
+    assert_eq!(
+        json.matches(r#""uri": "shared.png""#).count(),
+        1,
+        "the shared file must appear once in the images array, got: {json}"
+    );
+}
+
+#[test]
 fn vertex_colors_round_trip_through_the_real_gltf_loader() {
     let dir = temp_dir("vertex_colors");
     let obj_path = dir.join("triangle.obj");
