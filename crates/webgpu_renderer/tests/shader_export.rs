@@ -244,6 +244,20 @@ fn extract_balanced(source: &str, start_idx: usize, open: char, close: char) -> 
     panic!("unbalanced '{open}'/'{close}' starting at byte {start_idx}");
 }
 
+/// Name prefix the shared base-colour UV selector is emitted under. The
+/// compiler appends a mangling suffix (`_0`), so match on the prefix and read
+/// the real name back out of the call.
+const UV_SELECTOR_PREFIX: &str = "base_color_uv_select";
+
+/// The mangled name of the UV selector called inside `body`, when the
+/// selection was factored into a helper rather than inlined.
+fn uv_selector_called_in(body: &str) -> Option<String> {
+    let start = body.find(UV_SELECTOR_PREFIX)?;
+    let rest = &body[start..];
+    let end = rest.find('(')?;
+    Some(rest[..end].trim().to_string())
+}
+
 fn fn_body<'a>(source: &'a str, fn_name: &str) -> &'a str {
     let needle = format!("fn {fn_name}(");
     let idx = source
@@ -269,10 +283,49 @@ fn shadow_masked_uses_the_forward_pass_uv_set() {
         vs_body.contains("uv1"),
         "vs_shadow_masked must reference the uv1 input member to pick the base-colour UV set the same way fs_main does; body:\n{vs_body}"
     );
-    assert!(
-        vs_body.contains("material_flags"),
-        "vs_shadow_masked must branch on material_flags to select the UV set; body:\n{vs_body}"
-    );
+
+    // The selection itself may sit INLINE in this body or be factored into a
+    // helper - which is what the compiler emits today:
+    //
+    //   vs_shadow_masked -> base_color_uv_select_0(uv, uv1)
+    //   fs_main -> base_color_uv_0 -> base_color_uv_select_0(uv, uv1)
+    //
+    // Asserting on `material_flags` appearing literally in this body only
+    // held while the selection was inlined; once it moved into the shared
+    // helper the guard failed even though the guarantee had got STRONGER (one
+    // selector, provably shared, instead of two copies). What matters is that
+    // whatever performs the selection branches on material_flags and that the
+    // forward path uses the same one, so check that instead of the shape of
+    // the generated code.
+    if !vs_body.contains("material_flags") {
+        let selector = uv_selector_called_in(vs_body).unwrap_or_else(|| {
+            panic!(
+                "vs_shadow_masked neither branches on material_flags itself nor calls a \
+                 `{UV_SELECTOR_PREFIX}*` helper - the masked-shadow pass is no longer picking the \
+                 base-colour UV set; body:\n{vs_body}"
+            )
+        });
+
+        let selector_body = fn_body(source, &selector);
+        assert!(
+            selector_body.contains("material_flags"),
+            "`{selector}`, the UV selector vs_shadow_masked calls, must branch on material_flags; body:\n{selector_body}"
+        );
+        assert!(
+            selector_body.contains("uv1"),
+            "`{selector}` must be able to return the uv1 set; body:\n{selector_body}"
+        );
+
+        // Definition + at least two call sites: the shadow pass and the
+        // forward path. One call site would mean the passes had drifted apart
+        // again, which is the bug this test exists for.
+        let mentions = source.matches(&format!("{selector}(")).count();
+        assert!(
+            mentions >= 3,
+            "`{selector}` is referenced {mentions} time(s) (definition + call sites); the masked-shadow \
+             pass and the forward pass must share ONE selector, so at least two call sites are expected"
+        );
+    }
 
     let fs_body = fn_body(source, "fs_shadow_masked");
     let if_idx = fs_body.find("if(").unwrap_or_else(|| {
