@@ -43,9 +43,7 @@ enum Backend {
     // tract 0.23's `run` takes `self: &Arc<Self>`, so the plan has to live in an
     // Arc -- a Box no longer resolves the method at all.
     #[cfg(feature = "onnx_tract")]
-    Tract {
-        model: std::sync::Arc<TractPlan>,
-    },
+    Tract { model: std::sync::Arc<TractPlan> },
 
     #[cfg(feature = "onnxruntime")]
     Ort { session: ort::session::Session },
