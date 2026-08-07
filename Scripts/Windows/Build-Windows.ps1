@@ -213,51 +213,38 @@ try {
       Write-BuildLogWarning -Context $context -Message "Failed to install cargo-audit/cargo-deny: $_"
     }
 
-    try {
-      Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('audit') | Out-Null
-    } catch {
-      Write-BuildLogWarning -Context $context -Message "cargo audit failed or not available: $_"
-    }
-
-    try {
-      Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('deny', 'check', 'advisories', 'licenses', 'bans', 'sources') | Out-Null
-    } catch {
-      Write-BuildLogWarning -Context $context -Message "cargo deny checks failed or not available: $_"
-    }
+    # No try/catch around these two. Swallowing them into a warning is how
+    # `licenses FAILED` shipped unnoticed: cargo-deny rejected xxhash-rust's
+    # BSL-1.0 on every single build and the step still reported success. A
+    # security gate that cannot fail is not a gate. Findings belong in
+    # deny.toml (allow the licence, or ignore the advisory with a reason) -
+    # not in a catch block here.
+    Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('audit') | Out-Null
+    Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('deny', 'check', 'advisories', 'licenses', 'bans', 'sources') | Out-Null
     } | Out-Null
 
-    # rustfmt/clippy are added on demand. The CI container's rustup is OFFLINE
-    # (file:// dist), so `component add` only works for components baked into
-    # the image. ContainerHub install-rust.sh adds clippy but not rustfmt, so
-    # `component add rustfmt` fails "file not found" and used to red-light the
-    # whole packaging step. Treat a missing style component as skip-with-
-    # warning: fmt is a style gate, not a build gate, and the Linux lane +
-    # local pre-commit still enforce it. (A rustfmt component is being added
-    # to the image upstream; once it lands this simply runs.)
+    # NEVER `rustup component add` here. The image's rustup is offline - its
+    # dist server is a file:// mirror that setup-rust-toolchain.ps1 deletes
+    # after installing - so the call can only ever fail, and the previous
+    # skip-on-failure made both gates decorative: each finished in ~0.1s and
+    # reported success, so neither had run even once (measured 2026-08-07).
+    # Call the components directly and let a failure BE a failure. If they are
+    # missing the image is wrong, not the code; ContainerHub now installs them
+    # with `-c rustfmt -c clippy` and asserts them at image-build time.
     Invoke-BuildStep -Context $context -StepName 'Format Check' -Critical -Script {
-      $fmtAvailable = $true
-      try {
-        Invoke-BuildExternal -Context $context -File 'rustup' -Parameters @('component', 'add', 'rustfmt') | Out-Null
-      } catch {
-        $fmtAvailable = $false
-        Write-Warning "rustfmt unavailable in this image (offline rustup); skipping the format check: $_"
-      }
-      if ($fmtAvailable) {
-        Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('fmt', '--all', '--', '--check') | Out-Null
-      }
+      Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('fmt', '--all', '--', '--check') | Out-Null
     } | Out-Null
 
+    # Default features on purpose. --all-features pulls onnxruntime_cuda and
+    # onnxruntime_directml, which need vendor SDKs this image has not got; the
+    # feature-matrix CI job lints the combinations that are actually buildable.
     Invoke-BuildStep -Context $context -StepName 'Linting (cargo clippy)' -Critical -Script {
-      $clippyAvailable = $true
-      try {
-        Invoke-BuildExternal -Context $context -File 'rustup' -Parameters @('component', 'add', 'clippy') | Out-Null
-      } catch {
-        $clippyAvailable = $false
-        Write-Warning "clippy unavailable in this image (offline rustup); skipping the clippy lint: $_"
+      $clippyParams = @('clippy', '--all-targets')
+      if (-not [string]::IsNullOrWhiteSpace($cargoFeatures)) {
+        $clippyParams += @('--features', $cargoFeatures)
       }
-      if ($clippyAvailable) {
-        Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('clippy', '--all-targets', '--all-features', '--', '-D', 'warnings') | Out-Null
-      }
+      $clippyParams += @('--', '-D', 'warnings')
+      Invoke-BuildExternal -Context $context -File 'cargo' -Parameters $clippyParams | Out-Null
     } | Out-Null
 
     if (-not $SkipTests) {
@@ -279,8 +266,14 @@ try {
     } | Out-Null
   }
 
+  # Invoke-BuildStep, NOT Invoke-BuildOptional. The latter is
+  # `try { & $Script } catch { Write-BuildLogWarning }` and never registers the
+  # step with the context, so packaging failures appeared in neither the
+  # SUCCEEDED nor the FAILED list - a run with a broken MSI still printed
+  # "7 steps, 7 succeeded, 0 failed (100% success rate)". If packaging was
+  # asked for and it breaks, that is a failure and the summary must say so.
   if (-not $SkipMsix) {
-    Invoke-BuildOptional -Context $context -Name 'MSIX Packaging' -Script {
+    Invoke-BuildStep -Context $context -StepName 'MSIX Packaging' -Critical -Script {
       # Resolve-WindowsSdkToolPath, not a local recursive scan of the Kits
       # tree: it takes VsDevCmd's WindowsSdkVerBinPath / WindowsSDKVersion
       # first and only falls back to scanning, newest version first. The 8.3
@@ -408,6 +401,12 @@ try {
       Write-BuildLog -Context $context -Message "Creating MSIX package: $packageFile"
       Invoke-BuildExternal -Context $context -File $makeappxPath -Parameters @('pack', '/d', $msixStaging, '/p', $packageFile, '/o') | Out-Null
 
+      # Do not announce a package that is not there. A green tool exit is not
+      # proof of delivery - the same rule Test-BuildArtifactsDelivered exists
+      # for on the container side.
+      if (-not (Test-Path $packageFile)) {
+        throw "makeappx reported success but produced no file at $packageFile"
+      }
       Write-BuildLogSuccess -Context $context -Message "MSIX package created: $packageFile"
     }
   }
@@ -415,7 +414,7 @@ try {
   # MSI Packaging with cargo-wix
   $msiEnabled = Get-ConfigValue -Config $config -Path 'Msi.Enabled'
   if (-not $SkipMsi -and $msiEnabled) {
-    Invoke-BuildOptional -Context $context -Name 'MSI Packaging' -Script {
+    Invoke-BuildStep -Context $context -StepName 'MSI Packaging' -Critical -Script {
       Write-BuildLog -Context $context -Message "Installing cargo-wix..."
       Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('install', 'cargo-wix') | Out-Null
 
@@ -445,9 +444,27 @@ try {
 
       Write-BuildLog -Context $context -Message "Creating MSI package: $msiFile"
 
-      # Run cargo-wix to create the MSI
-      $wixParams = @('wix', '--no-build', '--nocapture', '-p', 'kataglyphis_cli', '--output', $msiFile)
+      # cargo-wix looks for WXS files under <package-root>/wix/. With
+      # `-p kataglyphis_cli` that is crates/cli/wix/, which does not exist -
+      # this repo keeps the single WiX source at the WORKSPACE root. The result
+      # was "Error[2] (Generic): There are no WXS files to create an installer"
+      # on every run, hidden because the step ran under Invoke-BuildOptional.
+      #
+      # Msi.WxsFile has been in Build-Windows.config.psd1 all along and was
+      # never read; cargo-wix takes the .wxs as a positional INPUT argument, so
+      # pass it explicitly rather than relying on directory discovery.
+      $wxsRel = Get-OrDefault (Get-ConfigValue -Config $config -Path 'Msi.WxsFile') 'wix/main.wxs'
+      $wxsPath = if ([System.IO.Path]::IsPathRooted($wxsRel)) { $wxsRel } else { Join-Path $workspacePath $wxsRel }
+      if (-not (Test-Path $wxsPath)) {
+        throw "WiX source not found: $wxsPath (Msi.WxsFile = '$wxsRel'). cargo-wix cannot build an installer without it."
+      }
+
+      $wixParams = @('wix', '--no-build', '--nocapture', '-p', 'kataglyphis_cli', '--output', $msiFile, $wxsPath)
       Invoke-BuildExternal -Context $context -File 'cargo' -Parameters $wixParams | Out-Null
+
+      if (-not (Test-Path $msiFile)) {
+        throw "cargo-wix reported success but produced no file at $msiFile"
+      }
 
       Write-BuildLogSuccess -Context $context -Message "MSI package created: $msiFile"
     }
