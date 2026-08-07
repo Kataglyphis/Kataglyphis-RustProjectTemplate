@@ -2,3 +2,13 @@
 # CRLF: a backtick before CR escapes the CR, not the newline, so the continuation
 # dies with "Missing expression after unary operator". Force LF for workflow YAML.
 .github/workflows/*.yml text eol=lf
+
+# Shell scripts must stay LF in the working tree on EVERY platform, mirroring
+# the rule ContainerHub already carries. They are run by bash inside Linux
+# containers, and on a Windows host this repo is bind-mounted into one - the
+# documented Rancher Desktop workflow. Without this, core.autocrlf=true gives
+# them CRLF and bash dies on the trailing \r with errors that name the wrong
+# culprit: "set: pipefail\r: invalid option name", "$'\r': command not found".
+# Verified 2026-08-07: this is exactly how a local Rancher build failed.
+*.sh text eol=lf
+*.bash text eol=lf
