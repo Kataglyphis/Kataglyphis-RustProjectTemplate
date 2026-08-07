@@ -255,7 +255,7 @@ The workspace builds and tests inside the [Kataglyphis ContainerHub](https://git
 
 > **ContainerHub is the ground truth for container and PowerShell functionality.** The scripts here are thin drivers: `docker.exe` discovery, isolation flags, container teardown, SDK-tool lookup, MSIX manifest expansion, config access and build-step logging all come from its modules under `windows/scripts/modules/`. Before adding a helper to `Scripts/Windows/`, check whether ContainerHub already has it — several that were written locally turned out to exist there in a better form. Everything is `pwsh` (PowerShell 7+); nothing here runs under Windows PowerShell 5.1.
 
-One driver does everything — build all three profiles (`dev`/debug, `profile` = release + debuginfo, `release` = fat LTO) and optionally the full debug test suite:
+The driver **bind-mounts this repository directly into the container** (as `C:\ws-mnt`) — no copy, so artifacts land straight in your tree and `ExternalLib/` is available inside. It builds all three profiles (`dev`/debug, `profile` = release + debuginfo, `release` = fat LTO) and optionally the full debug test suite:
 
 ```pwsh
 # build debug + profile + release in the container
@@ -263,7 +263,12 @@ pwsh -ExecutionPolicy Bypass -File .\Scripts\Windows\Container\Invoke-StevedoreB
 
 # build AND run cargo test --workspace (unit + integration + proptest fuzz + doc)
 pwsh -ExecutionPolicy Bypass -File .\Scripts\Windows\Container\Invoke-StevedoreBuild.ps1 -Test
+
+# only if your host refuses the mount (see below)
+pwsh -ExecutionPolicy Bypass -File .\Scripts\Windows\Container\Invoke-StevedoreBuild.ps1 -StageSources
 ```
+
+> **Dev Drive (ReFS) is not a blocker — reading through a bind mount works.** What does not work is create-then-rename through it (`bindFlt` rejects `copySync`/`renameSync` with errno 3), which is precisely what cargo does. The driver keeps every build write container-local (`CARGO_TARGET_DIR=C:\ct`, `CARGO_HOME=C:\ch`), so only a plain artifact copy crosses the mount. If a host really does refuse it, `docker run` fails at once with *"Der Dateisystem-Minifilter kann nicht an das Entwicklervolume angefügt werden"*; fix it permanently with one elevated `fsutil devdrv setfiltersallowed bindFlt, wcifs` and a remount, or use `-StageSources` meanwhile. `fsutil devdrv query` needs elevation itself, so a failing query tells you nothing — just try the mount.
 
 Artifacts land in `target\container\{debug,profile,release}` and are mirrored to the (gitignored) repo-root `debug\`, `profile\`, `release\` folders; each contains the CLI exe, cdylib (`.dll` + import lib), staticlib (`.lib`) and pdb. Latest verified run (2026-07-17): all three profiles built (debug 1m11s, profile 1m31s, release 1m08s) and the binaries run on the host, e.g.:
 

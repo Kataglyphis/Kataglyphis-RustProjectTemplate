@@ -307,7 +307,18 @@ try {
       }
       $resolvedVersion = ConvertTo-NormalizedVersion $resolvedVersion
 
-      $cargoTargetFullPath = Join-Path $workspacePath $cargoTargetDir
+      # CARGO_TARGET_DIR is a standard cargo variable and is commonly ABSOLUTE
+      # (the in-container scripts here set C:\ct). PowerShell's Join-Path does
+      # not collapse that the way Path.Combine would - `Join-Path 'C:\a' 'C:\b'`
+      # yields 'C:\a\C:\b' - and MSIX packaging then died on
+      # "The filename, directory name, or volume label syntax is incorrect".
+      # Same IsPathRooted idiom this script already uses for the manifest
+      # template path.
+      $cargoTargetFullPath = if ([System.IO.Path]::IsPathRooted($cargoTargetDir)) {
+        $cargoTargetDir
+      } else {
+        Join-Path $workspacePath $cargoTargetDir
+      }
       $releaseDir = Join-Path $cargoTargetFullPath 'release'
 
       $msixStaging = Join-Path $cargoTargetFullPath 'msix-staging'

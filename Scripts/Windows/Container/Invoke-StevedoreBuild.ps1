@@ -41,8 +41,14 @@ param(
 
     [string]$Docker = '',
     [string]$Image = 'ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64',
-    # Non-Dev-Drive staging root for sources + logs (bind-mount source).
+    # Scratch root for the in-container scripts and their logs. Small, and on a
+    # non-Dev-Drive volume because it is written to constantly.
     [string]$StagingDir = (Join-Path $env:LOCALAPPDATA 'Temp\kataglyphis-rust-container'),
+    # Copy the sources to $StagingDir\ws and mount THAT, instead of mounting the
+    # repository directly. The direct mount is the default and is what CI-like
+    # runs should use; this is the escape hatch for a host where bindFlt refuses
+    # the repo volume (see the comment on $ws below for how to tell).
+    [switch]$StageSources,
     [switch]$Test,
     [switch]$TestOnly,
     [int]$MemoryGb = 48,
@@ -73,19 +79,46 @@ Import-Module $reuseModule -Force
 $Docker = Resolve-DockerExe -Override $Docker
 Write-Host "Using docker: $Docker"
 
-# ---- stage sources off the Dev Drive ----
-$ws = Join-Path $StagingDir 'ws'
+# ---- workspace: mount the repository itself ----
+#
+# The repo is bind-mounted straight into the container, Dev Drive or not.
+# Verified on this host 2026-08-07 against a ReFS D: - the tree is readable and
+# the build runs. The older behaviour (robocopy the sources to
+# %LOCALAPPDATA%\Temp and mount the copy) is still available via -StageSources.
+#
+# The distinction that matters is READ vs WRITE, not the filesystem. Per the
+# submodule's docs/windows-builds.md, bindFlt rejects copySync/renameSync with
+# errno 3, so create-then-rename through the mount fails - which is why every
+# build write already goes to container-local C:\ct and C:\ch. The only thing
+# crossing the mount is the artifact copy at the end of rust-build-all.ps1, and
+# plain copies do work.
+#
+# If a host DOES refuse it, `docker run --mount type=bind,source=<repo>,...`
+# fails immediately with "Der Dateisystem-Minifilter kann nicht an das
+# Entwicklervolume angefügt werden". The permanent fix is one elevated
+# `fsutil devdrv setfiltersallowed bindFlt, wcifs` plus a remount; -StageSources
+# is the stopgap. Note `fsutil devdrv query` needs elevation itself, so a
+# failing query proves nothing - try the mount.
 $scratch = Join-Path $StagingDir 'scratch'
-New-Item -ItemType Directory -Force -Path $ws, $scratch | Out-Null
-Write-Host "Staging sources -> $ws"
-robocopy $repoRoot $ws /MIR /XD target ExternalLib .git .vs out dist debug profile release /XF *.msix /NFL /NDL /NJH /NJS | Out-Null
-if ($LASTEXITCODE -ge 8) { throw "robocopy staging failed ($LASTEXITCODE)" }
+New-Item -ItemType Directory -Force -Path $scratch | Out-Null
+
+if ($StageSources) {
+    $ws = Join-Path $StagingDir 'ws'
+    New-Item -ItemType Directory -Force -Path $ws | Out-Null
+    Write-Host "Staging sources -> $ws (-StageSources)"
+    robocopy $repoRoot $ws /MIR /XD target .git .vs out dist debug profile release /XF *.msix /NFL /NDL /NJH /NJS | Out-Null
+    if ($LASTEXITCODE -ge 8) { throw "robocopy staging failed ($LASTEXITCODE)" }
+} else {
+    $ws = $repoRoot
+    Write-Host "Mounting repository directly -> $ws"
+}
+
 Copy-Item (Join-Path $PSScriptRoot 'rust-build-all.ps1'), (Join-Path $PSScriptRoot 'rust-test-all.ps1') -Destination $scratch -Force
 
-# The in-container scripts import their logging from here. It has to travel
-# with them: the robocopy above excludes ExternalLib, so nothing under
-# windows/scripts/modules/ exists inside the container. Staged into the scratch
-# mount, which both scripts already write their logs to.
+# The in-container scripts import their logging from here. Keep staging it into
+# the scratch mount rather than reading it off the workspace mount: that keeps
+# the two in-container scripts working identically under -StageSources, whose
+# robocopy still has no reason to carry the whole submodule.
 $containerLogModule = Join-Path $containerHubModules 'WindowsContainerLog.Common.psm1'
 if (-not (Test-Path $containerLogModule)) {
     throw "Required module not found: $containerLogModule"
@@ -125,9 +158,16 @@ function Invoke-ContainerScript {
 
 if (-not $TestOnly) {
     Invoke-ContainerScript -Script 'rust-build-all.ps1' -Label 'build'
-    # Bring artifacts home: canonical location + root mirror (both gitignored).
-    robocopy (Join-Path $ws 'target\container') (Join-Path $repoRoot 'target\container') /MIR /NFL /NDL /NJH /NJS | Out-Null
-    if ($LASTEXITCODE -ge 8) { throw 'artifact copy-back failed' }
+    # With the repository mounted directly, the container already wrote into
+    # target\container - copying it onto itself would be a /MIR of a directory
+    # over itself, which robocopy refuses. Only the staged path needs this.
+    if ($StageSources) {
+        robocopy (Join-Path $ws 'target\container') (Join-Path $repoRoot 'target\container') /MIR /NFL /NDL /NJH /NJS | Out-Null
+        if ($LASTEXITCODE -ge 8) { throw 'artifact copy-back failed' }
+    }
+    if (-not (Test-Path (Join-Path $repoRoot 'target\container'))) {
+        throw "the build reported success but produced no target\container - nothing was delivered through the mount"
+    }
     foreach ($p in 'debug', 'profile', 'release') {
         robocopy (Join-Path $repoRoot "target\container\$p") (Join-Path $repoRoot $p) /MIR /NFL /NDL /NJH /NJS | Out-Null
     }

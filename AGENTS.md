@@ -65,12 +65,20 @@ Known-benign warning: cargo reports a pdb/filename collision because the root **
 
 ## Build & test in the Stevedore Windows container
 
-Driver: `Scripts\Windows\Container\Invoke-StevedoreBuild.ps1` (add `-Test` to also run the test suite; `-TestOnly` to skip building). It stages sources off the Dev Drive, runs the in-container scripts (`rust-build-all.ps1`, `rust-test-all.ps1`) in `ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64`, and copies artifacts back to `target\container\<profile>` plus gitignored root mirrors `debug\`, `profile\`, `release\`.
+Driver: `Scripts\Windows\Container\Invoke-StevedoreBuild.ps1` (add `-Test` to also run the test suite; `-TestOnly` to skip building). It **bind-mounts this repository straight into the container** as `C:\ws-mnt`, runs the in-container scripts (`rust-build-all.ps1`, `rust-test-all.ps1`) in `ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64`, and the artifacts land directly in `target\container\<profile>`, mirrored to the gitignored root `debug\`, `profile\`, `release\`.
+
+Mounting the repo — not a copy of it — is the default, ReFS Dev Drive or not. **The constraint is write, not read**: `bindFlt` rejects `copySync`/`renameSync` with errno 3, so create-then-rename through the mount fails, which is exactly what cargo does. That is handled by keeping every build write container-local (`CARGO_TARGET_DIR=C:\ct`, `CARGO_HOME=C:\ch`); only a plain artifact copy crosses the mount at the end, and plain copies work.
+
+`-StageSources` restores the old behaviour (robocopy to `%LOCALAPPDATA%\Temp`, mount the copy) for a host that genuinely refuses the mount — the symptom is `docker run` failing immediately with *"Der Dateisystem-Minifilter kann nicht an das Entwicklervolume angefügt werden"*. The permanent fix there is one elevated `fsutil devdrv setfiltersallowed bindFlt, wcifs` plus a remount. `fsutil devdrv query` needs elevation itself, so a failing query proves nothing — try the mount.
+
+Mounting the repo also means `ExternalLib/` is present inside the container, so anything importing ContainerHub modules (e.g. `Build-Windows.ps1`) works without special staging.
 
 Hard-won host facts (verified 2026-07-17; full background in the submodule's `docs/windows-builds.md`):
 
 - **Use Stevedore's `docker.exe`, never nerdctl** — but do not hard-code the path: `Resolve-DockerExe` already checks `$env:DOCKER_EXE`, both Stevedore locations and then PATH. nerdctl is excluded deliberately; it talks to containerd, not this lane's engine.
-- **Dev Drive (ReFS) volumes refuse bind mounts** with *"Der Dateisystem-Minifilter kann nicht an das Entwicklervolume angefügt werden"* unless `fsutil devdrv setfiltersallowed bindFlt, wcifs` has been run (elevated) and the volume remounted. The driver sidesteps this by staging to `%LOCALAPPDATA%\Temp`.
+- **Dev Drive (ReFS) bind mounts: measure, do not assume.** A volume whose filters were never allowed refuses them with *"Der Dateisystem-Minifilter kann nicht an das Entwicklervolume angefügt werden"*; `fsutil devdrv setfiltersallowed bindFlt, wcifs` (elevated) plus a remount fixes that permanently. **On this host they work** — mounting the repo straight off ReFS `D:` into the container was verified on 2026-08-07 (`--mount type=bind,source=D:\GitHub\...` → the tree is readable, exit 0). Note `fsutil devdrv query` needs elevation, so a failing query says nothing; try the mount.
+
+  Reading works; **writing through the mount is the caveat**, and it is why the driver stages to `%LOCALAPPDATA%\Temp` and keeps build output container-local rather than because mounting is impossible. Per the submodule's `docs/windows-builds.md`, `bindFlt` rejects `copySync`/`renameSync` with errno 3, so create-then-rename — which cargo and CMake both do — is what actually breaks.
 - **Run containers with `--isolation process`** for the full host CPU count; Hyper-V isolation exposes only 2 CPUs. Get the flags from `Get-ContainerIsolationArgs` rather than inline. Mount targets must be paths that do not already exist in the image (e.g. `C:\ws-mnt`).
 - **Keep every build write container-local** (`CARGO_TARGET_DIR=C:\ct`, `CARGO_HOME=C:\ch`): the wcifs/bindFlt skew on this host breaks create-then-rename in image-layer dirs and two-path ops on bind mounts. Plain copies through the mount work; renames/moves may not. `docker cp` is unreliable — persist results via the mount.
 - **A dying docker CLI is not a dying build**: the client pipe intermittently drops (transient hcsshim/ttrpc flakiness) while the container keeps running. Check `docker inspect` container state before concluding failure; run containers **named and without `--rm`** so logs and state survive. Tear them down with `Remove-BuildContainerSafe` — a bare `docker rm -f` can return while the wcifs teardown still holds the name, and the next run then fails on the clash.
@@ -156,6 +164,21 @@ Default features are empty, so `cargo build` needs nothing. Each optional featur
 | `onnxruntime`, `burn_demos` | `libssl-dev` (via `openssl-sys`) | **Yes** — via ContainerHub's `package-lists.sh`. |
 
 On a plain Ubuntu box (e.g. the WSL recipe above) you *do* need the distro packages, because nothing there provides the source-built stack. That difference is exactly why "install the -dev package" is the wrong instinct when the image is involved.
+
+## Packaging: what actually happens when you run it
+
+Verified 2026-08-07 by running `Build-Windows.ps1 -SkipTests` in `:winamd64`:
+
+- **MSIX works.** `Kataglyphis.RustProjectTemplate_2.3.4.0_x64.msix`, 51.69 MB, manifest with every token substituted. `makeappx.exe` resolves via `Resolve-WindowsSdkToolPath` to `Windows Kits\10\bin\10.0.26100.0\x64\`.
+- **MSI does not.** `cargo wix --no-build -p kataglyphis_cli` fails with *"There are no WXS files to create an installer"*: the WiX source is at the repo root (`wix/main.wxs`, per `Msix`/`Msi` config), but `cargo wix` looks inside the package directory it was pointed at — `crates/cli`.
+
+**`Invoke-BuildOptional` steps do not appear in the pipeline summary — at all.** It is `try { & $Script } catch { Write-BuildLogWarning }` and never registers the step with the build context. Both packaging steps run under it, so the run above reported **"7 steps, 7 succeeded, 0 failed (100% success rate)"** while MSI had failed. Read the WARNING lines, not the summary, and treat that percentage as covering only the `Invoke-BuildStep` steps.
+
+`cargo-deny` also reports `licenses FAILED` (advisories, bans and sources pass) and is likewise invisible in the summary.
+
+Two more steps in that run finished in ~0.1s because they silently skipped: see the note above about `rustup component add` and the offline dist mirror.
+
+`CARGO_TARGET_DIR` may be absolute — the in-container scripts set `C:\ct`. `Build-Windows.ps1` now handles that (`IsPathRooted`); before, `Join-Path` produced `C:\...\workspace\C:\ct\msix-staging` and MSIX died on "The filename, directory name, or volume label syntax is incorrect".
 
 ## Known gaps
 
