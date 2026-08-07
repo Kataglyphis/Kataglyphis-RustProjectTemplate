@@ -77,8 +77,14 @@
 //! to `radius` but generous - the same scale as the legacy eye-pulled-back
 //! `radius * 4` / `far = radius * 8` window it replaces. Near may legitimately
 //! come out negative (the basis is anchored at the origin, not behind the
-//! scene); `Mat4::orthographic_rh` accepts that.
+//! scene); the orthographic constructor accepts that.
 
+// glam 0.33 moved the camera constructors off `Mat4` and split them by clip-
+// space convention. `directx` is glam's name for NDC Z in [0,1] with Y up —
+// which is also wgpu's and Metal's — and it reproduces the old
+// `Mat4::perspective_rh`/`orthographic_rh` bit for bit (verified 2026-08-07).
+use glam::camera::rh::proj::directx as clip;
+use glam::camera::rh::view::look_at_mat4;
 use glam::{Mat4, Vec3};
 
 use crate::render::forward::{CASCADE_COUNT, SHADOW_MAP_SIZE};
@@ -94,7 +100,12 @@ pub(crate) struct CascadeFit {
 /// cascade 2 covers the whole scene. `light_dir` is a parameter rather than
 /// read off a renderer so this is callable from a plain unit test, without a
 /// GPU or a `ForwardRenderer`.
-pub(crate) fn fit_cascades(camera: &OrbitCamera, scene_min: Vec3, scene_max: Vec3, light_dir: Vec3) -> CascadeFit {
+pub(crate) fn fit_cascades(
+    camera: &OrbitCamera,
+    scene_min: Vec3,
+    scene_max: Vec3,
+    light_dir: Vec3,
+) -> CascadeFit {
     let scene_center = (scene_min + scene_max) * 0.5;
     let mut scene_radius = ((scene_max - scene_min).length() * 0.5).max(1e-3);
     if !scene_radius.is_finite() {
@@ -123,10 +134,18 @@ pub(crate) fn fit_cascades(camera: &OrbitCamera, scene_min: Vec3, scene_max: Vec
     let splits = [near_radius * 2.0, mid_radius * 2.0];
 
     let focus_near = camera.target.lerp(camera.eye(), 0.15);
-    let cascades = [(focus_near, near_radius), (camera.target, mid_radius), (scene_center, scene_radius)];
+    let cascades = [
+        (focus_near, near_radius),
+        (camera.target, mid_radius),
+        (scene_center, scene_radius),
+    ];
 
     let light_dir = light_dir.normalize_or_zero();
-    let light_dir = if light_dir == Vec3::ZERO { Vec3::Y } else { light_dir };
+    let light_dir = if light_dir == Vec3::ZERO {
+        Vec3::Y
+    } else {
+        light_dir
+    };
     let up = if light_dir.dot(Vec3::Y).abs() > 0.99 {
         Vec3::Z
     } else {
@@ -139,7 +158,7 @@ pub(crate) fn fit_cascades(camera: &OrbitCamera, scene_min: Vec3, scene_max: Vec
     // legacy `light_matrix_for` placed its eye at `center + light_dir * d`,
     // i.e. on the light's side), whereas the C++ `lightDir` is the ray's
     // travel direction, the opposite convention.
-    let light_basis = Mat4::look_at_rh(light_dir, Vec3::ZERO, up);
+    let light_basis = look_at_mat4(light_dir, Vec3::ZERO, up);
 
     let mut matrices = [Mat4::IDENTITY; CASCADE_COUNT];
     for (i, (center, radius)) in cascades.into_iter().enumerate() {
@@ -153,7 +172,12 @@ pub(crate) fn fit_cascades(camera: &OrbitCamera, scene_min: Vec3, scene_max: Vec
 /// (`center`, `radius`) and stabilized in the given world-fixed `light_basis`
 /// so it only ever moves in whole-texel increments. See the module doc
 /// comment for why each step is necessary.
-fn stabilized_light_matrix_for(light_basis: Mat4, center: Vec3, radius: f32, shadow_map_size: u32) -> Mat4 {
+fn stabilized_light_matrix_for(
+    light_basis: Mat4,
+    center: Vec3,
+    radius: f32,
+    shadow_map_size: u32,
+) -> Mat4 {
     // shadow_map_size <= 2 has no consistent solution (the pad would
     // swallow the whole box); fall back to the unsnapped tight fit.
     let (half_extent, texel_world) = if shadow_map_size > 2 {
@@ -190,7 +214,7 @@ fn stabilized_light_matrix_for(light_basis: Mat4, center: Vec3, radius: f32, sha
         far = near + 1.0;
     }
 
-    let projection = Mat4::orthographic_rh(
+    let projection = clip::orthographic(
         snapped_x - half_extent,
         snapped_x + half_extent,
         snapped_y - half_extent,
@@ -287,7 +311,10 @@ mod tests {
             let fit = fit_cascades(&camera, scene_min, scene_max, Vec3::new(-0.55, -1.0, -0.35));
             for (i, m) in fit.matrices.iter().enumerate() {
                 assert!(m.is_finite(), "cascade {i} matrix is not finite: {m:?}");
-                assert!(m.determinant().abs() > 1e-12, "cascade {i} matrix collapsed");
+                assert!(
+                    m.determinant().abs() > 1e-12,
+                    "cascade {i} matrix collapsed"
+                );
             }
         }
     }
@@ -369,7 +396,7 @@ mod tests {
         } else {
             Vec3::Y
         };
-        let light_basis = Mat4::look_at_rh(light_dir, Vec3::ZERO, up);
+        let light_basis = look_at_mat4(light_dir, Vec3::ZERO, up);
         let radius = 1.4_f32;
         let probe = Vec3::new(0.2, 0.3, 0.1);
 
@@ -502,7 +529,8 @@ mod tests {
         // viewProj = ortho * light_basis; row norms of the upper 3x3 recover
         // the ortho scales (1 / half_extent) since light_basis is a pure
         // rotation.
-        let row_norm = |m: &Mat4, row: usize| Vec3::new(m.x_axis[row], m.y_axis[row], m.z_axis[row]).length();
+        let row_norm =
+            |m: &Mat4, row: usize| Vec3::new(m.x_axis[row], m.y_axis[row], m.z_axis[row]).length();
 
         for i in 0..CASCADE_COUNT {
             for row in 0..2 {
@@ -542,7 +570,8 @@ mod tests {
         let fit_a = fit_cascades(&camera_a, scene_min, scene_max, light_dir);
         let fit_b = fit_cascades(&camera_b, scene_min, scene_max, light_dir);
 
-        let row_norm = |m: &Mat4, row: usize| Vec3::new(m.x_axis[row], m.y_axis[row], m.z_axis[row]).length();
+        let row_norm =
+            |m: &Mat4, row: usize| Vec3::new(m.x_axis[row], m.y_axis[row], m.z_axis[row]).length();
 
         for i in 0..CASCADE_COUNT {
             for row in 0..2 {

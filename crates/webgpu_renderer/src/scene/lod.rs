@@ -560,13 +560,11 @@ mod tests {
             .expect("merged cluster vertex not found");
 
         assert_eq!(
-            merged.joints,
-            prim.vertices[0].joints,
+            merged.joints, prim.vertices[0].joints,
             "expected the medoid's (vertex 0) joints, not an average or a different vertex's"
         );
         assert_eq!(
-            merged.weights,
-            prim.vertices[0].weights,
+            merged.weights, prim.vertices[0].weights,
             "expected the medoid's (vertex 0) weights"
         );
 

@@ -169,7 +169,11 @@ fn scene_bounds_track_instances() {
     renderer.upload_scene(&gpu, &scene);
     let (base_min, base_max) = renderer.scene_bounds().expect("bounds after upload");
 
-    renderer.set_instances(&gpu, 0, &[Mat4::from_translation(Vec3::new(40.0, 0.0, 0.0))]);
+    renderer.set_instances(
+        &gpu,
+        0,
+        &[Mat4::from_translation(Vec3::new(40.0, 0.0, 0.0))],
+    );
     let (min, max) = renderer.scene_bounds().expect("bounds after instancing");
     assert!(
         max.x >= 39.0,

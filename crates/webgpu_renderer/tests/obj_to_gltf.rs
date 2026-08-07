@@ -360,8 +360,7 @@ fn an_hdr_ke_round_trips_through_the_real_gltf_loader() {
     // emissiveFactor * emissiveStrength back into the HDR value, so this is
     // what makes the C++ and Rust renderers agree on brightness.
     let dir = temp_dir("hdr_emissive");
-    std::fs::write(dir.join("hdr.mtl"), "newmtl painted\nKd 1 1 1\nKe 4 4 4\n")
-        .expect("mtl");
+    std::fs::write(dir.join("hdr.mtl"), "newmtl painted\nKd 1 1 1\nKe 4 4 4\n").expect("mtl");
     let obj_path = dir.join("hdr.obj");
     std::fs::write(
         &obj_path,
@@ -631,10 +630,7 @@ fn a_backslash_map_kd_under_textures_is_resolved() {
 
     let scene = load_gltf(&gltf_path).expect("the converted glTF must load");
     assert!(
-        scene.primitives[0]
-            .material
-            .base_color_texture
-            .is_some(),
+        scene.primitives[0].material.base_color_texture.is_some(),
         "the backslash-authored texture under textures/ must still resolve"
     );
 }
@@ -773,8 +769,14 @@ fn an_empty_mesh_emits_finite_accessor_bounds() {
     // and `inf`/`NaN` are not valid JSON numbers.
     let (json, _bin) = to_gltf(&ObjMesh::default(), "empty.bin");
 
-    assert!(!json.contains("inf"), "accessor bounds must not contain inf");
-    assert!(!json.contains("NaN"), "accessor bounds must not contain NaN");
+    assert!(
+        !json.contains("inf"),
+        "accessor bounds must not contain inf"
+    );
+    assert!(
+        !json.contains("NaN"),
+        "accessor bounds must not contain NaN"
+    );
 }
 
 #[test]
@@ -788,9 +790,10 @@ fn per_vertex_colors_are_parsed_from_the_v_line() {
 
 #[test]
 fn a_seven_component_v_line_carries_alpha() {
-    let mesh =
-        parse_obj("v 0 0 0 0.2 0.4 0.6 0.5\nv 1 0 0 0.2 0.4 0.6 0.5\nv 1 1 0 0.2 0.4 0.6 0.5\nf 1 2 3\n")
-            .expect("parse");
+    let mesh = parse_obj(
+        "v 0 0 0 0.2 0.4 0.6 0.5\nv 1 0 0 0.2 0.4 0.6 0.5\nv 1 1 0 0.2 0.4 0.6 0.5\nf 1 2 3\n",
+    )
+    .expect("parse");
     for color in &mesh.colors {
         assert_eq!(*color, [0.2, 0.4, 0.6, 0.5]);
     }

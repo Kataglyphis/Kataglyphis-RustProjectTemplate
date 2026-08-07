@@ -429,7 +429,10 @@ fn parse_slang_constant<T: std::str::FromStr>(source: &str, name: &str) -> Optio
 /// needed.
 #[test]
 fn cascade_count_matches_the_slang_constant() {
-    assert_eq!(kataglyphis_webgpu_renderer::render::forward::CASCADE_COUNT, 3);
+    assert_eq!(
+        kataglyphis_webgpu_renderer::render::forward::CASCADE_COUNT,
+        3
+    );
 
     let Some(source) = slang_source() else {
         return;
@@ -1301,13 +1304,14 @@ fn caster_culling_engages_and_shadows_survive() {
 
 /// The shadow-caster `RenderBundle` is cached across frames, not rebuilt
 /// every frame: `None` right after `upload_scene`, `Some` after the first
-/// frame records it, and STILL `Some` (not rebuilt) after `set_animation_time`
-/// - an animated pose only rewrites vertex/uniform buffer contents via
-/// `write_buffer`, which a bundle already captures by reference, so it must
-/// not invalidate the cache. If a future change accidentally cleared the
-/// cache on every frame, this test would still pass on the `None` check but
-/// fail the "still `Some`" one; if invalidation broke and animation changes
-/// were never picked up, `animation_moves_the_cube` above would catch that.
+/// frame records it, and STILL `Some` (not rebuilt) after
+/// `set_animation_time` — an animated pose only rewrites vertex/uniform
+/// buffer contents via `write_buffer`, which a bundle already captures by
+/// reference, so it must not invalidate the cache. If a future change
+/// accidentally cleared the cache on every frame, this test would still pass
+/// on the `None` check but fail the "still `Some`" one; if invalidation broke
+/// and animation changes were never picked up, `animation_moves_the_cube`
+/// above would catch that.
 #[test]
 fn shadow_caster_bundle_is_cached_across_frames() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
@@ -1350,7 +1354,10 @@ fn gltf_loader_reads_unlit_flag() {
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_unlit.gltf");
     let scene = load_gltf(path).expect("cube_unlit.gltf must load");
-    assert!(scene.primitives[0].material.unlit, "KHR_materials_unlit must be parsed");
+    assert!(
+        scene.primitives[0].material.unlit,
+        "KHR_materials_unlit must be parsed"
+    );
     // The plain cube must NOT be marked unlit, or the flag is meaningless.
     let lit = load_gltf(cube_path()).expect("cube.gltf must load");
     assert!(!lit.primitives[0].material.unlit);
@@ -1451,7 +1458,10 @@ fn a_shared_texture_uploads_once() {
     let px = r
         .render_to_pixels(&gpu, 64, 64, &OrbitCamera::default())
         .expect("render with shared textures must succeed");
-    assert!(px.chunks_exact(4).any(|p| p[0] != px[0]), "frame is uniformly flat");
+    assert!(
+        px.chunks_exact(4).any(|p| p[0] != px[0]),
+        "frame is uniformly flat"
+    );
 }
 
 /// Per-pixel alpha-tested shadows: a MASK card whose texture cuts half of it
@@ -1673,14 +1683,25 @@ fn vertex_colors_tint_the_surface() {
         let mut renderer = ForwardRenderer::new(&gpu, w, h);
         renderer.upload_scene(&gpu, &scene);
         // Camera on +Z looking at the quad (yaw 90, pitch 0).
-        let camera = OrbitCamera { radius: 5.0, yaw_deg: 90.0, pitch_deg: 0.0, ..OrbitCamera::default() };
-        renderer.render_to_pixels(&gpu, w, h, &camera).expect("headless render must succeed")
+        let camera = OrbitCamera {
+            radius: 5.0,
+            yaw_deg: 90.0,
+            pitch_deg: 0.0,
+            ..OrbitCamera::default()
+        };
+        renderer
+            .render_to_pixels(&gpu, w, h, &camera)
+            .expect("headless render must succeed")
     };
 
     // Centre pixel of a green-vertex quad: green dominates both other channels.
     let green = render([0.0, 1.0, 0.0, 1.0]);
     let idx = ((64usize * 128) + 64) * 4;
-    let (r, g, b) = (green[idx] as i32, green[idx + 1] as i32, green[idx + 2] as i32);
+    let (r, g, b) = (
+        green[idx] as i32,
+        green[idx + 1] as i32,
+        green[idx + 2] as i32,
+    );
     assert!(
         g > r + 40 && g > b + 40,
         "green vertex colour did not tint the surface (got r={r} g={g} b={b}) - COLOR_0 dropped"
@@ -1688,7 +1709,11 @@ fn vertex_colors_tint_the_surface() {
 
     // Control: a white-vertex quad renders neutral (all channels close).
     let white = render([1.0, 1.0, 1.0, 1.0]);
-    let (wr, wg, wb) = (white[idx] as i32, white[idx + 1] as i32, white[idx + 2] as i32);
+    let (wr, wg, wb) = (
+        white[idx] as i32,
+        white[idx + 1] as i32,
+        white[idx + 2] as i32,
+    );
     assert!(
         (wr - wg).abs() < 30 && (wg - wb).abs() < 30,
         "white vertex colour should render neutral (got r={wr} g={wg} b={wb})"
@@ -1720,7 +1745,11 @@ fn texture_slot_samples_its_declared_uv_set() {
             rgba8: vec![255, 0, 0, 255, 0, 0, 255, 255],
             compressed: None,
         }),
-        sampler: CpuSampler { mag_nearest: true, min_nearest: true, ..CpuSampler::default() },
+        sampler: CpuSampler {
+            mag_nearest: true,
+            min_nearest: true,
+            ..CpuSampler::default()
+        },
         srgb: true,
     };
 
@@ -1768,8 +1797,15 @@ fn texture_slot_samples_its_declared_uv_set() {
         let (w, h) = (128u32, 128u32);
         let mut renderer = ForwardRenderer::new(&gpu, w, h);
         renderer.upload_scene(&gpu, &scene);
-        let camera = OrbitCamera { radius: 5.0, yaw_deg: 90.0, pitch_deg: 0.0, ..OrbitCamera::default() };
-        renderer.render_to_pixels(&gpu, w, h, &camera).expect("headless render must succeed")
+        let camera = OrbitCamera {
+            radius: 5.0,
+            yaw_deg: 90.0,
+            pitch_deg: 0.0,
+            ..OrbitCamera::default()
+        };
+        renderer
+            .render_to_pixels(&gpu, w, h, &camera)
+            .expect("headless render must succeed")
     };
 
     let sample = |px: &[u8], x: usize| -> (i32, i32, i32) {
@@ -1781,13 +1817,22 @@ fn texture_slot_samples_its_declared_uv_set() {
     let on_uv1 = render(0b0_0001);
     let (lr, _lg, lb) = sample(&on_uv1, 40);
     let (rr, _rg, rb) = sample(&on_uv1, 88);
-    assert!(lr > lb + 40, "left of the quad should be red on UV1 (got r={lr} b={lb})");
-    assert!(rb > rr + 40, "right of the quad should be blue on UV1 (got r={rr} b={rb})");
+    assert!(
+        lr > lb + 40,
+        "left of the quad should be red on UV1 (got r={lr} b={lb})"
+    );
+    assert!(
+        rb > rr + 40,
+        "right of the quad should be blue on UV1 (got r={rr} b={rb})"
+    );
 
     // Base slot on UV0 (mask 0): UV0 is constant (0,0) -> the whole quad is the
     // red texel, no blue anywhere. This is what the old always-UV0 code did.
     let on_uv0 = render(0);
     let (l0r, _l0g, l0b) = sample(&on_uv0, 40);
     let (r0r, _r0g, r0b) = sample(&on_uv0, 88);
-    assert!(l0r > l0b + 40 && r0r > r0b + 40, "on UV0 the whole quad is red (l r={l0r} b={l0b}, r r={r0r} b={r0b})");
+    assert!(
+        l0r > l0b + 40 && r0r > r0b + 40,
+        "on UV0 the whole quad is red (l r={l0r} b={l0b}, r r={r0r} b={r0b})"
+    );
 }

@@ -208,8 +208,7 @@ pub fn parse_mtl(source: &str) -> Vec<ObjMaterial> {
                     // path (`textures\wood.png`) must still resolve when the
                     // conversion runs on Linux, where `\` is just another
                     // filename character rather than a separator.
-                    material.base_color_texture =
-                        values.last().map(|name| name.replace('\\', "/"));
+                    material.base_color_texture = values.last().map(|name| name.replace('\\', "/"));
                 }
             }
             // Same "last token past any options", backslash-normalising rule
@@ -217,8 +216,7 @@ pub fn parse_mtl(source: &str) -> Vec<ObjMaterial> {
             // equivalent.
             "map_Ke" if !values.is_empty() => {
                 if let Some(material) = materials.last_mut() {
-                    material.emissive_texture =
-                        values.last().map(|name| name.replace('\\', "/"));
+                    material.emissive_texture = values.last().map(|name| name.replace('\\', "/"));
                 }
             }
             "Tr" if !values.is_empty() => {
@@ -259,8 +257,7 @@ pub fn parse_mtl(source: &str) -> Vec<ObjMaterial> {
             "norm" | "map_Bump" | "map_bump" | "bump" if !values.is_empty() => {
                 if let Some(material) = materials.last_mut() {
                     if keyword == "norm" || material.normal_texture.is_none() {
-                        material.normal_texture =
-                            values.last().map(|name| name.replace('\\', "/"));
+                        material.normal_texture = values.last().map(|name| name.replace('\\', "/"));
                         if let Some(scale) = bump_scale_option(&values) {
                             material.normal_scale = scale;
                         }

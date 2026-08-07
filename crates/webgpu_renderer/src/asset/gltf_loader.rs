@@ -570,7 +570,7 @@ fn load_primitive(
             joints: joints.get(i).copied().unwrap_or([0.0; 4]),
             weights: weights.get(i).copied().unwrap_or([0.0; 4]),
             color: colors.get(i).copied().unwrap_or([1.0, 1.0, 1.0, 1.0]),
-            uv1: uvs1.get(i).copied().unwrap_or_else(|| *t),
+            uv1: uvs1.get(i).copied().unwrap_or(*t),
         })
         .collect();
 
@@ -728,11 +728,21 @@ fn load_primitive(
             .occlusion_texture()
             .and_then(|info| texture_ref(&info.texture(), textures, false)),
         // Which slots sample UV1 (bit per slot: 0 base .. 4 occlusion).
-        uv_set_mask: pbr.base_color_texture().map_or(0, |i| uv_set_bit("base color", i.tex_coord(), 0))
-            | pbr.metallic_roughness_texture().map_or(0, |i| uv_set_bit("metallic-roughness", i.tex_coord(), 1))
-            | material.normal_texture().map_or(0, |i| uv_set_bit("normal", i.tex_coord(), 2))
-            | material.emissive_texture().map_or(0, |i| uv_set_bit("emissive", i.tex_coord(), 3))
-            | material.occlusion_texture().map_or(0, |i| uv_set_bit("occlusion", i.tex_coord(), 4)),
+        uv_set_mask: pbr
+            .base_color_texture()
+            .map_or(0, |i| uv_set_bit("base color", i.tex_coord(), 0))
+            | pbr
+                .metallic_roughness_texture()
+                .map_or(0, |i| uv_set_bit("metallic-roughness", i.tex_coord(), 1))
+            | material
+                .normal_texture()
+                .map_or(0, |i| uv_set_bit("normal", i.tex_coord(), 2))
+            | material
+                .emissive_texture()
+                .map_or(0, |i| uv_set_bit("emissive", i.tex_coord(), 3))
+            | material
+                .occlusion_texture()
+                .map_or(0, |i| uv_set_bit("occlusion", i.tex_coord(), 4)),
     };
 
     Ok(Some(CpuPrimitive {
@@ -918,7 +928,8 @@ pub(crate) fn generate_tangents_mikktspace(
     // carry different tangents. Key on (original index, exact tangent bits):
     // MikkTSpace emits bit-identical tangents for corners it treats as shared,
     // so identical corners collapse and real seams split.
-    let mut remap: std::collections::HashMap<(u32, [u32; 4]), u32> = std::collections::HashMap::new();
+    let mut remap: std::collections::HashMap<(u32, [u32; 4]), u32> =
+        std::collections::HashMap::new();
     let mut out_vertices: Vec<Vertex> = Vec::with_capacity(vertices.len());
     let mut out_indices: Vec<u32> = Vec::with_capacity(indices.len());
     for (corner, &orig) in indices.iter().enumerate() {
@@ -1006,7 +1017,8 @@ mod tests {
                 uv1: [0.0, 0.0],
             })
             .collect();
-        let (filtered, dropped) = drop_out_of_range_triangles(vec![0, 1, 2, 3, 4, 5], vertices.len());
+        let (filtered, dropped) =
+            drop_out_of_range_triangles(vec![0, 1, 2, 3, 4, 5], vertices.len());
         assert_eq!(dropped, 1);
         compute_flat_normals(&mut vertices, &filtered);
         compute_tangents(&mut vertices, &filtered);
@@ -1018,7 +1030,10 @@ mod tests {
         // untouched with a zero count.
         assert_eq!(drop_out_of_range_triangles(vec![], 3), (vec![], 0));
         assert_eq!(drop_out_of_range_triangles(vec![5, 6, 7], 3), (vec![], 1));
-        assert_eq!(drop_out_of_range_triangles(vec![0, 1, 2, 0], 3), (vec![0, 1, 2], 0));
+        assert_eq!(
+            drop_out_of_range_triangles(vec![0, 1, 2, 0], 3),
+            (vec![0, 1, 2], 0)
+        );
         assert_eq!(drop_out_of_range_triangles(vec![0, 1], 3), (vec![], 0));
         assert_eq!(
             drop_out_of_range_triangles(vec![0, 1, 2, 2, 1, 0], 3),
@@ -1151,16 +1166,22 @@ mod tests {
         // Unit quad in XY, UVs aligned with X/Y: MikkTSpace must produce a
         // unit +X tangent, right-handed (+1), and weld the corners back to the
         // original 4 vertices (no seam -> no split).
-        let (vertices, indices) =
-            quad_with_uvs([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
+        let (vertices, indices) = quad_with_uvs([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
         let (out_v, out_i) =
             generate_tangents_mikktspace(&vertices, &indices).expect("mikktspace should succeed");
         assert_eq!(out_i.len(), indices.len(), "index count is preserved");
-        assert_eq!(out_v.len(), 4, "aligned UVs have no seam, corners weld to 4 verts");
+        assert_eq!(
+            out_v.len(),
+            4,
+            "aligned UVs have no seam, corners weld to 4 verts"
+        );
         for v in &out_v {
             let t = v.tangent;
             let len = (t[0] * t[0] + t[1] * t[1] + t[2] * t[2]).sqrt();
-            assert!((len - 1.0).abs() < 1e-3, "tangent must be unit length, got {len}");
+            assert!(
+                (len - 1.0).abs() < 1e-3,
+                "tangent must be unit length, got {len}"
+            );
             assert!(
                 (t[0].abs() - 1.0).abs() < 1e-3 && t[1].abs() < 1e-3 && t[2].abs() < 1e-3,
                 "tangent should lie along X, got {:?}",
@@ -1174,8 +1195,7 @@ mod tests {
     fn mikktspace_mirrored_uvs_flip_handedness() {
         // Same geometry, V axis mirrored: handedness must flip to -1, matching
         // the Lengyel path's mirrored_uvs_flip_handedness and the glTF convention.
-        let (vertices, indices) =
-            quad_with_uvs([[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]]);
+        let (vertices, indices) = quad_with_uvs([[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]]);
         let (out_v, _) =
             generate_tangents_mikktspace(&vertices, &indices).expect("mikktspace should succeed");
         for v in &out_v {

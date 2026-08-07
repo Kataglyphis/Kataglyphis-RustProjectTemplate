@@ -49,6 +49,11 @@ impl Frustum {
     /// missing-shadow-from-tall-geometry bug the C++ engine documents in
     /// scene/Frustum.ixx. Side and far planes are safe: a caster outside them
     /// in the light's XY casts its shadow outside the map too.
+    ///
+    /// Only the tests below exercise it today — the cascade pass still culls
+    /// casters with the near-plane-inclusive [`Self::intersects_aabb`]. Kept
+    /// (and tested) so wiring it up is a one-line change, not a rewrite.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn intersects_aabb_as_caster(&self, min: Vec3, max: Vec3) -> bool {
         let [left, right, bottom, top, _near, far] = &self.planes;
         self.test_planes(min, max, &[*left, *right, *bottom, *top, *far])
@@ -93,7 +98,12 @@ pub(crate) fn normal_matrix_of(model: Mat4) -> Mat4 {
 /// camera sits inside - kept here too since the GPU-culling path (no such
 /// baked-in forcing) still needs this guard at the draw-skip decision below.
 pub(crate) fn aabb_contains_point(min: Vec3, max: Vec3, p: Vec3) -> bool {
-    crate::render::occlusion::aabb_contains(min, max, p, crate::render::occlusion::CONTAINMENT_MARGIN)
+    crate::render::occlusion::aabb_contains(
+        min,
+        max,
+        p,
+        crate::render::occlusion::CONTAINMENT_MARGIN,
+    )
 }
 
 /// Bounds covering every instance of `pre`.
@@ -269,6 +279,13 @@ pub(crate) fn compute_world_bounds(scene: &CpuScene) -> Option<(Vec3, Vec3)> {
 
 #[cfg(test)]
 mod tests {
+    // glam 0.33 moved the camera constructors off `Mat4` and split them by
+    // clip-space convention. `directx` is glam's name for NDC Z in [0,1] with
+    // Y up — which is also wgpu's and Metal's — and it reproduces the old
+    // `Mat4::perspective_rh`/`orthographic_rh` bit for bit (verified against
+    // glam 0.33.3 on 2026-08-07).
+    use glam::camera::rh::proj::directx as clip;
+    use glam::camera::rh::view::look_at_mat4;
 
     #[test]
     fn caster_test_ignores_the_near_plane_and_nothing_else() {
@@ -276,8 +293,8 @@ mod tests {
         // 1 in view space, i.e. between the light and the box) must survive
         // the caster test - its shadow still falls into the box - while the
         // full test rejects it. Anything outside a SIDE plane must fail both.
-        let light = Mat4::orthographic_rh(-1.0, 1.0, -1.0, 1.0, 0.0, 2.0)
-            * Mat4::look_at_rh(Vec3::new(0.0, 0.0, 1.0), Vec3::ZERO, Vec3::Y);
+        let light = clip::orthographic(-1.0, 1.0, -1.0, 1.0, 0.0, 2.0)
+            * look_at_mat4(Vec3::new(0.0, 0.0, 1.0), Vec3::ZERO, Vec3::Y);
 
         let behind_near = (Vec3::new(-0.1, -0.1, 1.4), Vec3::new(0.1, 0.1, 1.6));
         let frustum = Frustum::from_view_proj(&light);
@@ -308,8 +325,14 @@ mod tests {
         // matrices arrive in ordinary files. inverse() is inf/NaN there, and a
         // NaN normal matrix shades the primitive as garbage.
         let squashed = Mat4::from_scale(Vec3::new(1.0, 0.0, 1.0));
-        assert!(!squashed.inverse().is_finite(), "precondition: inverse is not finite");
-        assert!(normal_matrix_of(squashed).is_finite(), "guard must return something finite");
+        assert!(
+            !squashed.inverse().is_finite(),
+            "precondition: inverse is not finite"
+        );
+        assert!(
+            normal_matrix_of(squashed).is_finite(),
+            "guard must return something finite"
+        );
         // A well-formed matrix must still get the real inverse-transpose.
         let ok = Mat4::from_scale(Vec3::new(2.0, 1.0, 1.0));
         let expected = ok.inverse().transpose();
@@ -320,8 +343,7 @@ mod tests {
     fn a_non_finite_vertex_cannot_poison_the_bounds() {
         // One bad vertex used to NaN these bounds, then the scene bounds, then
         // the cascade radius - breaking shadows for EVERY object in the scene.
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/assets/cube.gltf");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube.gltf");
         let scene = crate::load_gltf(path).expect("cube.gltf must load");
         let mut prim = scene.primitives[0].clone();
         prim.vertices[0].position = [f32::NAN, 1.0, f32::INFINITY];
@@ -337,7 +359,10 @@ mod tests {
             "world bounds must stay finite, got {wmin:?}..{wmax:?}"
         );
         // And the surviving vertices must still define a real box.
-        assert!(max.x > min.x, "the good vertices must still bound something");
+        assert!(
+            max.x > min.x,
+            "the good vertices must still bound something"
+        );
     }
 
     #[test]
@@ -349,7 +374,10 @@ mod tests {
         let (min, max) = (Vec3::splat(-0.5), Vec3::splat(0.5));
         let margin = 0.5 * 0.02 + 0.01; // half-extent 0.5
 
-        assert!(aabb_contains_point(min, max, Vec3::ZERO), "centre is inside");
+        assert!(
+            aabb_contains_point(min, max, Vec3::ZERO),
+            "centre is inside"
+        );
         // Just inside the expanded face.
         let inside = 0.5 + margin - 1e-4;
         assert!(aabb_contains_point(min, max, Vec3::new(inside, 0.0, 0.0)));
@@ -367,8 +395,8 @@ mod tests {
         // neutral pose alone would stop at y = 0.5, so a fully-weighted morph
         // would sit outside its own AABB and the frustum test could cull it
         // while it is plainly on screen.
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/assets/cube_morph.gltf");
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube_morph.gltf");
         let scene = crate::load_gltf(path).expect("cube_morph.gltf must load");
         let prim = &scene.primitives[0];
         assert_eq!(prim.morph_targets.len(), 1, "fixture must carry a target");

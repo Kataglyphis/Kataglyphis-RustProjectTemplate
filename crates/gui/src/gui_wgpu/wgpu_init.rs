@@ -116,7 +116,9 @@ pub(crate) fn create_render_pipeline(
         vertex: wgpu::VertexState {
             module: &shader,
             entry_point: Some("vs_main"),
-            buffers: &[Vertex::desc()],
+            // wgpu 30: vertex buffer slots are `Option`, so a slot can be left
+            // unbound without shifting the ones after it.
+            buffers: &[Some(Vertex::desc())],
             compilation_options: Default::default(),
         },
         fragment: Some(wgpu::FragmentState {
@@ -165,6 +167,10 @@ pub(crate) async fn init_wgpu(
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
+            // wgpu 30: limit bucketing is a fingerprinting defence for hosts
+            // that expose wgpu to untrusted content. This is the trusted app,
+            // so keep the adapter's real limits, as wgpu 29 did.
+            apply_limit_buckets: false,
         })
         .await
         .context("No suitable GPU adapters found on the system")?;

@@ -20,15 +20,20 @@ pub fn onnx_yolov10_demo<TrainB: AutodiffBackend>(
     lr: f64,
     train_device: &TrainB::Device,
 ) -> anyhow::Result<()> {
-    let builder = Session::builder().with_ort_context("Failed to create ORT SessionBuilder")?;
+    // `mut` is load-bearing on BOTH paths since ort rc.13: `commit_from_file`
+    // takes `&mut self` there (it took `self` through rc.12). Assigning into
+    // the same binding rather than shadowing it keeps the DirectML path free
+    // of an `unused_mut` warning, which `-D warnings` would turn into a build
+    // failure on the Windows lane only.
+    let mut builder = Session::builder().with_ort_context("Failed to create ORT SessionBuilder")?;
 
     #[cfg(all(feature = "onnxruntime_directml", windows))]
-    let mut builder = {
+    {
         use ort::execution_providers::DirectMLExecutionProvider;
-        builder
+        builder = builder
             .with_execution_providers([DirectMLExecutionProvider::default().build()])
-            .with_ort_context("Failed to configure ORT DirectML execution provider")?
-    };
+            .with_ort_context("Failed to configure ORT DirectML execution provider")?;
+    }
 
     let mut session = builder
         .commit_from_file(model_path)

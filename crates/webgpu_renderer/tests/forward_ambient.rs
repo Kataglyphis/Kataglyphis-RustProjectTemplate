@@ -6,7 +6,9 @@
 //! computed and never read. See `Resources/ShadersSlang/forward/forward.slang`
 //! and `docs/shader-sharing.md` for how this shader feeds this renderer.
 
-use kataglyphis_webgpu_renderer::{load_gltf, EquirectImage, ForwardRenderer, GpuContext, OrbitCamera};
+use kataglyphis_webgpu_renderer::{
+    load_gltf, EquirectImage, ForwardRenderer, GpuContext, OrbitCamera,
+};
 
 fn cube_path() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/assets/cube.gltf")

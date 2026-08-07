@@ -66,6 +66,10 @@ pub(crate) struct TileLightGridScratch {
 ///
 /// Screen fractions are **framebuffer-oriented** (y down, `0.0` = top) to
 /// match `@builtin(position)` in the consuming shader, not NDC-oriented (y up).
+// A private, single-call-site helper whose arguments are the tile-grid
+// parameters themselves; bundling them into a struct would only move the
+// argument list one level out.
+#[allow(clippy::too_many_arguments)]
 fn tile_rect_for_light(
     pos: glam::Vec3,
     range: f32,
@@ -154,8 +158,8 @@ pub(crate) fn build_tile_light_grid(
     height: u32,
     view_proj: &Mat4,
 ) {
-    let tile_x = (width + TILE_SIZE - 1) / TILE_SIZE;
-    let tile_y = (height + TILE_SIZE - 1) / TILE_SIZE;
+    let tile_x = width.div_ceil(TILE_SIZE);
+    let tile_y = height.div_ceil(TILE_SIZE);
     let total_tiles = (tile_x * tile_y) as usize;
 
     scratch.per_tile_counts.clear();
@@ -240,13 +244,17 @@ pub(crate) fn build_tile_light_grid(
 #[cfg(test)]
 mod tests {
     use super::*;
+    // See render/bounds.rs's test module for why `directx` is the clip-space
+    // module that matches the old `Mat4::*_rh` constructors.
+    use glam::camera::rh::proj::directx as clip;
+    use glam::camera::rh::view::look_at_mat4;
     use glam::Vec3;
 
     #[test]
     fn build_tile_light_grid_bins_lights_into_correct_tiles() {
         // Single light at origin, perspective camera at (0,0,5) looking at origin.
-        let view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
-        let proj = Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
+        let view = look_at_mat4(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
+        let proj = clip::perspective(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
         let vp = proj * view;
 
         let mut packed = [[0.0f32; 4]; MAX_PUNCTUAL_LIGHTS * 4];
@@ -266,7 +274,10 @@ mod tests {
         let ty = 128 / TILE_SIZE;
         let tile_w = 256 / TILE_SIZE; // 16
         let center_tile = (ty * tile_w + tx) as usize;
-        assert!(scratch.grid[center_tile * 2] >= 1, "center tile should contain the light");
+        assert!(
+            scratch.grid[center_tile * 2] >= 1,
+            "center tile should contain the light"
+        );
         let offset = scratch.grid[center_tile * 2 + 1] as usize;
         let count = scratch.grid[center_tile * 2] as usize;
         assert!(
@@ -281,7 +292,10 @@ mod tests {
         let packed = [[0.0f32; 4]; MAX_PUNCTUAL_LIGHTS * 4];
         let mut scratch = TileLightGridScratch::default();
         build_tile_light_grid(&mut scratch, &packed, 0, 256, 256, &vp);
-        assert!(scratch.grid.iter().all(|&c| c == 0), "all tiles should have zero lights");
+        assert!(
+            scratch.grid.iter().all(|&c| c == 0),
+            "all tiles should have zero lights"
+        );
         assert!(!scratch.indices.is_empty(), "indices buffer should exist");
     }
 
@@ -293,8 +307,8 @@ mod tests {
         // legitimately light what's in front - see
         // build_tile_light_grid_keeps_offscreen_but_overlapping_lights for
         // that case).
-        let view = Mat4::look_at_rh(Vec3::new(5.0, 0.0, 0.0), Vec3::ZERO, Vec3::Y);
-        let proj = Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
+        let view = look_at_mat4(Vec3::new(5.0, 0.0, 0.0), Vec3::ZERO, Vec3::Y);
+        let proj = clip::perspective(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
         let vp = proj * view;
 
         let mut packed = [[0.0f32; 4]; MAX_PUNCTUAL_LIGHTS * 4];
@@ -315,8 +329,8 @@ mod tests {
         // Point light at the origin with a modest range - large enough to
         // spill past the centre tile, small enough to stay a proper subset
         // of the screen so the "contiguous rectangle" shape is checkable.
-        let view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
-        let proj = Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
+        let view = look_at_mat4(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
+        let proj = clip::perspective(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
         let vp = proj * view;
 
         let mut packed = [[0.0f32; 4]; MAX_PUNCTUAL_LIGHTS * 4];
@@ -352,8 +366,14 @@ mod tests {
 
         let center_tx = 128 / TILE_SIZE;
         let center_ty = 128 / TILE_SIZE;
-        assert!(min_tx <= center_tx && center_tx <= max_tx, "rectangle should surround the centre tile");
-        assert!(min_ty <= center_ty && center_ty <= max_ty, "rectangle should surround the centre tile");
+        assert!(
+            min_tx <= center_tx && center_tx <= max_tx,
+            "rectangle should surround the centre tile"
+        );
+        assert!(
+            min_ty <= center_ty && center_ty <= max_ty,
+            "rectangle should surround the centre tile"
+        );
     }
 
     #[test]
@@ -368,7 +388,11 @@ mod tests {
 
         let total_tiles = scratch.grid.len() / 2;
         for t in 0..total_tiles {
-            assert!(scratch.grid[t * 2] >= 1, "tile {} missing the directional light", t);
+            assert!(
+                scratch.grid[t * 2] >= 1,
+                "tile {} missing the directional light",
+                t
+            );
         }
     }
 
@@ -376,8 +400,8 @@ mod tests {
     fn build_tile_light_grid_bins_a_light_into_the_row_the_shader_reads() {
         // Small-range point light clearly above the centre, so its rect stays
         // inside the upper half of the screen.
-        let view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
-        let proj = Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
+        let view = look_at_mat4(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
+        let proj = clip::perspective(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
         let vp = proj * view;
 
         let mut packed = [[0.0f32; 4]; MAX_PUNCTUAL_LIGHTS * 4];
@@ -408,14 +432,20 @@ mod tests {
                 break;
             }
         }
-        assert!(found, "the row the shader reads for this light should contain it");
-        assert!(ty < 8, "a light above centre should land in the upper half, got ty={ty}");
+        assert!(
+            found,
+            "the row the shader reads for this light should contain it"
+        );
+        assert!(
+            ty < 8,
+            "a light above centre should land in the upper half, got ty={ty}"
+        );
     }
 
     #[test]
     fn build_tile_light_grid_keeps_two_lights_in_their_own_halves() {
-        let view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
-        let proj = Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
+        let view = look_at_mat4(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
+        let proj = clip::perspective(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
         let vp = proj * view;
 
         let mut packed = [[0.0f32; 4]; MAX_PUNCTUAL_LIGHTS * 4];
@@ -444,23 +474,34 @@ mod tests {
         // must not appear in the lower half; light 1 (below centre) the
         // mirror of that.
         let light0_in_upper = (0..8).any(|ty| (0..tile_w).any(|tx| tile_contains(ty, tx, 0)));
-        let light0_in_lower =
-            (8..tile_h).any(|ty| (0..tile_w).any(|tx| tile_contains(ty, tx, 0)));
+        let light0_in_lower = (8..tile_h).any(|ty| (0..tile_w).any(|tx| tile_contains(ty, tx, 0)));
         let light1_in_lower = (8..tile_h).any(|ty| (0..tile_w).any(|tx| tile_contains(ty, tx, 1)));
         let light1_in_upper = (0..8).any(|ty| (0..tile_w).any(|tx| tile_contains(ty, tx, 1)));
 
-        assert!(light0_in_upper, "light above centre should be in the upper half");
-        assert!(!light0_in_lower, "light above centre should not leak into the lower half");
-        assert!(light1_in_lower, "light below centre should be in the lower half");
-        assert!(!light1_in_upper, "light below centre should not leak into the upper half");
+        assert!(
+            light0_in_upper,
+            "light above centre should be in the upper half"
+        );
+        assert!(
+            !light0_in_lower,
+            "light above centre should not leak into the lower half"
+        );
+        assert!(
+            light1_in_lower,
+            "light below centre should be in the lower half"
+        );
+        assert!(
+            !light1_in_upper,
+            "light below centre should not leak into the upper half"
+        );
     }
 
     #[test]
     fn build_tile_light_grid_keeps_offscreen_but_overlapping_lights() {
         // Light centre is off to the side, beyond the frustum's horizontal
         // extent, but its range reaches back onto the screen.
-        let view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
-        let proj = Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
+        let view = look_at_mat4(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
+        let proj = clip::perspective(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
         let vp = proj * view;
 
         let mut packed = [[0.0f32; 4]; MAX_PUNCTUAL_LIGHTS * 4];
@@ -485,8 +526,8 @@ mod tests {
         // behind the camera at z = 5, while its centre and other candidates
         // are in front) - the AABB-of-in-front-candidates approach silently
         // under-covered this case before the straddle fix.
-        let view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
-        let proj = Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
+        let view = look_at_mat4(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
+        let proj = clip::perspective(std::f32::consts::FRAC_PI_4, 1.0, 0.1, 100.0);
         let vp = proj * view;
 
         let mut packed = [[0.0f32; 4]; MAX_PUNCTUAL_LIGHTS * 4];
@@ -497,8 +538,10 @@ mod tests {
         build_tile_light_grid(&mut scratch, &packed, 1, 256, 256, &vp);
 
         for chunk in scratch.grid.chunks(2) {
-            assert!(chunk[0] >= 1, "every tile should list the near-plane-straddling light");
+            assert!(
+                chunk[0] >= 1,
+                "every tile should list the near-plane-straddling light"
+            );
         }
     }
-
 }

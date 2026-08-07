@@ -138,7 +138,10 @@ const REQUIRED_ENTRY_POINTS: &[(&str, &[&str])] = &[
     ),
     ("sky", &["vs_main", "fs_main"]),
     ("tonemap", &["vs_main", "fs_main"]),
-    ("bloom", &["vs_main", "fs_brightpass", "fs_blur_h", "fs_blur_v"]),
+    (
+        "bloom",
+        &["vs_main", "fs_brightpass", "fs_blur_h", "fs_blur_v"],
+    ),
     ("ssao", &["vs_main", "fs_ssao", "fs_blur"]),
     (
         "ibl",
@@ -156,7 +159,11 @@ const REQUIRED_ENTRY_POINTS: &[(&str, &[&str])] = &[
     ("gpu_cull", &["cs_main"]),
     (
         "histogram",
-        &["cs_build_histogram", "cs_reduce_exposure", "cs_clear_histogram"],
+        &[
+            "cs_build_histogram",
+            "cs_reduce_exposure",
+            "cs_clear_histogram",
+        ],
     ),
 ];
 
@@ -204,12 +211,10 @@ fn depth_resolve_fragment_writes_frag_depth() {
         other => panic!("fs_main result type must be a struct, got {other:?}"),
     };
     assert!(
-        members
-            .iter()
-            .any(|m| matches!(
-                m.binding,
-                Some(naga::Binding::BuiltIn(naga::BuiltIn::FragDepth))
-            )),
+        members.iter().any(|m| matches!(
+            m.binding,
+            Some(naga::Binding::BuiltIn(naga::BuiltIn::FragDepth))
+        )),
         "fs_main must write @builtin(frag_depth); result members are {members:?}"
     );
     assert!(

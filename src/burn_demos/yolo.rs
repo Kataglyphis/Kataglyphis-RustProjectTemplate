@@ -26,23 +26,23 @@ impl<B: Backend> YoloTiny<B> {
 
         let c1 = nn::conv::Conv2dConfig::new([3, 16], [3, 3])
             .with_stride([2, 2])
-            .with_padding(PaddingConfig2d::Explicit(1, 1))
+            .with_padding(PaddingConfig2d::Explicit(1, 1, 1, 1))
             .init(device);
         let c2 = nn::conv::Conv2dConfig::new([16, 32], [3, 3])
             .with_stride([2, 2])
-            .with_padding(PaddingConfig2d::Explicit(1, 1))
+            .with_padding(PaddingConfig2d::Explicit(1, 1, 1, 1))
             .init(device);
         let c3 = nn::conv::Conv2dConfig::new([32, 64], [3, 3])
             .with_stride([2, 2])
-            .with_padding(PaddingConfig2d::Explicit(1, 1))
+            .with_padding(PaddingConfig2d::Explicit(1, 1, 1, 1))
             .init(device);
         let c4 = nn::conv::Conv2dConfig::new([64, 128], [3, 3])
             .with_stride([2, 2])
-            .with_padding(PaddingConfig2d::Explicit(1, 1))
+            .with_padding(PaddingConfig2d::Explicit(1, 1, 1, 1))
             .init(device);
         let c5 = nn::conv::Conv2dConfig::new([128, 256], [3, 3])
             .with_stride([2, 2])
-            .with_padding(PaddingConfig2d::Explicit(1, 1))
+            .with_padding(PaddingConfig2d::Explicit(1, 1, 1, 1))
             .init(device);
 
         let head = nn::conv::Conv2dConfig::new([256, out_channels], [1, 1]).init(device);

@@ -23,7 +23,11 @@ pub(crate) fn create_sampler(device: &wgpu::Device, desc: &CpuSampler) -> wgpu::
         address_mode_v: wrap(desc.wrap_v),
         mag_filter: filter(desc.mag_nearest),
         min_filter: filter(desc.min_nearest),
-        mipmap_filter: if desc.mip_nearest { wgpu::MipmapFilterMode::Nearest } else { wgpu::MipmapFilterMode::Linear },
+        mipmap_filter: if desc.mip_nearest {
+            wgpu::MipmapFilterMode::Nearest
+        } else {
+            wgpu::MipmapFilterMode::Linear
+        },
         anisotropy_clamp: anisotropy_for(desc),
         ..Default::default()
     })
@@ -115,10 +119,7 @@ pub(crate) fn generate_mips(base: &CpuTexture, srgb: bool) -> Vec<(u32, u32, Vec
     levels
 }
 
-pub(crate) fn compressed_wgpu_format(
-    format: CompressedFormat,
-    srgb: bool,
-) -> wgpu::TextureFormat {
+pub(crate) fn compressed_wgpu_format(format: CompressedFormat, srgb: bool) -> wgpu::TextureFormat {
     use CompressedFormat as F;
     match (format, srgb) {
         (F::Bc1RgbaUnorm, false) => wgpu::TextureFormat::Bc1RgbaUnorm,
@@ -256,7 +257,12 @@ pub(crate) fn create_material_texture(
     gpu_texture.create_view(&wgpu::TextureViewDescriptor::default())
 }
 
-pub(crate) fn create_depth_texture(device: &wgpu::Device, width: u32, height: u32, sample_count: u32) -> wgpu::TextureView {
+pub(crate) fn create_depth_texture(
+    device: &wgpu::Device,
+    width: u32,
+    height: u32,
+    sample_count: u32,
+) -> wgpu::TextureView {
     create_2d_view(
         device,
         Some("depth"),
@@ -269,7 +275,12 @@ pub(crate) fn create_depth_texture(device: &wgpu::Device, width: u32, height: u3
     )
 }
 
-pub(crate) fn create_hdr_texture(device: &wgpu::Device, width: u32, height: u32, sample_count: u32) -> wgpu::TextureView {
+pub(crate) fn create_hdr_texture(
+    device: &wgpu::Device,
+    width: u32,
+    height: u32,
+    sample_count: u32,
+) -> wgpu::TextureView {
     create_2d_view(
         device,
         Some("hdr_color"),
@@ -332,8 +343,17 @@ pub(crate) fn create_2d_view(
     mip_level_count: u32,
     sample_count: u32,
 ) -> wgpu::TextureView {
-    create_2d_texture(device, label, width, height, format, usage, mip_level_count, sample_count)
-        .create_view(&wgpu::TextureViewDescriptor::default())
+    create_2d_texture(
+        device,
+        label,
+        width,
+        height,
+        format,
+        usage,
+        mip_level_count,
+        sample_count,
+    )
+    .create_view(&wgpu::TextureViewDescriptor::default())
 }
 
 #[cfg(test)]
@@ -346,12 +366,34 @@ mod tests {
         // wgpu validates this: anisotropy > 1 with any Nearest filter is an
         // error, not a hint. The all-linear default must still get the win.
         let linear = CpuSampler::default();
-        assert_eq!(anisotropy_for(&linear), 16, "all-linear sampler should get 16x");
+        assert_eq!(
+            anisotropy_for(&linear),
+            16,
+            "all-linear sampler should get 16x"
+        );
 
         for (label, s) in [
-            ("mag", CpuSampler { mag_nearest: true, ..Default::default() }),
-            ("min", CpuSampler { min_nearest: true, ..Default::default() }),
-            ("mip", CpuSampler { mip_nearest: true, ..Default::default() }),
+            (
+                "mag",
+                CpuSampler {
+                    mag_nearest: true,
+                    ..Default::default()
+                },
+            ),
+            (
+                "min",
+                CpuSampler {
+                    min_nearest: true,
+                    ..Default::default()
+                },
+            ),
+            (
+                "mip",
+                CpuSampler {
+                    mip_nearest: true,
+                    ..Default::default()
+                },
+            ),
         ] {
             assert_eq!(
                 anisotropy_for(&s),
@@ -450,13 +492,18 @@ mod tests {
                 }
             }
         }
-        let base = CpuTexture { width: SIZE, height: SIZE, rgba8, compressed: None };
+        let base = CpuTexture {
+            width: SIZE,
+            height: SIZE,
+            rgba8,
+            compressed: None,
+        };
 
         let mut sums = [0f64; 4];
         for y in 0..SIZE {
             for x in 0..SIZE {
-                for channel in 0..4usize {
-                    sums[channel] += base.rgba8[((y * SIZE + x) * 4 + channel as u32) as usize] as f64;
+                for (channel, sum) in sums.iter_mut().enumerate() {
+                    *sum += base.rgba8[((y * SIZE + x) * 4 + channel as u32) as usize] as f64;
                 }
             }
         }
@@ -477,7 +524,12 @@ mod tests {
 
     #[test]
     fn generate_mips_on_a_zero_sized_texture_returns_only_the_base() {
-        let base = CpuTexture { width: 0, height: 4, rgba8: Vec::new(), compressed: None };
+        let base = CpuTexture {
+            width: 0,
+            height: 4,
+            rgba8: Vec::new(),
+            compressed: None,
+        };
         let levels = generate_mips(&base, false);
         assert_eq!(levels.len(), 1);
         assert_eq!(levels[0].0, 0);

@@ -161,7 +161,7 @@ impl OcclusionQueries {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
-                buffers: &[BboxInstance::LAYOUT],
+                buffers: &[Some(BboxInstance::LAYOUT)],
                 compilation_options: Default::default(),
             },
             // A fragment stage with ZERO color targets: the pass has no color
@@ -502,7 +502,10 @@ fn create_slots(device: &wgpu::Device, capacity: u32) -> Vec<Slot> {
 /// Reads `count` `u64` sample counts out of a mapped readback buffer.
 fn read_samples(buffer: &wgpu::Buffer, count: usize) -> Vec<u64> {
     let bytes = count as u64 * QUERY_BYTES;
-    let view = buffer.slice(..bytes).get_mapped_range();
+    let view = buffer
+        .slice(..bytes)
+        .get_mapped_range()
+        .expect("caller maps the buffer before calling this");
     let samples = view
         .chunks_exact(8)
         .map(|b| u64::from_le_bytes(b.try_into().expect("chunks_exact(8) yields 8 bytes")))

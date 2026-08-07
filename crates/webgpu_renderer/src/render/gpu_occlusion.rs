@@ -293,7 +293,11 @@ impl GpuCulling {
                 MAP_READY => {
                     let count = self.slots[index].count as usize;
                     let bytes = (count as u64) * 4;
-                    let view = self.slots[index].readback.slice(..bytes).get_mapped_range();
+                    let view = self.slots[index]
+                        .readback
+                        .slice(..bytes)
+                        .get_mapped_range()
+                        .expect("readback buffer reported MAP_READY, so viewing it cannot fail");
                     let raw: &[u32] = bytemuck::cast_slice(&view);
                     let visibility: Vec<bool> = raw.iter().map(|&v| v != 0).collect();
                     drop(view);

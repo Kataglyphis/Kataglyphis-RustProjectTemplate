@@ -1,6 +1,11 @@
 #[allow(unused_imports)]
 use anyhow::bail;
-use anyhow::{Context, Result};
+use anyhow::Result;
+// Every `.context(..)` call sits in the CUDA-on-Windows module below, so an
+// unconditional import is dead on every other target - and `-D warnings`
+// turns that into a build failure the moment a lane lints this feature.
+#[cfg(all(feature = "onnxruntime_cuda", windows))]
+use anyhow::Context;
 use log::info;
 
 use super::model_utils::validate_model_path;

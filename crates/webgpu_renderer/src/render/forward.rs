@@ -3,7 +3,7 @@
 //! headless render-to-pixels for golden tests and CI.
 
 use anyhow::Context as _;
-use glam::{Mat4, Quat, Vec3, Vec4, Vec4Swizzles};
+use glam::{Mat4, Vec3, Vec4};
 use wgpu::util::DeviceExt as _;
 
 use crate::context::GpuContext;
@@ -11,8 +11,8 @@ use crate::render::animation::{
     keyframe_lerp_indices, sample_morph_weights, sample_quat, sample_vec3,
 };
 use crate::render::bind_layout;
-use crate::render::buffer_desc;
 use crate::render::bloom::BloomPass;
+use crate::render::buffer_desc;
 use crate::render::gpu_occlusion::GpuCulling;
 use crate::render::gpu_timing::{GpuTiming, TimedPass};
 use crate::render::ibl::{BrdfLut, EquirectImage, IblEnvironment, IblFallback};
@@ -28,7 +28,7 @@ use crate::render::tonemap::TonemapPass;
 use crate::scene::camera::OrbitCamera;
 use crate::scene::{
     AlphaMode, ChannelValues, CpuAnimation, CpuNode, CpuSampler, CpuScene, CpuSkin, CpuTexture,
-    InstanceRaw, Interpolation, MorphTarget, Vertex,
+    InstanceRaw, MorphTarget, Vertex,
 };
 
 /// Upper bound on joints per skin (storage buffer is sized to the skin).
@@ -229,11 +229,17 @@ pub struct ForwardRenderer {
     ibl_bind_group: wgpu::BindGroup,
     /// Group 2 of the forward + shadow pipelines: per-frame data (view/proj,
     /// lights, camera) shared by every primitive, written once per frame.
+    /// Consumed when the pipeline layouts are built and never read again;
+    /// retained alongside its sibling layout fields rather than dropped.
+    #[allow(dead_code)]
     frame_bind_group_layout: wgpu::BindGroupLayout,
     frame_uniform_buffer: wgpu::Buffer,
     /// Storage buffer for punctual lights (supports MAX_PUNCTUAL_LIGHTS).
     /// Written every frame and read by the forward shader via @group(3).
     light_storage_buffer: wgpu::Buffer,
+    /// Same as [`Self::frame_bind_group_layout`]: built into the pipeline
+    /// layouts at construction, never read afterwards.
+    #[allow(dead_code)]
     light_bind_group_layout: wgpu::BindGroupLayout,
     light_bind_group: wgpu::BindGroup,
     /// Tile-based light grid: offsets and counts for each screen tile.
@@ -681,7 +687,8 @@ impl ForwardRenderer {
             Some("flat_normal_fallback"),
         );
 
-        let shadow_texture = device.create_texture(&wgpu::TextureDescriptor { // TEXTURE_2D_SHAPE_OK: depth array, not single-layer 2D
+        let shadow_texture = device.create_texture(&wgpu::TextureDescriptor {
+            // TEXTURE_2D_SHAPE_OK: depth array, not single-layer 2D
             label: Some("shadow_map_array"),
             size: wgpu::Extent3d {
                 width: SHADOW_MAP_SIZE,
@@ -1610,8 +1617,8 @@ impl ForwardRenderer {
         // Tile grid dimensions must be known before the frame uniforms are
         // built below, so this frame's tile counts land in the uniform
         // instead of last frame's (cascade_splits.zw carries them).
-        let tx = (width + TILE_SIZE - 1) / TILE_SIZE;
-        let ty = (height + TILE_SIZE - 1) / TILE_SIZE;
+        let tx = width.div_ceil(TILE_SIZE);
+        let ty = height.div_ceil(TILE_SIZE);
         self.tile_counts = (tx, ty);
 
         // Per-frame data: write ONCE, shared by every primitive via @group(2).
@@ -1665,11 +1672,8 @@ impl ForwardRenderer {
             }
             let needed_idx = (self.tile_light_grid_scratch.indices.len() as u64) * 4;
             if needed_idx > self.tile_light_indices_buffer.size() {
-                self.tile_light_indices_buffer = buffer_desc::storage_dst(
-                    &gpu.device,
-                    "tile_light_indices",
-                    needed_idx.max(64),
-                );
+                self.tile_light_indices_buffer =
+                    buffer_desc::storage_dst(&gpu.device, "tile_light_indices", needed_idx.max(64));
                 bind_group_dirty = true;
             }
             if bind_group_dirty {
@@ -2251,7 +2255,12 @@ impl ForwardRenderer {
             .context("Readback mapping callback dropped")?
             .context("Failed to map readback buffer")?;
 
-        let data = slice.get_mapped_range();
+        // wgpu 30 made `get_mapped_range` fallible. The map above already
+        // succeeded, so an error here is a logic fault, not a device loss -
+        // but this function returns Result, so propagate rather than panic.
+        let data = slice
+            .get_mapped_range()
+            .context("Failed to view the mapped readback buffer")?;
         let mut pixels = Vec::with_capacity((width * height * 4) as usize);
         for row in 0..height {
             let start = (row * bytes_per_row) as usize;
@@ -2616,7 +2625,7 @@ fn create_forward_pipeline_set(
             vertex: wgpu::VertexState {
                 module: shader,
                 entry_point: Some("vs_main"),
-                buffers: &[Vertex::LAYOUT, InstanceRaw::LAYOUT],
+                buffers: &[Some(Vertex::LAYOUT), Some(InstanceRaw::LAYOUT)],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -2725,7 +2734,7 @@ fn create_masked_shadow_pipeline(
         vertex: wgpu::VertexState {
             module: shader,
             entry_point: Some("vs_shadow_masked"),
-            buffers: &[Vertex::LAYOUT, InstanceRaw::LAYOUT],
+            buffers: &[Some(Vertex::LAYOUT), Some(InstanceRaw::LAYOUT)],
             compilation_options: Default::default(),
         },
         // A fragment stage with no color targets: it exists purely for the
@@ -2771,7 +2780,7 @@ fn create_shadow_pipeline(
         vertex: wgpu::VertexState {
             module: shader,
             entry_point: Some("vs_shadow"),
-            buffers: &[Vertex::LAYOUT, InstanceRaw::LAYOUT],
+            buffers: &[Some(Vertex::LAYOUT), Some(InstanceRaw::LAYOUT)],
             compilation_options: Default::default(),
         },
         fragment: None,

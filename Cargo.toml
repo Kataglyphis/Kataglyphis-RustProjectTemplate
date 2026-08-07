@@ -24,18 +24,18 @@ anyhow = "1"
 chrono = "0.4"
 tokio = "1"
 clap = { version = "4", features = ["derive"] }
-burn = { version = "0.20.1", default-features = false }
-burn-autodiff = { version = "0.20.1" }
-burn-ndarray = { version = "0.20.1" }
+burn = { version = "0.21.0", default-features = false }
+burn-autodiff = { version = "0.21.0" }
+burn-ndarray = { version = "0.21.0" }
 ndarray = { version = "0.17" }
 plotters = { version = "0.3" }
 tempfile = { version = "3" }
-ort = { version = "=2.0.0-rc.12", default-features = false }
-gstreamer = "0.24"
-gstreamer-app = "0.24"
-gstreamer-video = "0.24"
+ort = { version = "=2.0.0-rc.13", default-features = false }
+gstreamer = "0.25"
+gstreamer-app = "0.25"
+gstreamer-video = "0.25"
 libloading = "0.9"
-sysinfo = "0.38"
+sysinfo = "0.39"
 flutter_rust_bridge = "=2.12.0"
 wmi = "0.18"
 

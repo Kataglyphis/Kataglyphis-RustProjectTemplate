@@ -64,9 +64,14 @@ impl Overlay {
 
         let clipped = self.ctx.tessellate(output.shapes, screen.pixels_per_point);
 
-        for (id, image_delta) in &output.textures_delta.set {
-            self.renderer
-                .update_texture(device, queue, *id, image_delta);
+        // egui 0.36 lets one texture id carry SEVERAL deltas in a frame (the
+        // value is a SmallVec now, not a single ImageDelta), so apply them in
+        // order - taking only the first would drop partial-region updates.
+        for (id, image_deltas) in &output.textures_delta.set {
+            for image_delta in image_deltas {
+                self.renderer
+                    .update_texture(device, queue, *id, image_delta);
+            }
         }
         self.renderer
             .update_buffers(device, queue, encoder, &clipped, &screen);
@@ -184,9 +189,7 @@ impl OverlayControls {
                 if self.occlusion_culling {
                     if let Some((drawn, considered)) = self.occlusion_stats {
                         let culled = considered.saturating_sub(drawn);
-                        ui.label(format!(
-                            "  drew {drawn}/{considered} ({culled} culled)"
-                        ));
+                        ui.label(format!("  drew {drawn}/{considered} ({culled} culled)"));
                     }
                 }
                 ui.separator();

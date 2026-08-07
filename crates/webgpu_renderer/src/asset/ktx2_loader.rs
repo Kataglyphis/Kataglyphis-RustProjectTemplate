@@ -97,9 +97,21 @@ pub fn load_ktx2(bytes: &[u8]) -> anyhow::Result<CpuTexture> {
         header.supercompression_scheme
     );
 
-    anyhow::ensure!(header.face_count <= 1, "KTX2 cubemaps ({} faces) are not supported yet, only 2D textures", header.face_count);
-    anyhow::ensure!(header.layer_count <= 1, "KTX2 array textures ({} layers) are not supported yet, only 2D textures", header.layer_count);
-    anyhow::ensure!(header.pixel_depth <= 1, "KTX2 3D textures (depth {}) are not supported yet, only 2D textures", header.pixel_depth);
+    anyhow::ensure!(
+        header.face_count <= 1,
+        "KTX2 cubemaps ({} faces) are not supported yet, only 2D textures",
+        header.face_count
+    );
+    anyhow::ensure!(
+        header.layer_count <= 1,
+        "KTX2 array textures ({} layers) are not supported yet, only 2D textures",
+        header.layer_count
+    );
+    anyhow::ensure!(
+        header.pixel_depth <= 1,
+        "KTX2 3D textures (depth {}) are not supported yet, only 2D textures",
+        header.pixel_depth
+    );
 
     let vk_format = header
         .format
@@ -121,7 +133,11 @@ pub fn load_ktx2(bytes: &[u8]) -> anyhow::Result<CpuTexture> {
         width,
         height,
         rgba8: Vec::new(),
-        compressed: Some(CompressedTexture { format, mips, declared_srgb }),
+        compressed: Some(CompressedTexture {
+            format,
+            mips,
+            declared_srgb,
+        }),
     })
 }
 
@@ -135,9 +151,18 @@ mod tests {
             map_format(VK_FORMAT_BC1_RGBA_SRGB_BLOCK),
             Some(CompressedFormat::Bc1RgbaUnorm)
         );
-        assert_eq!(map_format(VK_FORMAT_BC3_UNORM_BLOCK), Some(CompressedFormat::Bc3RgbaUnorm));
-        assert_eq!(map_format(VK_FORMAT_BC5_UNORM_BLOCK), Some(CompressedFormat::Bc5RgUnorm));
-        assert_eq!(map_format(VK_FORMAT_BC7_SRGB_BLOCK), Some(CompressedFormat::Bc7RgbaUnorm));
+        assert_eq!(
+            map_format(VK_FORMAT_BC3_UNORM_BLOCK),
+            Some(CompressedFormat::Bc3RgbaUnorm)
+        );
+        assert_eq!(
+            map_format(VK_FORMAT_BC5_UNORM_BLOCK),
+            Some(CompressedFormat::Bc5RgUnorm)
+        );
+        assert_eq!(
+            map_format(VK_FORMAT_BC7_SRGB_BLOCK),
+            Some(CompressedFormat::Bc7RgbaUnorm)
+        );
         // An uncompressed format (VK_FORMAT_R8G8B8A8_UNORM = 37) is not a BCn
         // passthrough target.
         assert_eq!(map_format(37), None);
@@ -148,7 +173,10 @@ mod tests {
     fn declared_srgb_follows_the_container_vkformat() {
         assert_eq!(declared_srgb_for(VK_FORMAT_BC7_SRGB_BLOCK), Some(true));
         assert_eq!(declared_srgb_for(VK_FORMAT_BC1_RGBA_SRGB_BLOCK), Some(true));
-        assert_eq!(declared_srgb_for(VK_FORMAT_BC1_RGBA_UNORM_BLOCK), Some(false));
+        assert_eq!(
+            declared_srgb_for(VK_FORMAT_BC1_RGBA_UNORM_BLOCK),
+            Some(false)
+        );
         assert_eq!(declared_srgb_for(VK_FORMAT_BC3_UNORM_BLOCK), Some(false));
         assert_eq!(
             declared_srgb_for(VK_FORMAT_BC5_UNORM_BLOCK),
@@ -161,11 +189,22 @@ mod tests {
     fn loads_a_valid_bc1_container() {
         let bytes = include_bytes!("../../tests/assets/red_bc1.ktx2");
         let tex = load_ktx2(bytes).expect("red_bc1.ktx2 should load");
-        assert!(tex.width >= 1 && tex.height >= 1, "dimensions must be positive");
-        assert!(tex.rgba8.is_empty(), "a compressed texture carries no rgba8");
-        let compressed = tex.compressed.expect("BC1 file must produce a compressed payload");
+        assert!(
+            tex.width >= 1 && tex.height >= 1,
+            "dimensions must be positive"
+        );
+        assert!(
+            tex.rgba8.is_empty(),
+            "a compressed texture carries no rgba8"
+        );
+        let compressed = tex
+            .compressed
+            .expect("BC1 file must produce a compressed payload");
         assert_eq!(compressed.format, CompressedFormat::Bc1RgbaUnorm);
-        assert!(!compressed.mips.is_empty(), "must have at least one mip level");
+        assert!(
+            !compressed.mips.is_empty(),
+            "must have at least one mip level"
+        );
         assert!(
             !compressed.mips[0].is_empty(),
             "the base mip must carry block data"
@@ -190,14 +229,10 @@ mod tests {
         // 4x4 has a full pyramid of 3 levels (4x4, 2x2, 1x1); a 5th level
         // cannot correspond to any real mip of a 4x4 texture.
         let five_levels = valid_4x4_bc1_chain(5);
-        assert!(
-            validate_mip_chain(4, 4, CompressedFormat::Bc1RgbaUnorm, &five_levels).is_err()
-        );
+        assert!(validate_mip_chain(4, 4, CompressedFormat::Bc1RgbaUnorm, &five_levels).is_err());
 
         let three_levels = valid_4x4_bc1_chain(3);
-        assert!(
-            validate_mip_chain(4, 4, CompressedFormat::Bc1RgbaUnorm, &three_levels).is_ok()
-        );
+        assert!(validate_mip_chain(4, 4, CompressedFormat::Bc1RgbaUnorm, &three_levels).is_ok());
     }
 
     #[test]

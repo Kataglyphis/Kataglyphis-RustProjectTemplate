@@ -73,31 +73,32 @@ fn install_drop_zone(document: &web_sys::Document, slot: DroppedScene) {
     let on_dragover = Closure::<dyn FnMut(web_sys::DragEvent)>::new(|event: web_sys::DragEvent| {
         event.prevent_default();
     });
-    let _ = document
-        .add_event_listener_with_callback("dragover", on_dragover.as_ref().unchecked_ref());
+    let _ =
+        document.add_event_listener_with_callback("dragover", on_dragover.as_ref().unchecked_ref());
     on_dragover.forget();
 
-    let on_drop = Closure::<dyn FnMut(web_sys::DragEvent)>::new(move |event: web_sys::DragEvent| {
-        event.prevent_default();
-        let Some(file) = event
-            .data_transfer()
-            .and_then(|transfer| transfer.files())
-            .and_then(|files| files.get(0))
-        else {
-            return;
-        };
-        let name = file.name();
-        let slot = Rc::clone(&slot);
-        wasm_bindgen_futures::spawn_local(async move {
-            match wasm_bindgen_futures::JsFuture::from(file.array_buffer()).await {
-                Ok(buffer) => {
-                    let bytes = js_sys::Uint8Array::new(&buffer).to_vec();
-                    slot.borrow_mut().replace((name, bytes));
+    let on_drop =
+        Closure::<dyn FnMut(web_sys::DragEvent)>::new(move |event: web_sys::DragEvent| {
+            event.prevent_default();
+            let Some(file) = event
+                .data_transfer()
+                .and_then(|transfer| transfer.files())
+                .and_then(|files| files.get(0))
+            else {
+                return;
+            };
+            let name = file.name();
+            let slot = Rc::clone(&slot);
+            wasm_bindgen_futures::spawn_local(async move {
+                match wasm_bindgen_futures::JsFuture::from(file.array_buffer()).await {
+                    Ok(buffer) => {
+                        let bytes = js_sys::Uint8Array::new(&buffer).to_vec();
+                        slot.borrow_mut().replace((name, bytes));
+                    }
+                    Err(err) => log::error!("Reading the dropped file failed: {err:?}"),
                 }
-                Err(err) => log::error!("Reading the dropped file failed: {err:?}"),
-            }
+            });
         });
-    });
     let _ = document.add_event_listener_with_callback("drop", on_drop.as_ref().unchecked_ref());
     on_drop.forget();
 }
@@ -323,8 +324,7 @@ impl ApplicationHandler for DemoApp {
                 let frame = match surface.get_current_texture() {
                     wgpu::CurrentSurfaceTexture::Success(frame)
                     | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
-                    wgpu::CurrentSurfaceTexture::Outdated
-                    | wgpu::CurrentSurfaceTexture::Lost => {
+                    wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                         // Never abort on Outdated/Lost: reconfigure and retry.
                         state.gpu.reconfigure();
                         window.request_redraw();
@@ -382,7 +382,8 @@ impl ApplicationHandler for DemoApp {
                 }
 
                 window.pre_present_notify();
-                frame.present();
+                // wgpu 30: presentation moved to the queue.
+                gpu.queue.present(frame);
                 window.request_redraw();
             }
             _ => {}

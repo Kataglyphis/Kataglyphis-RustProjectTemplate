@@ -243,10 +243,14 @@ impl WgpuState {
             .ctx
             .tessellate(shapes, self.egui.screen.pixels_per_point);
 
-        for (id, image_delta) in &full_output.textures_delta.set {
-            self.egui
-                .renderer
-                .update_texture(&self.device, &self.queue, *id, image_delta);
+        // egui 0.36: one texture id can carry several deltas per frame, so the
+        // value is a SmallVec. Apply them all, in order.
+        for (id, image_deltas) in &full_output.textures_delta.set {
+            for image_delta in image_deltas {
+                self.egui
+                    .renderer
+                    .update_texture(&self.device, &self.queue, *id, image_delta);
+            }
         }
 
         self.submit_frame(window, &clipped_primitives, &full_output)?;
@@ -356,7 +360,8 @@ impl WgpuState {
         }
 
         self.queue.submit(Some(encoder.finish()));
-        frame.present();
+        // wgpu 30: presentation lives on the queue now.
+        self.queue.present(frame);
         Ok(())
     }
 }

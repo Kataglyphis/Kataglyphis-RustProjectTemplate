@@ -8,6 +8,11 @@ pub mod qem;
 
 use std::sync::Arc;
 
+// glam 0.33 moved the camera constructors off `Mat4` and split them by clip-
+// space convention. `directx` is glam's name for NDC Z in [0,1] with Y up —
+// which is also wgpu's and Metal's — and it reproduces the old
+// `Mat4::perspective_rh`/`orthographic_rh` bit for bit (verified 2026-08-07).
+use glam::camera::rh::proj::directx as clip;
 use glam::{Mat4, Quat, Vec3};
 
 #[repr(C)]
@@ -328,15 +333,15 @@ impl CpuCameraProjection {
                 znear,
                 zfar,
             } => match zfar {
-                Some(zfar) => Mat4::perspective_rh(yfov_rad, aspect_ratio, znear, zfar),
-                None => Mat4::perspective_infinite_rh(yfov_rad, aspect_ratio, znear),
+                Some(zfar) => clip::perspective(yfov_rad, aspect_ratio, znear, zfar),
+                None => clip::perspective_infinite(yfov_rad, aspect_ratio, znear),
             },
             CpuCameraProjection::Orthographic {
                 xmag,
                 ymag,
                 znear,
                 zfar,
-            } => Mat4::orthographic_rh(-xmag, xmag, -ymag, ymag, znear, zfar),
+            } => clip::orthographic(-xmag, xmag, -ymag, ymag, znear, zfar),
         }
     }
 }
@@ -395,7 +400,11 @@ pub struct MorphTarget {
 /// normals when the target provides them (re-normalized). Targets/weights of
 /// mismatched length and zero-weight targets are skipped. Returns a fresh buffer
 /// so the base stays intact for the next frame's weights.
-pub fn blend_morph_targets(base: &[Vertex], targets: &[MorphTarget], weights: &[f32]) -> Vec<Vertex> {
+pub fn blend_morph_targets(
+    base: &[Vertex],
+    targets: &[MorphTarget],
+    weights: &[f32],
+) -> Vec<Vertex> {
     let mut out = base.to_vec();
     for (target, &w) in targets.iter().zip(weights) {
         if w == 0.0 {
@@ -491,9 +500,21 @@ impl CpuScene {
             // matrices that poison the rest of the scene graph through the
             // parent-product below, collapsing every downstream node's transform
             // and everything computed from it (bounds, cascades, LOD).
-            let translation = if nodes[i].translation.is_finite() { nodes[i].translation } else { Vec3::ZERO };
-            let scale = if nodes[i].scale.is_finite() && nodes[i].scale != Vec3::ZERO { nodes[i].scale } else { Vec3::ONE };
-            let rotation = if nodes[i].rotation.is_finite() { nodes[i].rotation } else { Quat::IDENTITY };
+            let translation = if nodes[i].translation.is_finite() {
+                nodes[i].translation
+            } else {
+                Vec3::ZERO
+            };
+            let scale = if nodes[i].scale.is_finite() && nodes[i].scale != Vec3::ZERO {
+                nodes[i].scale
+            } else {
+                Vec3::ONE
+            };
+            let rotation = if nodes[i].rotation.is_finite() {
+                nodes[i].rotation
+            } else {
+                Quat::IDENTITY
+            };
             let local = Mat4::from_scale_rotation_translation(scale, rotation, translation);
             if !local.is_finite() {
                 // Guard the matrix itself (corner case: the glue maths can still
@@ -569,7 +590,11 @@ mod tests {
             tangent_deltas: vec![],
         };
         let out = blend_morph_targets(&base, &[t], &[1.0]);
-        assert!((out[0].position[1] - 10.0).abs() < 1e-5, "got {:?}", out[0].position);
+        assert!(
+            (out[0].position[1] - 10.0).abs() < 1e-5,
+            "got {:?}",
+            out[0].position
+        );
     }
 
     #[test]
@@ -610,7 +635,10 @@ mod tests {
         let world = CpuScene::compute_world_transforms(&nodes);
         assert_eq!(world.len(), 3);
         for (i, m) in world.iter().enumerate() {
-            assert!(m.is_finite(), "node {i} transform must be finite, got {m:?}");
+            assert!(
+                m.is_finite(),
+                "node {i} transform must be finite, got {m:?}"
+            );
         }
     }
 
@@ -637,9 +665,16 @@ mod tests {
             scale: Vec3::ZERO,
         }];
         let world = CpuScene::compute_world_transforms(&nodes);
-        assert!(world[0].is_finite(), "zero-scale transform must be finite, got {:?}", world[0]);
+        assert!(
+            world[0].is_finite(),
+            "zero-scale transform must be finite, got {:?}",
+            world[0]
+        );
         // The node is treated as scale=1 since zero scale is degenerate.
-        assert!((world[0].x_axis.length() - 1.0).abs() < 1e-5, "axis length should be identity-like");
+        assert!(
+            (world[0].x_axis.length() - 1.0).abs() < 1e-5,
+            "axis length should be identity-like"
+        );
     }
 
     #[test]
@@ -651,7 +686,11 @@ mod tests {
             scale: Vec3::ONE,
         }];
         let world = CpuScene::compute_world_transforms(&nodes);
-        assert!(world[0].is_finite(), "NaN input must not NaN the output, got {:?}", world[0]);
+        assert!(
+            world[0].is_finite(),
+            "NaN input must not NaN the output, got {:?}",
+            world[0]
+        );
     }
 
     #[test]
@@ -663,7 +702,10 @@ mod tests {
             scale: Vec3::splat(f32::INFINITY),
         }];
         let world = CpuScene::compute_world_transforms(&nodes);
-        assert!(world[0].is_finite(), "infinite scale must not NaN the output");
+        assert!(
+            world[0].is_finite(),
+            "infinite scale must not NaN the output"
+        );
     }
 
     #[test]
@@ -682,9 +724,14 @@ mod tests {
         let tan = Vec3::new(out[0].tangent[0], out[0].tangent[1], out[0].tangent[2]);
         // (1,0,0) + (0,1,0) normalized = (1/sqrt2, 1/sqrt2, 0).
         let d = std::f32::consts::FRAC_1_SQRT_2;
-        assert!((tan.length() - 1.0).abs() < 1e-5, "tangent must be unit, got {tan:?}");
-        assert!((tan.x - d).abs() < 1e-4 && (tan.y - d).abs() < 1e-4,
-            "tangent should rotate toward +Y, got {tan:?}");
+        assert!(
+            (tan.length() - 1.0).abs() < 1e-5,
+            "tangent must be unit, got {tan:?}"
+        );
+        assert!(
+            (tan.x - d).abs() < 1e-4 && (tan.y - d).abs() < 1e-4,
+            "tangent should rotate toward +Y, got {tan:?}"
+        );
         assert_eq!(out[0].tangent[3], -1.0, "handedness w must be preserved");
     }
 
@@ -699,7 +746,10 @@ mod tests {
         };
         let out = blend_morph_targets(&[base], &[t], &[1.0]);
         let n = Vec3::from_array(out[0].normal);
-        assert!((n.length() - 1.0).abs() < 1e-5, "normal must be unit, got {n:?}");
+        assert!(
+            (n.length() - 1.0).abs() < 1e-5,
+            "normal must be unit, got {n:?}"
+        );
     }
 
     fn node(parent: Option<usize>, translation: Vec3) -> CpuNode {
@@ -743,7 +793,10 @@ mod tests {
         ];
         let world = CpuScene::compute_world_transforms(&nodes);
         let child = world[0].transform_point3(Vec3::ZERO);
-        assert!((child - Vec3::new(1.0, 0.0, 2.0)).length() < 1e-5, "got {child:?}");
+        assert!(
+            (child - Vec3::new(1.0, 0.0, 2.0)).length() < 1e-5,
+            "got {child:?}"
+        );
     }
 
     #[test]
@@ -755,6 +808,9 @@ mod tests {
         ];
         let world = CpuScene::compute_world_transforms(&nodes);
         let leaf = world[2].transform_point3(Vec3::ZERO);
-        assert!((leaf - Vec3::new(3.0, 0.0, 0.0)).length() < 1e-5, "got {leaf:?}");
+        assert!(
+            (leaf - Vec3::new(3.0, 0.0, 0.0)).length() < 1e-5,
+            "got {leaf:?}"
+        );
     }
 }

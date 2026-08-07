@@ -107,9 +107,11 @@ mod tests {
         // forward.slang: `kind > 2.5` is directional, else `kind > 1.5` is spot,
         // else point. The packed values must land on the correct side of both
         // thresholds, not merely equal 1.0/2.0/3.0.
-        let point_kind = packed[0 * 4][3];
-        let spot_kind = packed[1 * 4][3];
-        let directional_kind = packed[2 * 4][3];
+        // Each light occupies 4 vec4s; the discriminant is .w of the first.
+        let kind_of = |light_index: usize| packed[light_index * 4][3];
+        let point_kind = kind_of(0);
+        let spot_kind = kind_of(1);
+        let directional_kind = kind_of(2);
 
         assert_eq!(point_kind, 1.0);
         assert!(point_kind <= 1.5, "point must not be read as spot");

@@ -50,6 +50,12 @@ impl GpuContext {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
+                // wgpu 30. Bucketing rounds the adapter's reported limits to
+                // coarse presets so untrusted content (a browser exposing
+                // wgpu) cannot fingerprint the machine by them. This renderer
+                // is the trusted application, and rounding down real limits
+                // would only cost capability - so off, matching wgpu 29.
+                apply_limit_buckets: false,
             })
             .await
             .context("No suitable GPU adapter found")?;
@@ -73,6 +79,12 @@ impl GpuContext {
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
+            // wgpu 30 made the swap-chain colour space explicit. `Auto` is the
+            // type's own default and the only value guaranteed supported for
+            // every format in `SurfaceCapabilities::formats`, so it reproduces
+            // wgpu 29, where the presentation engine made this choice for us.
+            // Anything else (an HDR space) would need a capability check first.
+            color_space: wgpu::SurfaceColorSpace::Auto,
             width: size.width.max(1),
             height: size.height.max(1),
             present_mode: wgpu::PresentMode::Fifo,
@@ -110,6 +122,8 @@ impl GpuContext {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: None,
                 force_fallback_adapter: false,
+                // See the windowed path above: trusted application, real limits.
+                apply_limit_buckets: false,
             })
             .await
             .context("No GPU adapter found (headless)")?;

@@ -354,7 +354,11 @@ impl GpuTiming {
         let bytes = u64::from(QUERIES_PER_SLOT) * 8;
         let slots = (0..SLOT_COUNT)
             .map(|i| Slot {
-                resolve: buffer_desc::query_resolve(device, &format!("gpu_timing_resolve_{i}"), bytes),
+                resolve: buffer_desc::query_resolve(
+                    device,
+                    &format!("gpu_timing_resolve_{i}"),
+                    bytes,
+                ),
                 readback: buffer_desc::readback(device, &format!("gpu_timing_readback_{i}"), bytes),
                 map_state: None,
             })
@@ -516,7 +520,10 @@ impl GpuTiming {
 
 /// Reads `QUERIES_PER_SLOT` u64 ticks out of a mapped readback buffer.
 fn read_ticks(buffer: &wgpu::Buffer) -> Vec<u64> {
-    let view = buffer.slice(..).get_mapped_range();
+    let view = buffer
+        .slice(..)
+        .get_mapped_range()
+        .expect("caller maps the buffer before calling this");
     let ticks = view
         .chunks_exact(8)
         .map(|b| u64::from_le_bytes(b.try_into().expect("chunks_exact(8) yields 8 bytes")))

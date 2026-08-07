@@ -171,7 +171,8 @@ fn main() -> anyhow::Result<()> {
                     .join("yolov10m.onnx")
             });
 
-            let device = <kataglyphis_rustprojecttemplate::burn_demos::TrainingBackend as burn::tensor::backend::Backend>::Device::default();
+            // burn 0.21: `Device` hangs off the `BackendTypes` supertrait now.
+            let device = <kataglyphis_rustprojecttemplate::burn_demos::TrainingBackend as burn::tensor::backend::BackendTypes>::Device::default();
             kataglyphis_rustprojecttemplate::burn_demos::onnx_yolov10::onnx_yolov10_demo::<
                 kataglyphis_rustprojecttemplate::burn_demos::TrainingBackend,
             >(

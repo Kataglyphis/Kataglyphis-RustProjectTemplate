@@ -159,10 +159,20 @@ mod tests {
         // are non-zero to prove the ends ignore them.
         let v0 = Vec3::new(1.0, 2.0, 3.0);
         let v1 = Vec3::new(4.0, 5.0, 6.0);
-        let vals = vec![Vec3::ONE, v0, Vec3::splat(9.0), Vec3::splat(-7.0), v1, Vec3::ONE];
+        let vals = vec![
+            Vec3::ONE,
+            v0,
+            Vec3::splat(9.0),
+            Vec3::splat(-7.0),
+            v1,
+            Vec3::ONE,
+        ];
         let start = sample_vec3(&vals, Interpolation::CubicSpline, 0, 1, 0.0, 2.0).unwrap();
         let end = sample_vec3(&vals, Interpolation::CubicSpline, 0, 1, 1.0, 2.0).unwrap();
-        assert!((start - v0).length() < 1e-5, "t=0 should be v0, got {start:?}");
+        assert!(
+            (start - v0).length() < 1e-5,
+            "t=0 should be v0, got {start:?}"
+        );
         assert!((end - v1).length() < 1e-5, "t=1 should be v1, got {end:?}");
     }
 
@@ -170,7 +180,14 @@ mod tests {
     fn cubic_spline_vec3_zero_tangents_reduce_to_smoothstep_midpoint() {
         // With zero tangents the Hermite basis is h00·v0 + h01·v1; at t=0.5 both
         // are 0.5, so the midpoint is the linear midpoint.
-        let vals = vec![Vec3::ZERO, Vec3::ZERO, Vec3::ZERO, Vec3::ZERO, Vec3::ONE, Vec3::ZERO];
+        let vals = vec![
+            Vec3::ZERO,
+            Vec3::ZERO,
+            Vec3::ZERO,
+            Vec3::ZERO,
+            Vec3::ONE,
+            Vec3::ZERO,
+        ];
         let mid = sample_vec3(&vals, Interpolation::CubicSpline, 0, 1, 0.5, 1.0).unwrap();
         assert!(
             (mid - Vec3::splat(0.5)).length() < 1e-5,
@@ -194,13 +211,23 @@ mod tests {
     fn cubic_spline_quat_ends_are_the_normalized_keyframes() {
         let q0 = Quat::from_rotation_y(0.3);
         let q1 = Quat::from_rotation_y(1.1);
-        let vals = vec![Quat::IDENTITY, q0, Quat::IDENTITY, Quat::IDENTITY, q1, Quat::IDENTITY];
+        let vals = vec![
+            Quat::IDENTITY,
+            q0,
+            Quat::IDENTITY,
+            Quat::IDENTITY,
+            q1,
+            Quat::IDENTITY,
+        ];
         let start = sample_quat(&vals, Interpolation::CubicSpline, 0, 1, 0.0, 1.0).unwrap();
         let end = sample_quat(&vals, Interpolation::CubicSpline, 0, 1, 1.0, 1.0).unwrap();
         // dot ~= 1 means (near-)identical orientation (sign-agnostic).
         assert!(start.dot(q0).abs() > 0.999, "t=0 should match q0");
         assert!(end.dot(q1).abs() > 0.999, "t=1 should match q1");
-        assert!((start.length() - 1.0).abs() < 1e-5, "result must be a unit quaternion");
+        assert!(
+            (start.length() - 1.0).abs() < 1e-5,
+            "result must be a unit quaternion"
+        );
     }
 
     #[test]
@@ -210,7 +237,11 @@ mod tests {
         let lin = sample_morph_weights(&vals, 2, Interpolation::Linear, 0, 1, 0.5, 1.0);
         assert_eq!(lin, vec![0.5, 2.0], "each target lerps independently");
         let step = sample_morph_weights(&vals, 2, Interpolation::Step, 0, 1, 0.9, 1.0);
-        assert_eq!(step, vec![0.0, 1.0], "Step holds the left keyframe per target");
+        assert_eq!(
+            step,
+            vec![0.0, 1.0],
+            "Step holds the left keyframe per target"
+        );
     }
 
     #[test]
@@ -221,7 +252,11 @@ mod tests {
         let vals = vec![9.0, 0.2, -4.0, 7.0, 0.8, -3.0];
         let start = sample_morph_weights(&vals, 1, Interpolation::CubicSpline, 0, 1, 0.0, 1.0);
         let end = sample_morph_weights(&vals, 1, Interpolation::CubicSpline, 0, 1, 1.0, 1.0);
-        assert!((start[0] - 0.2).abs() < 1e-5, "t=0 is value0, got {}", start[0]);
+        assert!(
+            (start[0] - 0.2).abs() < 1e-5,
+            "t=0 is value0, got {}",
+            start[0]
+        );
         assert!((end[0] - 0.8).abs() < 1e-5, "t=1 is value1, got {}", end[0]);
     }
 

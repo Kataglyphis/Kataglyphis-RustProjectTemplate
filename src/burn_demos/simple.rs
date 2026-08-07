@@ -4,7 +4,13 @@ use burn::nn;
 use burn::optim::{AdamConfig, GradientsParams, Optimizer};
 use burn::record::{BinFileRecorder, FullPrecisionSettings, Recorder};
 use burn::tensor::activation::{relu, sigmoid};
-use burn::tensor::{backend::Backend, Tensor, TensorData};
+// burn 0.21 moved `Device` off `Backend` and onto its new `BackendTypes`
+// supertrait, so naming it on a CONCRETE backend needs that trait qualified.
+// (`B::Device` on a generic `B: Backend` still resolves via the supertrait.)
+use burn::tensor::{
+    backend::{Backend, BackendTypes},
+    Tensor, TensorData,
+};
 
 use crate::burn_demos::{lcg::Lcg, losses, plot, InferenceBackend, TrainingBackend};
 
@@ -79,7 +85,7 @@ pub fn linear_regression_demo(
     batch_size: usize,
     plot_path: Option<std::path::PathBuf>,
 ) -> anyhow::Result<()> {
-    let device = <TrainingBackend as Backend>::Device::default();
+    let device = <TrainingBackend as BackendTypes>::Device::default();
     let mut model = LinearRegressor::<TrainingBackend>::new(&device);
     let mut optim = AdamConfig::new().init();
 
@@ -149,7 +155,7 @@ pub fn xor_demo(
     lr: f64,
     plot_path: Option<std::path::PathBuf>,
 ) -> anyhow::Result<()> {
-    let device = <TrainingBackend as Backend>::Device::default();
+    let device = <TrainingBackend as BackendTypes>::Device::default();
     let mut model = XorNet::<TrainingBackend>::new(&device);
     let mut optim = AdamConfig::new().init();
 
@@ -188,7 +194,7 @@ pub fn yolo_tiny_demo(
 ) -> anyhow::Result<()> {
     use crate::burn_demos::yolo::YoloTiny;
 
-    let device = <TrainingBackend as Backend>::Device::default();
+    let device = <TrainingBackend as BackendTypes>::Device::default();
     let mut model = YoloTiny::<TrainingBackend>::new(&device, num_classes, num_anchors);
     let mut optim = AdamConfig::new().init();
 
@@ -214,7 +220,7 @@ pub fn yolo_tiny_demo(
 }
 
 pub fn save_load_demo() -> anyhow::Result<()> {
-    let device = <InferenceBackend as Backend>::Device::default();
+    let device = <InferenceBackend as BackendTypes>::Device::default();
 
     // Create a tiny model, run forward, save record.
     let model = LinearRegressor::<InferenceBackend>::new(&device);

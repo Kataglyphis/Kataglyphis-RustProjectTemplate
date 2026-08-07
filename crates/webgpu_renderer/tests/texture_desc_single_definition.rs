@@ -9,11 +9,27 @@
 //! everywhere, including environments with no adapter.
 
 const SOURCES: &[(&str, &str, bool)] = &[
-    ("render/bloom.rs", include_str!("../src/render/bloom.rs"), false),
-    ("render/ssao.rs", include_str!("../src/render/ssao.rs"), false),
-    ("render/forward.rs", include_str!("../src/render/forward.rs"), false),
+    (
+        "render/bloom.rs",
+        include_str!("../src/render/bloom.rs"),
+        false,
+    ),
+    (
+        "render/ssao.rs",
+        include_str!("../src/render/ssao.rs"),
+        false,
+    ),
+    (
+        "render/forward.rs",
+        include_str!("../src/render/forward.rs"),
+        false,
+    ),
     ("render/ibl.rs", include_str!("../src/render/ibl.rs"), false),
-    ("render/texture.rs", include_str!("../src/render/texture.rs"), true),
+    (
+        "render/texture.rs",
+        include_str!("../src/render/texture.rs"),
+        true,
+    ),
 ];
 
 const NEEDLE: &str = "wgpu::TextureDescriptor {";

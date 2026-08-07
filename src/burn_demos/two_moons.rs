@@ -3,7 +3,11 @@ use burn::module::{AutodiffModule, Module};
 use burn::nn;
 use burn::optim::{AdamConfig, GradientsParams, Optimizer};
 use burn::tensor::activation::{relu, sigmoid};
-use burn::tensor::{backend::Backend, Tensor, TensorData};
+// See simple.rs: burn 0.21 moved `Device` onto the `BackendTypes` supertrait.
+use burn::tensor::{
+    backend::{Backend, BackendTypes},
+    Tensor, TensorData,
+};
 
 use crate::burn_demos::{lcg::Lcg, losses, plot, InferenceBackend, TrainingBackend};
 
@@ -119,7 +123,7 @@ fn eval_two_moons_accuracy(
     model: &DeepClassifier<TrainingBackend>,
     dataset: &TwoMoonsDataset,
 ) -> anyhow::Result<f32> {
-    let infer_device = <InferenceBackend as Backend>::Device::default();
+    let infer_device = <InferenceBackend as BackendTypes>::Device::default();
     let infer_model = model.valid().to_device(&infer_device);
 
     let x_all = Tensor::<InferenceBackend, 2>::from_data(
@@ -157,7 +161,7 @@ fn train_two_moons_epoch(
     mut model: DeepClassifier<TrainingBackend>,
     optim: &mut impl Optimizer<DeepClassifier<TrainingBackend>, TrainingBackend>,
     dataset: &TwoMoonsDataset,
-    device: &<TrainingBackend as Backend>::Device,
+    device: &<TrainingBackend as BackendTypes>::Device,
     config: &EpochConfig,
 ) -> (DeepClassifier<TrainingBackend>, f32) {
     let mut loss_sum = 0.0f32;
@@ -202,7 +206,7 @@ pub fn two_moons_demo(
     seed: u64,
     plot_path: Option<std::path::PathBuf>,
 ) -> anyhow::Result<()> {
-    let device = <TrainingBackend as Backend>::Device::default();
+    let device = <TrainingBackend as BackendTypes>::Device::default();
     let dataset = TwoMoonsDataset::generate(2000, noise, seed);
 
     let mut model = DeepClassifier::<TrainingBackend>::new(&device, 64);

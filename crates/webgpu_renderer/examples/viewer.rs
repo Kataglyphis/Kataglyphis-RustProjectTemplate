@@ -14,8 +14,8 @@ use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
 
 use kataglyphis_webgpu_renderer::{
-    ForwardRenderer, FrameClock, GpuContext, OrbitCamera, OrbitController, Overlay,
-    OverlayControls, TonemapPass, load_gltf,
+    load_gltf, ForwardRenderer, FrameClock, GpuContext, OrbitCamera, OrbitController, Overlay,
+    OverlayControls, TonemapPass,
 };
 
 struct Viewer {
@@ -238,7 +238,9 @@ impl Viewer {
         }
 
         window.pre_present_notify();
-        frame.present();
+        // wgpu 30 moved presentation from `SurfaceTexture::present(self)` to
+        // `Queue::present(&self, texture)`.
+        gpu.queue.present(frame);
         window.request_redraw();
     }
 }

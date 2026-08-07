@@ -336,7 +336,8 @@ fn dummy_2d(device: &wgpu::Device) -> wgpu::TextureView {
 
 fn dummy_cube(device: &wgpu::Device) -> wgpu::TextureView {
     device
-        .create_texture(&wgpu::TextureDescriptor { // TEXTURE_2D_SHAPE_OK: cube texture, not single-layer 2D
+        .create_texture(&wgpu::TextureDescriptor {
+            // TEXTURE_2D_SHAPE_OK: cube texture, not single-layer 2D
             label: Some("ibl_dummy_cube"),
             size: wgpu::Extent3d {
                 width: 1,
@@ -632,7 +633,8 @@ impl IblEnvironment {
 }
 
 fn create_cube(device: &wgpu::Device, label: &str, size: u32, mips: u32) -> wgpu::Texture {
-    device.create_texture(&wgpu::TextureDescriptor { // TEXTURE_2D_SHAPE_OK: cube texture, not single-layer 2D
+    device.create_texture(&wgpu::TextureDescriptor {
+        // TEXTURE_2D_SHAPE_OK: cube texture, not single-layer 2D
         label: Some(label),
         size: wgpu::Extent3d {
             width: size,
@@ -855,7 +857,9 @@ fn read_texture_halves(
     let _ = receiver.recv();
 
     let values = {
-        let data = slice.get_mapped_range();
+        let data = slice
+            .get_mapped_range()
+            .expect("map completed above, so viewing it cannot fail");
         let mut values = Vec::with_capacity((width * height * channels) as usize);
         for row in 0..height {
             let start = (row * bytes_per_row) as usize;
