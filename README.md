@@ -363,6 +363,21 @@ Import-PfxCertificate -FilePath $certPath -Password $pwd -CertStoreLocation "Cer
 Add-AppxPackage -Path $msixPath
 ```
 
+### Windows MSI packaging
+
+Läuft als Schritt von `Build-Windows.ps1` (abschaltbar mit `-SkipMsi`, oder
+`Msi.Enabled = $false` in `Scripts/Windows/Build-Windows.config.psd1`).
+
+Output: `dist\msi\kataglyphis_rustprojecttemplate-<VERSION>-x64.msi`
+
+Gebaut wird mit **WiX Toolset v4** (`wix.exe build`), nicht mit `cargo-wix`:
+cargo-wix steuert auch in seiner neuesten Version (0.3.9) nur WiX v3 über
+`candle.exe`/`light.exe`, während das Container-Image WiX 4.0.6 als einzelnes
+`wix.exe` mitbringt. `wix/main.wxs` liegt entsprechend im v4-Schema vor und
+bekommt Version, Binary- und Lizenzpfad als Präprozessor-Variablen übergeben.
+Der Dialog-Satz `WixUI_FeatureTree` stammt aus `WixToolset.UI.wixext`, das im
+Image bereits installiert ist.
+
 Installationsprüfung:
 
 ```pwsh

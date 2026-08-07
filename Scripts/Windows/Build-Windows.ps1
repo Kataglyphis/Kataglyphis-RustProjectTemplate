@@ -411,12 +411,31 @@ try {
     }
   }
 
-  # MSI Packaging with cargo-wix
+  # MSI packaging with WiX Toolset v4, driving wix.exe directly.
+  #
+  # NOT cargo-wix. 0.3.9 is its newest release and it shells out to WiX v3's
+  # candle.exe + light.exe, neither of which exists here: ContainerHub installs
+  # WiX 4.0.6 as a dotnet tool (a single wix.exe) in
+  # windows/scripts/setup-scoop-tools.ps1 and points WIX=C:\WiX at it in
+  # windows/Dockerfile.base. Every MSI run therefore died with
+  # "The compiler application ('candle') does not exist at the 'C:\WiX' path",
+  # which went unnoticed while this step still ran as optional. Calling wix.exe
+  # keeps the image on one WiX generation instead of adding a second.
   $msiEnabled = Get-ConfigValue -Config $config -Path 'Msi.Enabled'
   if (-not $SkipMsi -and $msiEnabled) {
     Invoke-BuildStep -Context $context -StepName 'MSI Packaging' -Critical -Script {
-      Write-BuildLog -Context $context -Message "Installing cargo-wix..."
-      Invoke-BuildExternal -Context $context -File 'cargo' -Parameters @('install', 'cargo-wix') | Out-Null
+      $wixExe = $null
+      if (-not [string]::IsNullOrWhiteSpace($env:WIX)) {
+        $candidate = Join-Path $env:WIX 'wix.exe'
+        if (Test-Path $candidate) { $wixExe = $candidate }
+      }
+      if (-not $wixExe) {
+        $wixExe = (Get-Command 'wix.exe' -ErrorAction SilentlyContinue).Source
+      }
+      if (-not $wixExe) {
+        throw "WiX v4 (wix.exe) not found. Looked under `$env:WIX ('$env:WIX') and on PATH. The container image installs it via ContainerHub's windows/scripts/setup-scoop-tools.ps1."
+      }
+      Write-BuildLog -Context $context -Message "Using WiX: $wixExe"
 
       $resolvedVersion = $msixVersion
       $versionFile = Join-Path $workspacePath 'version.txt'
@@ -426,7 +445,7 @@ try {
       if ($resolvedVersion -match '^v') {
         $resolvedVersion = $resolvedVersion.Substring(1)
       }
-      # MSI version must be X.Y.Z format (3 components max for cargo-wix)
+      # MSI ProductVersion is limited to major.minor.build
       $versionParts = $resolvedVersion.Split('.')
       if ($versionParts.Count -gt 3) {
         $resolvedVersion = "$($versionParts[0]).$($versionParts[1]).$($versionParts[2])"
@@ -444,26 +463,50 @@ try {
 
       Write-BuildLog -Context $context -Message "Creating MSI package: $msiFile"
 
-      # cargo-wix looks for WXS files under <package-root>/wix/. With
-      # `-p kataglyphis_cli` that is crates/cli/wix/, which does not exist -
-      # this repo keeps the single WiX source at the WORKSPACE root. The result
-      # was "Error[2] (Generic): There are no WXS files to create an installer"
-      # on every run, hidden because the step ran under Invoke-BuildOptional.
-      #
       # Msi.WxsFile has been in Build-Windows.config.psd1 all along and was
-      # never read; cargo-wix takes the .wxs as a positional INPUT argument, so
-      # pass it explicitly rather than relying on directory discovery.
+      # never read - the old cargo-wix call let it look for WXS files under
+      # crates/cli/wix/, which does not exist, so it also failed with
+      # "There are no WXS files to create an installer".
       $wxsRel = Get-OrDefault (Get-ConfigValue -Config $config -Path 'Msi.WxsFile') 'wix/main.wxs'
       $wxsPath = if ([System.IO.Path]::IsPathRooted($wxsRel)) { $wxsRel } else { Join-Path $workspacePath $wxsRel }
       if (-not (Test-Path $wxsPath)) {
-        throw "WiX source not found: $wxsPath (Msi.WxsFile = '$wxsRel'). cargo-wix cannot build an installer without it."
+        throw "WiX source not found: $wxsPath (Msi.WxsFile = '$wxsRel')."
       }
 
-      $wixParams = @('wix', '--no-build', '--nocapture', '-p', 'kataglyphis_cli', '--output', $msiFile, $wxsPath)
-      Invoke-BuildExternal -Context $context -File 'cargo' -Parameters $wixParams | Out-Null
+      # Same IsPathRooted guard as the MSIX step: CARGO_TARGET_DIR is usually
+      # absolute in the container (C:\ct), and Join-Path would mangle it.
+      $msiCargoTargetFullPath = if ([System.IO.Path]::IsPathRooted($cargoTargetDir)) {
+        $cargoTargetDir
+      } else {
+        Join-Path $workspacePath $cargoTargetDir
+      }
+      $msiExePath = Join-Path (Join-Path $msiCargoTargetFullPath 'release') "$binary.exe"
+      if (-not (Test-Path $msiExePath)) {
+        throw "Expected executable not found: $msiExePath"
+      }
+
+      $licenseRel = Get-OrDefault (Get-ConfigValue -Config $config -Path 'Msi.LicenseFile') 'wix/License.rtf'
+      $licenseRtf = if ([System.IO.Path]::IsPathRooted($licenseRel)) { $licenseRel } else { Join-Path $workspacePath $licenseRel }
+      if (-not (Test-Path $licenseRtf)) {
+        throw "License file not found: $licenseRtf (Msi.LicenseFile = '$licenseRel', referenced by $wxsPath)."
+      }
+
+      # The WXS takes every moving path as a preprocessor variable so it never
+      # has to assume a target\release next to the workspace root.
+      $wixParams = @(
+        'build',
+        '-arch', 'x64',
+        '-ext', 'WixToolset.UI.wixext',
+        '-d', "Version=$resolvedVersion",
+        '-d', "ExeSource=$msiExePath",
+        '-d', "LicenseRtf=$licenseRtf",
+        '-out', $msiFile,
+        $wxsPath
+      )
+      Invoke-BuildExternal -Context $context -File $wixExe -Parameters $wixParams | Out-Null
 
       if (-not (Test-Path $msiFile)) {
-        throw "cargo-wix reported success but produced no file at $msiFile"
+        throw "wix.exe reported success but produced no file at $msiFile"
       }
 
       Write-BuildLogSuccess -Context $context -Message "MSI package created: $msiFile"

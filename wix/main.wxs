@@ -1,32 +1,36 @@
-<?xml version='1.0' encoding='windows-1252'?>
+<?xml version='1.0' encoding='utf-8'?>
 <!--
   Kataglyphis Rust Project Template
-  WiX installer configuration for cargo-wix
-  
-  This file is used by cargo-wix to generate MSI installers.
-  See: https://volks73.github.io/cargo-wix/
--->
-<Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
+  WiX installer configuration.
 
-    <Product
-        Id='*'
+  WiX Toolset v4 schema, built directly with `wix.exe build` (NOT cargo-wix).
+  cargo-wix 0.3.9 is the latest release and it only drives WiX v3
+  (candle.exe + light.exe); the container image ships WiX 4.0.6, which is a
+  single `wix.exe` and has no candle/light at all. See Scripts/Windows/Build-Windows.ps1.
+
+  Paths that move with the build (the binary follows CARGO_TARGET_DIR) are
+  passed in as preprocessor variables with `wix build -d Name=Value`, so
+  nothing here assumes a `target\release` next to the workspace root.
+-->
+<Wix xmlns='http://wixtoolset.org/schemas/v4/wxs'
+     xmlns:ui='http://wixtoolset.org/schemas/v4/wxs/ui'>
+
+    <Package
         Name='Kataglyphis Rust Project Template'
         UpgradeCode='E8B9F4A1-2C3D-4E5F-A6B7-8C9D0E1F2A3B'
         Manufacturer='Kataglyphis'
         Language='1033'
         Codepage='1252'
-        Version='$(var.Version)'>
+        Version='$(var.Version)'
+        InstallerVersion='450'
+        Compressed='yes'
+        Scope='perMachine'>
 
-        <Package Id='*'
+        <SummaryInformation
             Keywords='Installer'
             Description='Rust project template with optional GUI, ONNX backends, profiling, packaging, and CI workflows.'
             Manufacturer='Kataglyphis'
-            InstallerVersion='450'
-            Languages='1033'
-            Compressed='yes'
-            InstallScope='perMachine'
-            SummaryCodepage='1252'
-            />
+            Codepage='1252'/>
 
         <MajorUpgrade
             Schedule='afterInstallInitialize'
@@ -35,41 +39,34 @@
         <Media Id='1' Cabinet='media1.cab' EmbedCab='yes' DiskPrompt='CD-ROM #1'/>
         <Property Id='DiskPrompt' Value='Kataglyphis Rust Project Template Installation'/>
 
-        <Directory Id='TARGETDIR' Name='SourceDir'>
-            <Directory Id='ProgramFiles64Folder' Name='PFiles'>
-                <Directory Id='APPLICATIONFOLDER' Name='Kataglyphis Rust Project Template'>
-                    <!--
-                      Uncomment to add a subdirectory for binaries:
-                      <Directory Id='Bin' Name='bin'>
-                    -->
-                </Directory>
-            </Directory>
-            <Directory Id='ProgramMenuFolder'>
-                <Directory Id='ApplicationProgramsFolder' Name='Kataglyphis Rust Project Template'/>
-            </Directory>
-        </Directory>
+        <StandardDirectory Id='ProgramFiles64Folder'>
+            <Directory Id='APPLICATIONFOLDER' Name='Kataglyphis Rust Project Template'/>
+        </StandardDirectory>
+        <StandardDirectory Id='ProgramMenuFolder'>
+            <Directory Id='ApplicationProgramsFolder' Name='Kataglyphis Rust Project Template'/>
+        </StandardDirectory>
 
         <DirectoryRef Id='APPLICATIONFOLDER'>
-            <Component Id='License' Guid='*' Win64='yes'>
+            <Component Id='License' Bitness='always64'>
                 <File Id='LicenseFile'
                     Name='License.rtf'
                     DiskId='1'
-                    Source='wix\License.rtf'
+                    Source='$(var.LicenseRtf)'
                     KeyPath='yes'/>
             </Component>
-            
-            <Component Id='binary0' Guid='*' Win64='yes'>
+
+            <Component Id='binary0' Bitness='always64'>
                 <File
                     Id='exe0'
                     Name='kataglyphis_rustprojecttemplate.exe'
                     DiskId='1'
-                    Source='target\release\kataglyphis_rustprojecttemplate.exe'
+                    Source='$(var.ExeSource)'
                     KeyPath='yes'/>
             </Component>
         </DirectoryRef>
 
         <DirectoryRef Id='ApplicationProgramsFolder'>
-            <Component Id='ApplicationShortcut' Guid='*' Win64='yes'>
+            <Component Id='ApplicationShortcut' Bitness='always64'>
                 <Shortcut Id='ApplicationStartMenuShortcut'
                     Name='Kataglyphis Rust Project Template'
                     Description='Rust project template with optional GUI, ONNX backends, profiling, packaging, and CI workflows.'
@@ -88,8 +85,8 @@
             ConfigurableDirectory='APPLICATIONFOLDER'
             AllowAdvertise='no'
             Display='expand'
-            Absent='disallow'>
-            
+            AllowAbsent='no'>
+
             <ComponentRef Id='License'/>
             <ComponentRef Id='binary0'/>
 
@@ -98,7 +95,7 @@
                 Title='Start Menu Shortcuts'
                 Description='Adds a shortcut to the Start menu.'
                 Level='1'
-                Absent='allow'>
+                AllowAbsent='yes'>
                 <ComponentRef Id='ApplicationShortcut'/>
             </Feature>
         </Feature>
@@ -114,23 +111,31 @@
         -->
 
         <Property Id='ARPHELPLINK' Value='https://github.com/Kataglyphis/Kataglyphis-RustProjectTemplate'/>
-        
+
+        <!--
+          Requires `-ext WixToolset.UI.wixext` on the wix build command line.
+          The extension ships in the container image already (4.0.4).
+        -->
+        <ui:WixUI Id='WixUI_FeatureTree'/>
+
         <UI>
-            <UIRef Id='WixUI_FeatureTree'/>
             <!--
-              Disable the EULA dialog by commenting this out:
+              Skip the EULA dialog: send Welcome straight to the feature tree.
+              Order 99 beats the extension's own Welcome->LicenseAgreement row.
+              Delete these two to get the license dialog back.
             -->
-            <Publish Dialog='WelcomeDlg' Control='Next' Event='NewDialog' Value='CustomizeDlg' Order='99'>1</Publish>
-            <Publish Dialog='CustomizeDlg' Control='Back' Event='NewDialog' Value='WelcomeDlg' Order='99'>1</Publish>
+            <Publish Dialog='WelcomeDlg' Control='Next' Event='NewDialog' Value='CustomizeDlg' Order='99' Condition='1'/>
+            <Publish Dialog='CustomizeDlg' Control='Back' Event='NewDialog' Value='WelcomeDlg' Order='99' Condition='1'/>
         </UI>
 
         <!--
-          Disable the license agreement by uncommenting:
+          Show a license agreement by uncommenting this and removing the two
+          Publish overrides above:
         -->
         <!--
         <WixVariable Id='WixUILicenseRtf' Value='wix\License.rtf'/>
         -->
 
-    </Product>
+    </Package>
 
 </Wix>
