@@ -10,21 +10,20 @@
 # stderr handling has shifted across PowerShell versions; the explicit check does not.
 $ProgressPreference = 'SilentlyContinue'
 
+# Logging comes from ContainerHub. The driver copies this module next to this
+# script into the mounted scratch dir, because the staged sources deliberately
+# exclude ExternalLib - nothing under windows/scripts/modules/ is reachable
+# from inside the container otherwise.
+Import-Module 'C:\host-scratch\WindowsContainerLog.Common.psm1' -Force
+
 # Persist ALL output to the mounted scratch dir -- the docker CLI pipe drops
 # intermittently on this host, so console logs alone can be lost.
-$log = 'C:\host-scratch\in-container-build.log'
-Remove-Item $log -Force -ErrorAction SilentlyContinue
-function Say([string]$msg) { Write-Host $msg; Add-Content -Path $log -Value $msg }
-function Run-Logged([string]$cmdline) {
-    # cmd wrapper: merges native stderr without PowerShell ErrorRecord mangling
-    cmd /c "$cmdline 2>&1" | ForEach-Object { Write-Host $_; Add-Content -Path $log -Value $_ }
-    return $LASTEXITCODE
-}
+Start-ContainerLog -Path 'C:\host-scratch\in-container-build.log'
 
-Say "=== Rust container build: debug / profile / release ==="
-Say "cpus: $env:NUMBER_OF_PROCESSORS"
-[void](Run-Logged 'rustc -vV')
-if ((Run-Logged 'cargo --version') -ne 0) { Say 'FATAL: cargo not usable'; exit 1 }
+Write-ContainerLog "=== Rust container build: debug / profile / release ==="
+Write-ContainerLog "cpus: $env:NUMBER_OF_PROCESSORS"
+[void](Invoke-ContainerLoggedCommand 'rustc -vV')
+if ((Invoke-ContainerLoggedCommand 'cargo --version') -ne 0) { Write-ContainerLog 'FATAL: cargo not usable'; exit 1 }
 
 New-Item -ItemType Directory -Force -Path C:\ct, C:\ch | Out-Null
 $env:CARGO_TARGET_DIR = 'C:\ct'

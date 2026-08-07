@@ -82,6 +82,16 @@ robocopy $repoRoot $ws /MIR /XD target ExternalLib .git .vs out dist debug profi
 if ($LASTEXITCODE -ge 8) { throw "robocopy staging failed ($LASTEXITCODE)" }
 Copy-Item (Join-Path $PSScriptRoot 'rust-build-all.ps1'), (Join-Path $PSScriptRoot 'rust-test-all.ps1') -Destination $scratch -Force
 
+# The in-container scripts import their logging from here. It has to travel
+# with them: the robocopy above excludes ExternalLib, so nothing under
+# windows/scripts/modules/ exists inside the container. Staged into the scratch
+# mount, which both scripts already write their logs to.
+$containerLogModule = Join-Path $containerHubModules 'WindowsContainerLog.Common.psm1'
+if (-not (Test-Path $containerLogModule)) {
+    throw "Required module not found: $containerLogModule"
+}
+Copy-Item $containerLogModule -Destination $scratch -Force
+
 function Invoke-ContainerScript {
     param([Parameter(Mandatory)][string]$Script, [Parameter(Mandatory)][string]$Label)
     # Remove-BuildContainerSafe, not a bare `docker rm -f`: on this host the
