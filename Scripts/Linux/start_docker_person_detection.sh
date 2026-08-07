@@ -17,7 +17,7 @@ docker run --rm -it \
     -e GALLIUM_DRIVER=llvmpipe \
     -e GSK_RENDERER=cairo \
     -v /tmp/.X11-unix:/tmp/.X11-unix \
-    -v $(pwd):/workspace \
+    -v "$(pwd):/workspace" \
     -w /workspace \
     ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross \
     bash -lc '
@@ -34,13 +34,19 @@ docker run --rm -it \
     done
     export LD_LIBRARY_PATH="/opt/gstreamer/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
 
-    # Installiere die für GStreamer-Plugins zur Laufzeit fehlenden System-Bibliotheken nach,
-    # die im Dockerfile im finalen Stage nicht übernommen/installiert wurden.
+    # Only what the image genuinely does NOT ship. This list used to name 24
+    # packages; 22 of them are already installed by ContainerHub'"'"'s
+    # linux/scripts/03-media/runtime/install-deps.sh, so it was a stale copy of
+    # that list which would drift every time the image changed.
+    #
+    # libgtk-4-dev is the real gap, and a deliberate one: ContainerHub excludes
+    # it because the foreign-arch GTK dev chain pulls target-side Python and
+    # breaks cross builds on python3-minimal'"'"'s postinst. Installing it here,
+    # at runtime, in a throwaway container, is the right place for it - not in
+    # the image. Keep this list minimal for the same reason; if something else
+    # turns out to be missing, check install-deps.sh first, it probably is not.
     apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
-        libunwind-dev libdw-dev libgtk-4-dev libv4l-0 libjson-glib-1.0-0 dbus-x11 \
-        libopenexr-dev libx264-dev libcdio-dev libspeex-dev libopenh264-dev libsrtp2-dev \
-        libtwolame-dev libgsm1-dev libdav1d-dev libwavpack-dev libx265-dev libdc1394-dev \
-        libvpx-dev libavcodec-dev libcsound64-dev libtbb12 libavfilter9 libavfilter-dev libavformat-dev || true
+        libgtk-4-dev libavfilter9 || true
 
     bash Scripts/Linux/run_person_detection.sh
     '
