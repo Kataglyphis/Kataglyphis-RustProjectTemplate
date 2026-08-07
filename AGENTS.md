@@ -17,7 +17,28 @@ Cargo workspace (`Cargo.toml` at the root is both the workspace and the root pac
 
 ## ContainerHub is the ground truth
 
-Anything to do with containers, Dockerfiles, CI plumbing or PowerShell belongs to the submodule. **Search it before writing a helper.** Everything below was written locally first and later found to already exist there — usually in a better form, twice with a bug the local copy did not have:
+Anything to do with containers, Dockerfiles, CI plumbing or PowerShell belongs to the submodule. **Search it before writing a helper.**
+
+**Do not re-derive host knowledge here — read it there.** Everything about Stevedore, Rancher Desktop, wcifs/bindFlt and the container hosts is already written down, in more depth than this file should carry:
+
+| Question | Document |
+| --- | --- |
+| How do I set up a Windows host for Stevedore? (services, `docker-users`, CNI nat conf, pwsh, gates) | `docs/windows-host-setup.md` |
+| Why does a layer commit fail / what is process isolation doing? wcifs, bindFlt, the `ActivateLayer 0x20` bug | `docs/windows-builds.md` |
+| How do I run Linux containers on Windows? | `docs/rancher-desktop-linux-containers.md` |
+| Which image, which tag, which engine? | `docs/adopting-in-a-new-project.md` |
+| Why did my lane not run? | `docs/ci-build-triggers.md` |
+
+When something in this file contradicts one of those, the submodule wins — that has already happened once: this file claimed Dev Drive volumes *refuse* bind mounts, while `windows-builds.md` says they work and it is create-then-rename that fails.
+
+## Linux containers locally (Rancher Desktop)
+
+Read `docs/rancher-desktop-linux-containers.md` first. The essentials as they apply here: the image is **always** `:latest-cross`, Rancher defaults to the **containerd** engine so it is `nerdctl --namespace default` rather than `docker`, and from Git Bash `MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'` is mandatory or the mount argument is mangled. Point `CARGO_HOME` at a writable path (the image's is root-owned); a named volume keeps the registry warm between runs.
+
+Two consumer-specific traps, both hit on 2026-08-07:
+
+- **A CRLF checkout breaks it before anything runs.** The scripts are executed by bash inside the container; a `\r` makes it fail with `set: pipefail\r: invalid option name`, which names neither the file nor line endings. `.gitattributes` now pins `*.sh` to LF in both repos, but git does not rewrite an existing checkout: `git ls-files -z '*.sh' | xargs -0 rm -f && git checkout -- .`
+- **The image's Rust may be older than its own pin.** See "Known gaps" — `latest-cross` shipped Ubuntu's rustc 1.93.1 while `versions.env` pinned 1.97.1, which surfaced as a dependency's MSRV error, not as an image problem. Fixed in ContainerHub; check `rustc --version` in the container if a build fails on an MSRV floor. Everything below was written locally first and later found to already exist there — usually in a better form, twice with a bug the local copy did not have:
 
 | Need | Use | Not |
 | --- | --- | --- |
@@ -75,7 +96,9 @@ Mounting the repo also means `ExternalLib/` is present inside the container, so 
 
 Hard-won host facts (verified 2026-07-17; full background in the submodule's `docs/windows-builds.md`):
 
-- **Use Stevedore's `docker.exe`, never nerdctl** — but do not hard-code the path: `Resolve-DockerExe` already checks `$env:DOCKER_EXE`, both Stevedore locations and then PATH. nerdctl is excluded deliberately; it talks to containerd, not this lane's engine.
+- **Use Stevedore's `docker.exe`, never nerdctl — for WINDOWS containers.** Do not hard-code the path: `Resolve-DockerExe` checks `$env:DOCKER_EXE`, both Stevedore locations, then PATH. nerdctl is excluded deliberately because it talks to containerd, not this lane's engine. The rule inverts for Linux containers, where Rancher Desktop *is* containerd and `nerdctl` is correct — see the Rancher section above. Both CLIs exist on this host and neither error tells you that you picked the wrong one.
+
+  Stevedore ships a full containerd stack too (`containerd.exe`, `ctr.exe`, `nerdctl.exe`, `buildctl.exe`) and the service runs, but its pipe needs elevation: a non-admin `nerdctl version` fails with `cannot access containerd socket "\\.\pipe\containerd-containerd": Zugriff verweigert` (measured 2026-08-07). Docker's pipe does not. That is the practical reason the Windows lane is docker-only, on top of the engine mismatch.
 - **Dev Drive (ReFS) bind mounts: measure, do not assume.** A volume whose filters were never allowed refuses them with *"Der Dateisystem-Minifilter kann nicht an das Entwicklervolume angefügt werden"*; `fsutil devdrv setfiltersallowed bindFlt, wcifs` (elevated) plus a remount fixes that permanently. **On this host they work** — mounting the repo straight off ReFS `D:` into the container was verified on 2026-08-07 (`--mount type=bind,source=D:\GitHub\...` → the tree is readable, exit 0). Note `fsutil devdrv query` needs elevation, so a failing query says nothing; try the mount.
 
   Reading works; **writing through the mount is the caveat**, and it is why the driver stages to `%LOCALAPPDATA%\Temp` and keeps build output container-local rather than because mounting is impossible. Per the submodule's `docs/windows-builds.md`, `bindFlt` rejects `copySync`/`renameSync` with errno 3, so create-then-rename — which cargo and CMake both do — is what actually breaks.

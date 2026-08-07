@@ -146,7 +146,7 @@ The suites live in:
 - Integration tests: `tests/integration.rs`.
 - Fuzz (property-based) tests: `tests/fuzz_test.rs` via [proptest](https://proptest-rs.github.io/proptest/) (256 random inputs per case by default). There is no separate `cargo-fuzz`/libFuzzer setup.
 
-Latest verified run (2026-07-17, debug profile, inside the Stevedore Windows container): **8 passed / 0 failed** — 3 integration, 1 proptest fuzz case, 4 telemetry unit tests; 1 doc-test ignored.
+Latest verified run (2026-08-07, Stevedore Windows container): the 8 tests that predate `crates/webgpu_renderer` pass — 3 integration, 1 proptest fuzz case, 4 telemetry unit. **`kataglyphis_webgpu_renderer --lib` cannot start there**: it exits `0xc0000135` (`STATUS_DLL_NOT_FOUND`) before `main`, because a wgpu-linked binary imports `opengl32.dll` and Windows Server Core does not ship it. Not a regression — the old "8 passed" figure was recorded a day before that crate existed. See [AGENTS.md](AGENTS.md) for the full analysis and the workaround.
 
 <!-- ROADMAP -->
 ## Run
@@ -270,18 +270,42 @@ pwsh -ExecutionPolicy Bypass -File .\Scripts\Windows\Container\Invoke-StevedoreB
 
 > **Dev Drive (ReFS) is not a blocker — reading through a bind mount works.** What does not work is create-then-rename through it (`bindFlt` rejects `copySync`/`renameSync` with errno 3), which is precisely what cargo does. The driver keeps every build write container-local (`CARGO_TARGET_DIR=C:\ct`, `CARGO_HOME=C:\ch`), so only a plain artifact copy crosses the mount. If a host really does refuse it, `docker run` fails at once with *"Der Dateisystem-Minifilter kann nicht an das Entwicklervolume angefügt werden"*; fix it permanently with one elevated `fsutil devdrv setfiltersallowed bindFlt, wcifs` and a remount, or use `-StageSources` meanwhile. `fsutil devdrv query` needs elevation itself, so a failing query tells you nothing — just try the mount.
 
-Artifacts land in `target\container\{debug,profile,release}` and are mirrored to the (gitignored) repo-root `debug\`, `profile\`, `release\` folders; each contains the CLI exe, cdylib (`.dll` + import lib), staticlib (`.lib`) and pdb. Latest verified run (2026-07-17): all three profiles built (debug 1m11s, profile 1m31s, release 1m08s) and the binaries run on the host, e.g.:
+Artifacts land in `target\container\{debug,profile,release}` and are mirrored to the (gitignored) repo-root `debug\`, `profile\`, `release\` folders; each contains the CLI exe, cdylib (`.dll` + import lib), staticlib (`.lib`) and pdb. Latest verified run (2026-08-07, rustc 1.97.1): all three profiles built (debug 1m35s, profile 1m32s, release 1m12s), written straight into the repo through the mount, and the binaries run on the host, e.g.:
 
 ```pwsh
 .\release\kataglyphis_rustprojecttemplate.exe stats --path .\README.md
 ```
 
-Host caveats the driver handles automatically (details in `AGENTS.md` and `ExternalLib\Kataglyphis-ContainerHub\docs\windows-builds.md`):
+Host caveats the driver handles automatically. **ContainerHub is the authority on all of this** — these are pointers, not a second copy:
 
-- **Dev Drive sources cannot be bind-mounted** unless `bindFlt`/`wcifs` are allowed on the volume — sources are staged to a non-Dev-Drive path first. Durable fix (elevated, then remount): `fsutil devdrv setfiltersallowed bindFlt, wcifs`
-- `--isolation process` is used for the full host CPU count (Hyper-V isolation caps at 2).
-- All cargo writes stay container-local (`CARGO_TARGET_DIR`/`CARGO_HOME`); artifacts return via plain copies through the mount.
-- A dropped docker CLI pipe does **not** mean the build died — the driver waits on the actual container state.
+- `--isolation process` for the full host CPU count (Hyper-V isolation caps at 2), via `Get-ContainerIsolationArgs`.
+- All cargo writes stay container-local (`CARGO_TARGET_DIR=C:\ct`, `CARGO_HOME=C:\ch`); only a plain artifact copy crosses the mount, because `bindFlt` rejects create-then-rename.
+- A dropped docker CLI pipe does **not** mean the build died — the driver waits on the actual container state, and tears containers down with `Remove-BuildContainerSafe`.
+
+| Topic | Read |
+| --- | --- |
+| Setting up a Windows host for Stevedore (services, `docker-users`, CNI nat conf) | [`docs/windows-host-setup.md`](ExternalLib/Kataglyphis-ContainerHub/docs/windows-host-setup.md) |
+| Windows container internals: wcifs/bindFlt, process isolation, layer-commit bug | [`docs/windows-builds.md`](ExternalLib/Kataglyphis-ContainerHub/docs/windows-builds.md) |
+| Running Linux containers on Windows (Rancher Desktop) | [`docs/rancher-desktop-linux-containers.md`](ExternalLib/Kataglyphis-ContainerHub/docs/rancher-desktop-linux-containers.md) |
+| Wiring a new project to all of it | [`docs/adopting-in-a-new-project.md`](ExternalLib/Kataglyphis-ContainerHub/docs/adopting-in-a-new-project.md) |
+
+### Linux containers locally (Rancher Desktop)
+
+The Linux image is **always** `ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross`, in CI and locally. Rancher Desktop defaults to the **containerd** engine, so use `nerdctl`, not `docker` — and from Git Bash disable path mangling or the mount argument is destroyed. Full instructions: [`docs/rancher-desktop-linux-containers.md`](ExternalLib/Kataglyphis-ContainerHub/docs/rancher-desktop-linux-containers.md).
+
+```pwsh
+$env:MSYS_NO_PATHCONV=1; $env:MSYS2_ARG_CONV_EXCL='*'
+rdctl shell nerdctl --namespace default run --rm --user root `
+  -v kata-cargo-cache:/cargo-cache `
+  -v /mnt/d/path/to/repo:/workspace -w /workspace `
+  ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross `
+  bash -lc 'export CARGO_HOME=/cargo-cache; bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_release.sh'
+```
+
+Two things that will bite on a Windows checkout, both verified 2026-08-07:
+
+- **Shell scripts must be LF.** `.gitattributes` enforces it, but a checkout older than that rule keeps CRLF and bash dies on `set: pipefail\r: invalid option name`. One-time fix: `git ls-files -z '*.sh' | xargs -0 rm -f && git checkout -- .`
+- `CARGO_HOME` in the image is root-owned, so point it at a writable path (a named volume keeps the registry across runs).
 
 ### Windows MSIX packaging
 
