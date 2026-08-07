@@ -24,7 +24,7 @@ log = { workspace = true }
 kataglyphis_core = { path = "../core" }
 
 # ONNX inference (optional)
-tract-onnx = { version = "0.22", optional = true }
+tract-onnx = { version = "0.23", optional = true }
 ort = { workspace = true, optional = true }
 
 [lints]
