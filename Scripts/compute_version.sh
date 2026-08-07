@@ -38,14 +38,28 @@ if [[ ! "$ver" =~ ^[0-9] ]]; then
   ver="$RUN_NUMBER"
 fi
 
-# Compute MSIX version: ensure four numeric components (major.minor.patch.build)
-msix_ver="$ver"
-if [[ "$msix_ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  msix_ver="${msix_ver}.0"
-fi
-if [[ ! "$msix_ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  # If file provided a non-numeric MSIX-like version, don't propagate; default to 0.1.0.0
-  msix_ver="0.1.0.0"
+# Four-component MSIX version. The rule (append .0 to a three-part version,
+# otherwise fall back to 0.1.0.0) is ContainerHub's `version_util.sh
+# --normalize`; this used to be a second implementation of it here, which is
+# how the two get to disagree. Only the VERSION.txt sourcing and the
+# GITHUB_ENV/GITHUB_OUTPUT plumbing below are genuinely this repo's.
+#
+# Checked against the old inline rule over 11 inputs (verified 2026-08-07):
+# identical on every one except a leading "v" (`v2.3.4` -> 2.3.4.0 there,
+# 0.1.0.0 here). That case cannot arise: ${ver} has already had a leading "v"
+# stripped above, and the `^[0-9]` guard has already replaced anything else
+# with RUN_NUMBER, so ${ver} always starts with a digit by this point.
+version_util="ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/version_util.sh"
+if [[ -x "$version_util" || -f "$version_util" ]]; then
+  msix_ver="$(bash "$version_util" --normalize "$ver")"
+else
+  # Submodule not checked out (a shallow consumer clone, or a local run before
+  # `git submodule update`). Keep the lane alive with the same rule inline
+  # rather than failing the build over a missing helper.
+  echo "WARNING: ${version_util} not found; using the inline MSIX fallback." >&2
+  msix_ver="$ver"
+  [[ "$msix_ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && msix_ver="${msix_ver}.0"
+  [[ "$msix_ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || msix_ver="0.1.0.0"
 fi
 
 # Export results for subsequent steps

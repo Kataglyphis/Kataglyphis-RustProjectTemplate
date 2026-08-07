@@ -48,27 +48,23 @@ jobs:
       # recursive checkout here dies with "Filename too long" and
       # "fatal: '$GIT_DIR' too big" before any build step runs. So check out
       # WITHOUT submodules, then clone the whole tree into a SHORT path where
-      # the same chain fits, and build from there. Mirrors the fix already
-      # proven in BeschleunigerBallett's Windows lane.
+      # the same chain fits, and build from there.
       - name: Checkout repository (no submodules; see the short-path clone below)
         uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
           submodules: false
 
+      # This used to be ~10 hand-written lines here. ContainerHub ships the
+      # identical fix - including the SSH->token-HTTPS rewrite that .gitmodules
+      # forces (it pins git@github.com: for ContainerHub and a hosted runner has
+      # no SSH key) - so consume it instead of maintaining a second copy that
+      # can drift from the one BeschleunigerBallett's Windows lane uses.
       - name: Clone full tree with submodules into a short path (D:\ws)
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          git config --global core.longpaths true
-          # .gitmodules pins git@github.com: (SSH) for ContainerHub and the
-          # runner has no SSH key; rewrite to token HTTPS as checkout would.
-          git config --global url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf "git@github.com:"
-          rm -rf /d/ws
-          git clone "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" /d/ws
-          git -C /d/ws checkout --force "${{ github.sha }}"
-          git -C /d/ws submodule update --init --recursive
+        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/clone-into-short-path@main
+        with:
+          target: /d/ws
+          token: ${{ github.token }}
 
       - name: Compute version
         id: compute_version
@@ -77,6 +73,16 @@ jobs:
 
       - name: Cleanup disk space
         uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/cleanup-disk-space@main
+
+      # Cleaning is not the same as having cleaned ENOUGH. The winamd64 image is
+      # ~54 GB to import, and a drive measured with 59.3 GB free still failed
+      # with hcsshim::ImportLayer "not enough space on the disk (0x70)" - after
+      # `docker pull` had already ground away for ~40 minutes. Fail in seconds
+      # instead, on the drive Docker's data-root actually lives on.
+      - name: Assert enough disk for the image import
+        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/assert-docker-disk-space@main
+        with:
+          required-free-gb: '70'
 
       - name: Login to GitHub
         uses: docker/login-action@v4.6.0
@@ -88,66 +94,75 @@ jobs:
       - name: Pull image
         run: docker pull ${{ env.WINDOWS_CONTAINER_IMAGE }}
 
+      # The four container steps below used to be hand-written `docker run`
+      # blocks repeating --memory/--cpus/--mount/-w twelve times between them.
+      # ContainerHub's action carries those defaults (D:\ws -> C:\ws, 16g) and,
+      # unlike the hand-rolled version, delivers the command and its arguments
+      # through environment variables rather than interpolating them into a
+      # shell line - so a value containing a quote or a `$` cannot escape into
+      # the host's PowerShell. `file:` + `file-args:` is the documented form for
+      # "a script plus an argument vector": under -File every file-args line is
+      # one literal argv element, with no PowerShell parsing of its value.
       - name: Run debug unit, integration, and fuzz tests
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-
-          docker run --rm `
-            --memory "${{ env.WINDOWS_DOCKER_MEMORY }}" `
-            --cpus ${{ env.WINDOWS_DOCKER_CPUS }} `
-            --env CARGO_TERM_COLOR="${{ env.CARGO_TERM_COLOR }}" `
-            --env CARGO_BUILD_JOBS="${{ env.WINDOWS_DOCKER_CPUS }}" `
-            --mount "type=bind,source=D:\ws,target=C:\ws" `
-            -w "C:\ws" `
-            ${{ env.WINDOWS_CONTAINER_IMAGE }} `
-            pwsh -NoProfile -ExecutionPolicy Bypass -File `
-            "C:\ws\Scripts\Windows\Invoke-DebugTests.ps1"
+        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/run-in-windows-container@main
+        with:
+          image: ${{ env.WINDOWS_CONTAINER_IMAGE }}
+          cpus: ${{ env.WINDOWS_DOCKER_CPUS }}
+          memory: ${{ env.WINDOWS_DOCKER_MEMORY }}
+          file: C:\ws\Scripts\Windows\Invoke-DebugTests.ps1
+          extra-args: |
+            --env
+            CARGO_TERM_COLOR=${{ env.CARGO_TERM_COLOR }}
+            --env
+            CARGO_BUILD_JOBS=${{ env.WINDOWS_DOCKER_CPUS }}
 
       - name: Build and run all Windows app configs
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
+        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/run-in-windows-container@main
+        with:
+          image: ${{ env.WINDOWS_CONTAINER_IMAGE }}
+          cpus: ${{ env.WINDOWS_DOCKER_CPUS }}
+          memory: ${{ env.WINDOWS_DOCKER_MEMORY }}
+          file: C:\ws\Scripts\Windows\Invoke-WindowsConfigMatrix.ps1
+          extra-args: |
+            --env
+            CARGO_TERM_COLOR=${{ env.CARGO_TERM_COLOR }}
+            --env
+            CARGO_BUILD_JOBS=${{ env.WINDOWS_DOCKER_CPUS }}
 
-          docker run --rm `
-            --memory "${{ env.WINDOWS_DOCKER_MEMORY }}" `
-            --cpus ${{ env.WINDOWS_DOCKER_CPUS }} `
-            --env CARGO_TERM_COLOR="${{ env.CARGO_TERM_COLOR }}" `
-            --env CARGO_BUILD_JOBS="${{ env.WINDOWS_DOCKER_CPUS }}" `
-            --mount "type=bind,source=D:\ws,target=C:\ws" `
-            -w "C:\ws" `
-            ${{ env.WINDOWS_CONTAINER_IMAGE }} `
-            pwsh -NoProfile -ExecutionPolicy Bypass -File `
-            "C:\ws\Scripts\Windows\Invoke-WindowsConfigMatrix.ps1"
-
+      # VERSION deliberately carries MSIX_VERSION (the four-component form)
+      # here, as it did before: this step is the one that stamps the package.
       - name: Build, lint, and package MSIX/MSI
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-
-          # Use MSIX_VERSION computed by the shared script
-          $ver = "${{ env.MSIX_VERSION }}"
-
-            docker run --rm `
-            --memory "${{ env.WINDOWS_DOCKER_MEMORY }}" `
-            --cpus ${{ env.WINDOWS_DOCKER_CPUS }} `
-            --env BINARY="${{ env.BINARY }}" `
-            --env VERSION="$ver" `
-            --env CARGO_TERM_COLOR="${{ env.CARGO_TERM_COLOR }}" `
-            --env CARGO_BUILD_JOBS="${{ env.WINDOWS_DOCKER_CPUS }}" `
-            --env CARGO_FEATURES="${{ env.WINDOWS_PACKAGE_FEATURES }}" `
-            --env MSIX_PACKAGE_NAME="${{ env.MSIX_PACKAGE_NAME }}" `
-            --env MSIX_PUBLISHER="${{ env.MSIX_PUBLISHER }}" `
-            --env MSIX_PUBLISHER_DISPLAY_NAME="${{ env.MSIX_PUBLISHER_DISPLAY_NAME }}" `
-            --env MSIX_DISPLAY_NAME="${{ env.MSIX_DISPLAY_NAME }}" `
-            --env MSIX_DESCRIPTION="${{ env.MSIX_DESCRIPTION }}" `
-            --env MSIX_VERSION="$ver" `
-            --mount "type=bind,source=D:\ws,target=C:\ws" `
-            -w "C:\ws" `
-            ${{ env.WINDOWS_CONTAINER_IMAGE }} `
-            pwsh -NoProfile -ExecutionPolicy Bypass -File `
-            "C:\ws\Scripts\Windows\Build-Windows.ps1" `
+        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/run-in-windows-container@main
+        with:
+          image: ${{ env.WINDOWS_CONTAINER_IMAGE }}
+          cpus: ${{ env.WINDOWS_DOCKER_CPUS }}
+          memory: ${{ env.WINDOWS_DOCKER_MEMORY }}
+          file: C:\ws\Scripts\Windows\Build-Windows.ps1
+          file-args: |
             -SkipTests
+          extra-args: |
+            --env
+            BINARY=${{ env.BINARY }}
+            --env
+            VERSION=${{ env.MSIX_VERSION }}
+            --env
+            CARGO_TERM_COLOR=${{ env.CARGO_TERM_COLOR }}
+            --env
+            CARGO_BUILD_JOBS=${{ env.WINDOWS_DOCKER_CPUS }}
+            --env
+            CARGO_FEATURES=${{ env.WINDOWS_PACKAGE_FEATURES }}
+            --env
+            MSIX_PACKAGE_NAME=${{ env.MSIX_PACKAGE_NAME }}
+            --env
+            MSIX_PUBLISHER=${{ env.MSIX_PUBLISHER }}
+            --env
+            MSIX_PUBLISHER_DISPLAY_NAME=${{ env.MSIX_PUBLISHER_DISPLAY_NAME }}
+            --env
+            MSIX_DISPLAY_NAME=${{ env.MSIX_DISPLAY_NAME }}
+            --env
+            MSIX_DESCRIPTION=${{ env.MSIX_DESCRIPTION }}
+            --env
+            MSIX_VERSION=${{ env.MSIX_VERSION }}
 
       - name: Prepare archive variables
         id: vars
@@ -159,25 +174,23 @@ jobs:
           echo "version=$ver" >> $env:GITHUB_OUTPUT
 
       - name: Create archive
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $ver = "${{ steps.vars.outputs.version }}"
-          $archive = "${{ steps.vars.outputs.archive_name }}"
-
-          docker run --rm `
-            --memory "${{ env.WINDOWS_DOCKER_MEMORY }}" `
-            --cpus ${{ env.WINDOWS_DOCKER_CPUS }} `
-            --mount "type=bind,source=D:\ws,target=C:\ws" `
-            -w "C:\ws" `
-            -e "BINARY=${{ env.BINARY }}" `
-            -e "VERSION=$ver" `
-            -e "PLATFORM=windows-2025" `
-            -e "ARCH=x64" `
-            -e "CARGO_BUILD_JOBS=${{ env.WINDOWS_DOCKER_CPUS }}" `
-            ${{ env.WINDOWS_CONTAINER_IMAGE }} `
-            pwsh -NoProfile -ExecutionPolicy Bypass -File `
-            "C:\ws\ExternalLib\Kataglyphis-ContainerHub\windows\scripts\rust\New-Archive.ps1"
+        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/run-in-windows-container@main
+        with:
+          image: ${{ env.WINDOWS_CONTAINER_IMAGE }}
+          cpus: ${{ env.WINDOWS_DOCKER_CPUS }}
+          memory: ${{ env.WINDOWS_DOCKER_MEMORY }}
+          file: C:\ws\ExternalLib\Kataglyphis-ContainerHub\windows\scripts\rust\New-Archive.ps1
+          extra-args: |
+            --env
+            BINARY=${{ env.BINARY }}
+            --env
+            VERSION=${{ steps.vars.outputs.version }}
+            --env
+            PLATFORM=windows-2025
+            --env
+            ARCH=x64
+            --env
+            CARGO_BUILD_JOBS=${{ env.WINDOWS_DOCKER_CPUS }}
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v7.0.1

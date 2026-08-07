@@ -23,62 +23,15 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-function Get-OrDefault([string]$Value, [string]$DefaultValue) {
-  if ([string]::IsNullOrWhiteSpace($Value)) { return $DefaultValue }
-  return $Value
-}
+# Get-OrDefault and Get-ConfigValue used to be defined here, byte-identical to
+# ContainerHub's WindowsConfig.Common.psm1. They now come from that module -
+# see the import block below.
 
-function Get-ConfigValue {
-  param(
-    [Parameter(Mandatory)]
-    $Config,
-    [Parameter(Mandatory)]
-    [string]$Path
-  )
-
-  $cursor = $Config
-  foreach ($segment in ($Path -split '\.')) {
-    if ($null -eq $cursor) { return $null }
-    try {
-      $cursor = $cursor[$segment]
-    } catch {
-      return $null
-    }
-  }
-
-  return $cursor
-}
-
-function Assert-Command([string]$Name, [string]$InstallHint) {
-  if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
-    throw "$Name not found. $InstallHint"
-  }
-}
-
-function Resolve-Executable([string]$Name) {
-  $cmd = Get-Command $Name -ErrorAction SilentlyContinue
-  if ($cmd) {
-    return $cmd.Source
-  }
-
-  $sdkRoots = @(
-    "C:/Program Files (x86)/Windows Kits/10/bin",
-    "C:/Program Files/Windows Kits/10/bin"
-  )
-
-  foreach ($root in $sdkRoots) {
-    if (-not (Test-Path $root)) { continue }
-    $candidates = Get-ChildItem -Path $root -Recurse -Filter ("{0}.exe" -f $Name) -ErrorAction SilentlyContinue |
-      Where-Object { $_.FullName -match "\\x64\\" -or $_.FullName -match "/x64/" } |
-      Sort-Object FullName -Descending
-
-    if ($candidates -and $candidates.Count -gt 0) {
-      $fso = New-Object -ComObject Scripting.FileSystemObject
-      return $fso.GetFile($candidates[0].FullName).ShortPath
-    }
-  }
-  return $null
-}
+# Assert-Command and Resolve-Executable now come from ContainerHub's
+# WindowsScripts.Shared.psm1 (imported below). The copy that used to sit here
+# was missing the @() coercion that PowerShell 5.1 needs when Get-ChildItem
+# returns exactly one match; the shared version has it. Call sites pass
+# -ShortPath to keep the 8.3 behaviour this script has always relied on.
 
 # Robocopy-backed tree sync. This script has always CALLED Sync-BuildArtifacts
 # but no ContainerHub module version has ever DEFINED it - the packaging path
@@ -132,12 +85,10 @@ function Sync-BuildArtifacts {
   $global:LASTEXITCODE = 0
 }
 
-function Normalize-Version([string]$RawVersion) {
-  $segments = $RawVersion.Split('.')
-  if ($segments.Count -eq 3) { return "$RawVersion.0" }
-  if ($segments.Count -ne 4) { throw "Version '$RawVersion' is invalid. Use Major.Minor.Build or Major.Minor.Build.Revision" }
-  return $RawVersion
-}
+# Normalize-Version now comes from ContainerHub's WindowsScripts.Shared.psm1 as
+# ConvertTo-NormalizedVersion ("Normalize" is not an approved PowerShell verb,
+# and an unapproved one in a shared module warns on every import). It sits
+# beside the bash twin (version_util.sh --normalize) it has to agree with.
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $containerHubModulesRoot = Join-Path $repoRoot 'ExternalLib\Kataglyphis-ContainerHub\windows\scripts\modules'
@@ -159,6 +110,16 @@ if (-not (Test-Path $sharedModule)) {
   throw "Required module not found: $sharedModule"
 }
 Import-Module $sharedModule -Force
+
+# Get-OrDefault / Get-ConfigValue live here. They were previously copy-pasted
+# into this file, character for character - so a fix to either copy silently
+# missed the other. Same nested-import caveat as above: WindowsBuild.Common
+# importing this module does not re-export it to us.
+$configModule = Join-Path $containerHubModulesRoot 'WindowsConfig.Common.psm1'
+if (-not (Test-Path $configModule)) {
+  throw "Required module not found: $configModule"
+}
+Import-Module $configModule -Force
 
 $defaultConfigPath = Join-Path $PSScriptRoot 'Build-Windows.config.psd1'
 $configPath = Get-OrDefault $env:BUILD_WINDOWS_CONFIG $defaultConfigPath
@@ -311,7 +272,9 @@ try {
 
   if (-not $SkipMsix) {
     Invoke-BuildOptional -Context $context -Name 'MSIX Packaging' -Script {
-      $makeappxPath = Resolve-Executable -Name 'makeappx'
+      # -ShortPath: the Windows Kit sits under "C:\Program Files (x86)\...",
+      # and this path is spliced into a command line where spaces would split it.
+      $makeappxPath = Resolve-Executable -Name 'makeappx' -ShortPath
       if (-not $makeappxPath) {
         throw 'makeappx.exe not found. Install Windows SDK or add it to PATH.'
       }
@@ -327,7 +290,7 @@ try {
       if ($resolvedVersion -match '^v') {
         $resolvedVersion = $resolvedVersion.Substring(1)
       }
-      $resolvedVersion = Normalize-Version $resolvedVersion
+      $resolvedVersion = ConvertTo-NormalizedVersion $resolvedVersion
 
       $cargoTargetFullPath = Join-Path $workspacePath $cargoTargetDir
       $releaseDir = Join-Path $cargoTargetFullPath 'release'
