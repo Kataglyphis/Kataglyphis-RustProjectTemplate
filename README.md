@@ -14,11 +14,13 @@
   </a>
 </div>
 
-[![Rust workflow on Ubuntu-24.04 (x86_64/ARM)](https://github.com/Kataglyphis/Kataglyphis-RustProjectTemplate/actions/workflows/rust_ubuntu24_04.yml/badge.svg)](https://github.com/Kataglyphis/Kataglyphis-RustProjectTemplate/actions/workflows/rust_ubuntu24_04.yml)
+[![Rust workflow on Ubuntu-24.04](https://github.com/Kataglyphis/Kataglyphis-RustProjectTemplate/actions/workflows/rust_ubuntu24_04.yml/badge.svg)](https://github.com/Kataglyphis/Kataglyphis-RustProjectTemplate/actions/workflows/rust_ubuntu24_04.yml)
 [![Rust workflow on Windows 2025](https://github.com/Kataglyphis/Kataglyphis-RustProjectTemplate/actions/workflows/rust_windows2025.yml/badge.svg)](https://github.com/Kataglyphis/Kataglyphis-RustProjectTemplate/actions/workflows/rust_windows2025.yml)
 [![CodeQL](https://github.com/Kataglyphis/Kataglyphis-RustProjectTemplate/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/Kataglyphis/Kataglyphis-RustProjectTemplate/actions/workflows/github-code-scanning/codeql)
 
 For **__official docs__** follow this [link](https://rust.jonasheinle.de).
+
+> **CI lanes are partly opt-in.** Linux x86_64 runs on every push. The Windows and Linux ARM lanes only run when the pushed HEAD commit message contains `[build-win]` / `[build-arm]` (or you trigger the workflow manually) — otherwise they report `skipped`, which the badges render just like a pass. See [AGENTS.md](AGENTS.md#continuous-integration).
 
 <!-- [![Linux build](https://github.com/Kataglyphis/GraphicsEngineVulkan/actions/workflows/Linux.yml/badge.svg)](https://github.com/Kataglyphis/GraphicsEngineVulkan/actions/workflows/Linux.yml)
 [![Windows build](https://github.com/Kataglyphis/GraphicsEngineVulkan/actions/workflows/Windows.yml/badge.svg)](https://github.com/Kataglyphis/GraphicsEngineVulkan/actions/workflows/Windows.yml)
@@ -123,6 +125,19 @@ Run the complete suite (unit + integration + proptest fuzz + doc tests) at the d
 
 ```bash
 cargo test --workspace --locked
+```
+
+CI additionally gates on formatting and lints, both as hard failures. Run them before pushing:
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+```
+
+The `crates/webgpu_renderer` headless golden tests need a GPU adapter and **silently skip without one**. Set `KATAGLYPHIS_REQUIRE_GPU=1` to turn a missing adapter into a failure, so a green run actually means they rendered:
+
+```bash
+KATAGLYPHIS_REQUIRE_GPU=1 cargo test --workspace --locked
 ```
 
 The suites live in:

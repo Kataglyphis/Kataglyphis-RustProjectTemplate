@@ -13,7 +13,7 @@ Cargo workspace (`Cargo.toml` at the root is both the workspace and the root pac
 - `crates/webgpu_renderer` - WebGPU (wgpu) glTF renderer, native + wasm32/browser (`kataglyphis_webgpu_renderer`): PBR, cascaded shadows, SSAO, bloom, skinning, animations, LOD
 - `crates/cli` — the CLI binary; its bin target is named `kataglyphis_rustprojecttemplate` (read/stats/gui subcommands; `stats --path <file>`)
 - `tests/` — root-package integration tests (`integration.rs`) and proptest fuzz tests (`fuzz_test.rs`)
-- `ExternalLib/Kataglyphis-ContainerHub` — git submodule; canonical container/toolchain docs live there (`docs/windows-builds.md`). Do not edit it from this repo.
+- `ExternalLib/Kataglyphis-ContainerHub` — git submodule; canonical container/toolchain docs live there (`docs/windows-builds.md`). Do not edit it from this repo. It also supplies the CI building blocks this repo consumes: the in-container `linux/scripts/02-toolchain/rust/cargo_*.sh` step scripts and the composite actions under `.github/actions/` (`prepare-linux-ci-host`, `run-in-linux-container`, `cleanup-disk-space`).
 
 ## Build & test (host)
 
@@ -22,6 +22,13 @@ cargo build --workspace --locked                      # dev/debug
 cargo build --workspace --locked --profile profile    # custom: release + debuginfo
 cargo build --workspace --locked --release            # fat LTO, codegen-units 1, panic=abort, stripped
 cargo test  --workspace --locked                      # unit + integration + proptest fuzz + doc tests
+```
+
+Run the lint gate before pushing — CI runs exactly these two commands and both are hard failures:
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
 
 Default features are empty — GUI and ONNX code only compiles with explicit `--features` (see README "Run"). "Fuzz" testing = proptest in `tests/fuzz_test.rs`; there is no cargo-fuzz/libFuzzer target.
@@ -45,6 +52,106 @@ Hard-won host facts (verified 2026-07-17; full background in the submodule's `do
 
 - Builds: debug 1m11s, profile 1m31s, release 1m08s — all green; binaries verified on the host (`stats --path README.md`).
 - Tests (debug): **8 passed / 0 failed** — 3 integration, 1 proptest fuzz case, 4 telemetry unit; 1 doc-test ignored.
+
+## Continuous integration
+
+Two workflows, both building inside ContainerHub images rather than on the runner:
+
+| Lane | Workflow | Runs when | Image |
+| --- | --- | --- | --- |
+| Linux x86_64 | `rust_ubuntu24_04.yml` | every push/PR to `main`/`develop` | `ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross` |
+| Linux arm64 | same | opt-in: `[build-arm]` in the HEAD commit message, or `workflow_dispatch` | same |
+| Windows | `rust_windows2025.yml` | opt-in: `[build-win]` in the HEAD commit message, or `workflow_dispatch` | `…:winamd64` |
+
+**A green tick without the opt-in marker says nothing about that lane** — the workflow reports `skipped`, which the badge renders the same as passing.
+
+Facts that cost real debugging time:
+
+- **The ARM lane cannot currently go green.** `:latest-cross` resolves to an amd64-only manifest list, so the pull dies with `no matching manifest for linux/arm64/v8` before any build step. Repair is a ContainerHub-side job (`build-runtime-manifest.sh --repair --push-manifest`); until then, leave `[build-arm]` off.
+- **Never call ContainerHub's `cargo_fmt_clippy.sh` from a workflow.** Its first line is `rustup component add rustfmt`, and the runtime image deliberately ships **no rustup** (rustfmt/clippy are baked in at image-build time) — so it exits 127 before cargo ever runs. Invoke `cargo fmt`/`cargo clippy` directly. This was masked by `continue-on-error: true` for months and let an entire crate reach `main` unformatted and with 12 clippy errors.
+- **The container runs as uid 1001, not root.** `apt-get` fails with `Permission denied`, so a workflow step cannot install system packages — whatever the image lacks, it lacks. And `CARGO_HOME=/usr/local/cargo` is root-owned, so every writing cargo step needs `-e CARGO_HOME=/tmp/cargo-home`.
+- **The lint gate runs default features on purpose.** `--all-features` would need GTK4 headers and the ORT libs, which the image has not got and uid 1001 cannot install.
+
+Lint the workflows locally with the submodule's pinned, SHA-verified actionlint (works from Git Bash on Windows):
+
+```bash
+bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/lint-workflows.sh .
+```
+
+The trailing `.` is load-bearing: without it the script lints ContainerHub's own workflows instead of this repo's, and reports green either way.
+
+## Verifying locally on a Windows box (no MSVC required)
+
+This repo's dev machines commonly lack the MSVC "C++ build tools" workload. Without it **nothing links**, and Git Bash makes the failure baffling: `/usr/bin/link.exe` is coreutils' `link`, which shadows the MSVC linker on PATH and dies with `link: missing operand after '\377\376'` (it is being handed rustc's UTF-16 response file). That is an environment fault, never a code fault.
+
+The fastest real fix is to verify in WSL against the CI's own target platform:
+
+```bash
+# once, as root inside the distro
+apt-get install -y build-essential pkg-config curl git libssl-dev \
+    libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgtk-4-dev
+# optional: a software Vulkan adapter so the headless golden tests actually run
+apt-get install -y mesa-vulkan-drivers vulkan-tools
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/ri.sh
+sh /tmp/ri.sh -y --profile minimal --default-toolchain 1.97.1 -c rustfmt -c clippy
+```
+
+Then, from the repo root, with `CARGO_TARGET_DIR` pointed at a **Linux-native** path (never the 9p-mounted Windows tree, which is glacial and already holds MSVC artifacts):
+
+```bash
+export CARGO_TARGET_DIR=/root/kt
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+KATAGLYPHIS_REQUIRE_GPU=1 cargo test --workspace --locked
+```
+
+`KATAGLYPHIS_REQUIRE_GPU` is the important one: without it `GpuContext::headless_or_skip()` silently returns `None` and the whole golden-test suite "passes" having rendered nothing. Set it and a missing adapter becomes a panic, so green *proves* the tests ran.
+
+## Feature combinations and their system dependencies
+
+Default features are empty, so `cargo build` needs nothing. Each optional feature pulls system libraries that must already exist — **the CI container runs as uid 1001 and cannot `apt-get install` them**:
+
+| Feature | Needs | In the CI image? |
+| --- | --- | --- |
+| `gstreamer` (crates/media) | GStreamer dev files | **Yes** — source-built into `/opt/gstreamer`, on `PKG_CONFIG_PATH`. Do *not* install the distro `libgstreamer*-dev`: the image purges those on purpose. |
+| `gui_linux` | GStreamer + wgpu (pure Rust) | **Yes** — despite the name it does not use GTK; it is the wgpu path. |
+| `gui_unix` | `libgtk-4-dev` | **No, by design.** The foreign-arch GTK dev chain pulls target-side Python and breaks cross builds on `python3-minimal`'s postinst. This feature cannot be built against `latest-cross`. |
+| `onnxruntime`, `burn_demos` | `libssl-dev` (via `openssl-sys`) | **Yes** — via ContainerHub's `package-lists.sh`. |
+
+On a plain Ubuntu box (e.g. the WSL recipe above) you *do* need the distro packages, because nothing there provides the source-built stack. That difference is exactly why "install the -dev package" is the wrong instinct when the image is involved.
+
+## Known gaps
+
+- **No CI lane builds any optional feature.** The Linux lane builds default features; the Windows lane builds `gui_windows,onnxruntime_directml` and is itself opt-in. So `crates/media` and the burn demos have no automated coverage — that is how the GStreamer version skew (since fixed) survived unnoticed. The `feature-matrix` job in `rust_ubuntu24_04.yml` closes this, but only once the build image ships the three package groups in the table above.
+
+- **No CI lane has a GPU, so the golden tests never actually run.** `GpuContext::headless_or_skip()` returns `None` and every one of the ~40 headless render tests reports as passed having drawn nothing. This is not theoretical: running them for real (WSL + llvmpipe, 2026-08-07) surfaced a **pre-existing, deterministic rendering bug**:
+
+  ```
+  a_non_uniform_instance_scale_shades_like_the_same_node_scale
+  crates/webgpu_renderer/tests/skinned_bounds.rs
+  node-scale and instance-scale must shade the same, 987 pixels differ  (threshold: 40)
+  ```
+
+  Confirmed pre-existing by re-running it against a pristine export of `a618287`: byte-identical 987. Everything else in the suite (~340 tests) passes. The failing path is the instanced normal transform — the generated `src/shaders/forward.wgsl` applies `instance_cofactor_0` to `worldNormal_0`, and the two shading paths disagree where they must agree.
+
+  **Fix it upstream, not here.** The `.wgsl` files in `src/shaders/` are checked-in *generated artifacts*; there is no `.slang` file in this repo, and the code comments reference the C++ engine's `forward.slang` by line number (e.g. `cascades.rs` → `forward.slang:151`). Hand-editing the generated WGSL would desynchronise it from its source.
+
+  Until a CI runner has an adapter, a software one makes these tests real: install `mesa-vulkan-drivers` and set `KATAGLYPHIS_REQUIRE_GPU=1` so a missing adapter fails loudly instead of skipping silently.
+
+## The 2026-08-07 graphics-stack upgrade
+
+`wgpu` 29→30, `naga` 29→30, `egui`/`egui-wgpu`/`egui-winit` 0.35→0.36, `glam` 0.30→0.33 and `pollster` 0.4→1.0 moved as one coupled set (`egui-wgpu` 0.35 pins `wgpu ^29`, 0.36 pins `^30`, so none of them could move alone). What changed, so the next person does not have to rediscover it:
+
+- **`VertexState::buffers` is `&[Option<VertexBufferLayout>]`** — a slot can now be left unbound without shifting the ones after it.
+- **`BufferSlice::get_mapped_range` returns `Result`.** Seven call sites. Only `render_to_pixels_with_format` returns `Result` and propagates; the other six are in functions whose caller has already awaited the map, so they `expect` with a message naming that invariant.
+- **Presentation moved from `SurfaceTexture::present(self)` to `Queue::present(&self, texture)`.** Three sites, two of which the default Linux build never compiles (one is `cfg(wasm32)`, one is behind a GUI feature) — check them by hand or with the `feature-matrix` job.
+- **`RequestAdapterOptions::apply_limit_buckets`** (new, no default): rounds reported adapter limits to coarse presets so a host exposing wgpu to *untrusted* content cannot fingerprint the machine. This renderer is the trusted application, so it is `false` — real limits, as wgpu 29 had.
+- **`SurfaceConfiguration::color_space`** (new, no default): set to `SurfaceColorSpace::Auto`, the type's own default and the only value guaranteed supported for every format in `SurfaceCapabilities::formats`. Anything else (an HDR space) needs a capability check first.
+- **glam 0.33 moved the camera constructors off `Mat4`** and split them by clip-space convention: `opengl` (NDC Z −1..1), `directx` (Z 0..1, Y up), `vulkan` (Z 0..1, Y down). **`directx` is the one that matches** — it reproduces the old `Mat4::perspective_rh`/`orthographic_rh`/`perspective_infinite_rh` bit for bit. That was verified by compiling both against glam 0.33.3 and comparing the matrices, not inferred from the names: the `vulkan` module is Y-**down**, and picking it would have flipped the image with no compile error. The old methods are deprecated but still present, so `-D warnings` is what forces the migration.
+
+Guard this with the golden tests, not with the compiler: a clip-space or Y-axis mistake compiles perfectly and only shows up in pixels. See the GPU note above for how to make them actually run.
+
+The upgrade was verified rendering-neutral: 333 tests pass, the only failure is the pre-existing instance-normal bug, and it still reports **exactly 987 differing pixels** — the same figure as before the upgrade. That number is the useful signal here; a changed clip-space or flipped Y would have moved it.
 
 ## Conventions
 
