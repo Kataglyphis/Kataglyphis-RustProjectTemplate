@@ -206,6 +206,19 @@ Default features are empty, so `cargo build` needs nothing. Each optional featur
 
 On a plain Ubuntu box (e.g. the WSL recipe above) you *do* need the distro packages, because nothing there provides the source-built stack. That difference is exactly why "install the -dev package" is the wrong instinct when the image is involved.
 
+**Every feature path lints clean** — measured 2026-08-07 on Ubuntu 24.04 with rustc 1.97.1, `cargo clippy --all-targets --locked --features <set> -- -D warnings`:
+
+| Feature set | Result |
+| --- | --- |
+| default (what CI lints) | clean |
+| `gstreamer,gui_linux,onnxruntime,onnx_tract` | clean |
+| `gui_unix` | clean |
+| `burn_demos` | clean |
+
+Worth stating plainly because none of the non-default rows has *ever* been linted in CI: the Linux lane lints default features (which are empty) and the Windows lane's fmt/clippy silently skip. `crates/media`, `crates/gui` and the ONNX paths are unguarded, not neglected — the `feature-matrix` job exists to keep it that way.
+
+Note the feature names belong to the **root package**. `cargo clippy --workspace --features gstreamer` fails with *"package `kataglyphis_gui` does not have feature `gstreamer`"* because `--workspace` applies the list to every member; drop `--workspace` to scope it to the root.
+
 ## Packaging: what actually happens when you run it
 
 Verified 2026-08-07 by running `Build-Windows.ps1 -SkipTests` in `:winamd64`:
