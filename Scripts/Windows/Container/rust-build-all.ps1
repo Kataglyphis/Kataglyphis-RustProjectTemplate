@@ -1,11 +1,13 @@
-# Runs INSIDE the Windows container (Windows PowerShell 5.1, VsDevCmd env via entrypoint).
+# Runs INSIDE the Windows container under pwsh 7 (see #requires below), with the
+# VsDevCmd env supplied by the entrypoint.
 # Builds the workspace in dev (debug), profile, and release, then copies artifacts
 # back to the bind-mounted repo. All build writes go to fresh container-local dirs
 # (C:\ct, C:\ch) to dodge the wcifs/bindFlt rename bugs on this host/base skew
 # (see Kataglyphis-ContainerHub docs/windows-builds.md, run-side wcifs symptoms).
 #requires -Version 7.0
 
-# NB: EAP stays 'Continue' -- PS 5.1 + native stderr under 'Stop' is a known trap.
+# NB: EAP stays 'Continue' and $LASTEXITCODE is checked by hand -- native-command
+# stderr handling has shifted across PowerShell versions; the explicit check does not.
 $ProgressPreference = 'SilentlyContinue'
 
 # Persist ALL output to the mounted scratch dir -- the docker CLI pipe drops
@@ -14,7 +16,7 @@ $log = 'C:\host-scratch\in-container-build.log'
 Remove-Item $log -Force -ErrorAction SilentlyContinue
 function Say([string]$msg) { Write-Host $msg; Add-Content -Path $log -Value $msg }
 function Run-Logged([string]$cmdline) {
-    # cmd wrapper: merges native stderr without PS 5.1 ErrorRecord mangling
+    # cmd wrapper: merges native stderr without PowerShell ErrorRecord mangling
     cmd /c "$cmdline 2>&1" | ForEach-Object { Write-Host $_; Add-Content -Path $log -Value $_ }
     return $LASTEXITCODE
 }

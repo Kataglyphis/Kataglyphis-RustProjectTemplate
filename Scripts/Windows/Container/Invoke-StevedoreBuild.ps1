@@ -49,7 +49,8 @@ param(
     [string]$ContainerName = 'kata-rust-build'
 )
 
-# NB: EAP stays 'Continue' -- Windows PowerShell 5.1 turns native stderr into
+# NB: EAP stays 'Continue' -- native-command stderr handling has shifted across
+# PowerShell versions, so this script turns
 # terminating errors under 'Stop' (documented ContainerHub trap). Exit codes
 # are checked explicitly instead.
 $ProgressPreference = 'SilentlyContinue'

@@ -27,11 +27,11 @@ Set-StrictMode -Version Latest
 # ContainerHub's WindowsConfig.Common.psm1. They now come from that module -
 # see the import block below.
 
-# Assert-Command and Resolve-Executable now come from ContainerHub's
-# WindowsScripts.Shared.psm1 (imported below). The copy that used to sit here
-# was missing the @() coercion that PowerShell 5.1 needs when Get-ChildItem
-# returns exactly one match; the shared version has it. Call sites pass
-# -ShortPath to keep the 8.3 behaviour this script has always relied on.
+# Assert-Command comes from ContainerHub's WindowsScripts.Shared.psm1, and SDK
+# tool lookup from WindowsMsix.Common's Resolve-WindowsSdkToolPath (both
+# imported below). The Resolve-Executable that used to sit here recursed the
+# whole Windows Kits tree; the module version consults VsDevCmd's
+# WindowsSdkVerBinPath / WindowsSDKVersion first and scans newest-first.
 
 # Robocopy-backed tree sync. This script has always CALLED Sync-BuildArtifacts
 # but no ContainerHub module version has ever DEFINED it - the packaging path
@@ -120,6 +120,15 @@ if (-not (Test-Path $configModule)) {
   throw "Required module not found: $configModule"
 }
 Import-Module $configModule -Force
+
+# The whole MSIX path below was a second implementation of this module:
+# SDK tool lookup, XML escaping, token expansion and the transparent-PNG
+# placeholder all already live here.
+$msixModule = Join-Path $containerHubModulesRoot 'WindowsMsix.Common.psm1'
+if (-not (Test-Path $msixModule)) {
+  throw "Required module not found: $msixModule"
+}
+Import-Module $msixModule -Force
 
 $defaultConfigPath = Join-Path $PSScriptRoot 'Build-Windows.config.psd1'
 $configPath = Get-OrDefault $env:BUILD_WINDOWS_CONFIG $defaultConfigPath
@@ -272,9 +281,15 @@ try {
 
   if (-not $SkipMsix) {
     Invoke-BuildOptional -Context $context -Name 'MSIX Packaging' -Script {
-      # -ShortPath: the Windows Kit sits under "C:\Program Files (x86)\...",
-      # and this path is spliced into a command line where spaces would split it.
-      $makeappxPath = Resolve-Executable -Name 'makeappx' -ShortPath
+      # Resolve-WindowsSdkToolPath, not a local recursive scan of the Kits
+      # tree: it takes VsDevCmd's WindowsSdkVerBinPath / WindowsSDKVersion
+      # first and only falls back to scanning, newest version first. The 8.3
+      # short path the old local helper returned is not needed - the path goes
+      # to Invoke-BuildExternal as a -File argument, never spliced into a
+      # command line, so spaces are already safe.
+      $makeappxPath = Resolve-WindowsSdkToolPath `
+        -ToolName 'makeappx.exe' `
+        -OverridePath (Get-ConfigValue -Config $config -Path 'Msix.MakeAppxPath')
       if (-not $makeappxPath) {
         throw 'makeappx.exe not found. Install Windows SDK or add it to PATH.'
       }
@@ -329,26 +344,8 @@ try {
         Copy-Item $logoPath -Destination (Join-Path $assetsDir 'Square150x150Logo.png') -Force
         Copy-Item $logoPath -Destination (Join-Path $assetsDir 'Wide310x150Logo.png') -Force
       } else {
-        function New-TransparentPng {
-          param(
-            [Parameter(Mandatory)]
-            [string]$Path,
-            [Parameter(Mandatory)]
-            [int]$Width,
-            [Parameter(Mandatory)]
-            [int]$Height
-          )
-          Add-Type -AssemblyName System.Drawing
-          $bmp = New-Object System.Drawing.Bitmap($Width, $Height)
-          $gfx = [System.Drawing.Graphics]::FromImage($bmp)
-          try {
-            $gfx.Clear([System.Drawing.Color]::Transparent)
-            $bmp.Save($Path, [System.Drawing.Imaging.ImageFormat]::Png)
-          } finally {
-            $gfx.Dispose()
-            $bmp.Dispose()
-          }
-        }
+        # New-TransparentPng comes from WindowsMsix.Common; it used to be
+        # redefined inline right here, inside the else branch.
         Write-BuildLogWarning -Context $context -Message "Logo file not found, generating transparent placeholders"
         New-TransparentPng -Path (Join-Path $assetsDir 'StoreLogo.png') -Width 50 -Height 50
         New-TransparentPng -Path (Join-Path $assetsDir 'Square44x44Logo.png') -Width 44 -Height 44
@@ -365,24 +362,27 @@ try {
       $exeRelPath = "$binary.exe"
       $templateContent = Get-Content -Path $manifestTemplatePath -Raw -Encoding UTF8
 
-      function ConvertTo-XmlEscapedText {
-        param([AllowNull()][string]$Value)
-        if ($null -eq $Value) { return '' }
-        return [System.Security.SecurityElement]::Escape($Value)
+      # Expand-XmlTemplateTokens (WindowsMsix.Common) instead of a chain of
+      # `-replace`. That is a BUG FIX, not just deduplication: `-replace`
+      # treats its replacement as a substitution TEMPLATE, so a value
+      # containing '$&' or '$1' - a description or display name is free text -
+      # would be silently rewritten into the manifest. The module uses an
+      # ordinal [string].Replace and escapes each value for XML itself.
+      $manifestXml = Expand-XmlTemplateTokens -Template $templateContent -TokenMap @{
+        '__MSIX_NAME__'                   = $msixName
+        '__MSIX_PUBLISHER__'              = $msixPublisher
+        '__MSIX_VERSION__'                = $resolvedVersion
+        '__MSIX_MIN_VERSION__'            = $msixMinVersion
+        '__MSIX_DISPLAY_NAME__'           = $msixDisplayName
+        '__MSIX_PUBLISHER_DISPLAY_NAME__' = $msixPublisherDisplayName
+        '__MSIX_DESCRIPTION__'            = $msixDescription
+        '__EXE_REL_PATH__'                = $exeRelPath
       }
-
-      $manifestXml = $templateContent
-      $manifestXml = $manifestXml -replace '__MSIX_NAME__', (ConvertTo-XmlEscapedText $msixName)
-      $manifestXml = $manifestXml -replace '__MSIX_PUBLISHER__', (ConvertTo-XmlEscapedText $msixPublisher)
-      $manifestXml = $manifestXml -replace '__MSIX_VERSION__', (ConvertTo-XmlEscapedText $resolvedVersion)
-      $manifestXml = $manifestXml -replace '__MSIX_MIN_VERSION__', (ConvertTo-XmlEscapedText $msixMinVersion)
-      $manifestXml = $manifestXml -replace '__MSIX_DISPLAY_NAME__', (ConvertTo-XmlEscapedText $msixDisplayName)
-      $manifestXml = $manifestXml -replace '__MSIX_PUBLISHER_DISPLAY_NAME__', (ConvertTo-XmlEscapedText $msixPublisherDisplayName)
-      $manifestXml = $manifestXml -replace '__MSIX_DESCRIPTION__', (ConvertTo-XmlEscapedText $msixDescription)
-      $manifestXml = $manifestXml -replace '__EXE_REL_PATH__', (ConvertTo-XmlEscapedText $exeRelPath)
-      $manifestXml = $manifestXml -replace '__STORE_LOGO_REL__', 'Assets/StoreLogo.png'
-      $manifestXml = $manifestXml -replace '__LOGO44_REL__', 'Assets/Square44x44Logo.png'
-      $manifestXml = $manifestXml -replace '__LOGO150_REL__', 'Assets/Square150x150Logo.png'
+      $manifestXml = Expand-XmlTemplateTokens -Template $manifestXml -TokenMap @{
+        '__STORE_LOGO_REL__' = 'Assets/StoreLogo.png'
+        '__LOGO44_REL__'     = 'Assets/Square44x44Logo.png'
+        '__LOGO150_REL__'    = 'Assets/Square150x150Logo.png'
+      }
 
       Set-Content -Path (Join-Path $msixStaging 'AppxManifest.xml') -Value $manifestXml -Encoding UTF8
 
