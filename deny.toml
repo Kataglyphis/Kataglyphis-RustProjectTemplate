@@ -9,7 +9,10 @@ targets = [
 [advisories]
 version = 2
 yanked = "deny"
-# Transitive deps from burn 0.20.1 — no safe upgrade available.
+# Transitive deps from burn (0.21.0) — no safe upgrade available.
+# All four crates below are still in Cargo.lock after the 0.21 bump, so these
+# stay. Re-check after the next burn upgrade: cargo-deny does not tell you when
+# an ignore has become unnecessary, it just stops matching.
 ignore = [
   "RUSTSEC-2025-0141", # bincode: unmaintained (via burn-core)
   "RUSTSEC-2024-0436", # paste: unmaintained (via burn-ndarray, cubecl-core)
@@ -40,6 +43,11 @@ allow = [
   "Ubuntu-font-1.0",
   "CDLA-Permissive-2.0",
   "Unlicense",
+  # xxhash-rust, via cubecl-common -> burn. Boost Software License 1.0 is
+  # OSI-approved and permissive - no attribution required in binary form, so
+  # strictly less demanding than the MIT/BSD/ISC entries already above it.
+  # Without this the licenses check FAILS; it was the only rejection.
+  "BSL-1.0",
 ]
 
 [sources]
