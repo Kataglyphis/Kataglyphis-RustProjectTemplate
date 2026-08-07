@@ -251,7 +251,11 @@ cargo run --features gui_windows -- gui --backend primary
 
 ### Windows: build & test in the Stevedore container
 
-The workspace builds and tests inside the [Kataglyphis ContainerHub](https://github.com/Kataglyphis/kataglyphis-containerhub) Windows developer image (`ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64`) using [Stevedore](https://github.com/slonopotamus/stevedore)'s `docker.exe`. One driver does everything — build all three profiles (`dev`/debug, `profile` = release + debuginfo, `release` = fat LTO) and optionally the full debug test suite:
+The workspace builds and tests inside the [Kataglyphis ContainerHub](https://github.com/Kataglyphis/kataglyphis-containerhub) Windows developer image (`ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64`) using [Stevedore](https://github.com/slonopotamus/stevedore)'s `docker.exe`.
+
+> **ContainerHub is the ground truth for container and PowerShell functionality.** The scripts here are thin drivers: `docker.exe` discovery, isolation flags, container teardown, SDK-tool lookup, MSIX manifest expansion, config access and build-step logging all come from its modules under `windows/scripts/modules/`. Before adding a helper to `Scripts/Windows/`, check whether ContainerHub already has it — several that were written locally turned out to exist there in a better form. Everything is `pwsh` (PowerShell 7+); nothing here runs under Windows PowerShell 5.1.
+
+One driver does everything — build all three profiles (`dev`/debug, `profile` = release + debuginfo, `release` = fat LTO) and optionally the full debug test suite:
 
 ```pwsh
 # build debug + profile + release in the container
@@ -277,13 +281,13 @@ Host caveats the driver handles automatically (details in `AGENTS.md` and `Exter
 ### Windows MSIX packaging
 
 Voraussetzungen:
-- Windows SDK (inkl. `makeappx` und `signtool`)
-- PowerShell 5.1+ oder PowerShell 7+
+- Windows SDK (inkl. `makeappx` und `signtool`) — der Pfad wird über ContainerHubs `Resolve-WindowsSdkToolPath` gefunden (respektiert `WindowsSdkVerBinPath`/`WindowsSDKVersion` aus VsDevCmd)
+- **PowerShell 7+ (`pwsh`)** — 5.1 reicht nicht; alle Skripte tragen `#requires -Version 7.0`
 
 MSIX bauen (inkl. Release-Build):
 
 ```pwsh
-pwsh -ExecutionPolicy Bypass -File .\scripts\windows\New-MsixPackage.ps1
+pwsh -ExecutionPolicy Bypass -File .\ExternalLib\Kataglyphis-ContainerHub\windows\scripts\rust\New-MsixPackage.ps1
 ```
 
 MSIX bauen und mit einer vorhandenen PFX signieren:

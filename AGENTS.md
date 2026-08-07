@@ -13,7 +13,35 @@ Cargo workspace (`Cargo.toml` at the root is both the workspace and the root pac
 - `crates/webgpu_renderer` - WebGPU (wgpu) glTF renderer, native + wasm32/browser (`kataglyphis_webgpu_renderer`): PBR, cascaded shadows, SSAO, bloom, skinning, animations, LOD
 - `crates/cli` — the CLI binary; its bin target is named `kataglyphis_rustprojecttemplate` (read/stats/gui subcommands; `stats --path <file>`)
 - `tests/` — root-package integration tests (`integration.rs`) and proptest fuzz tests (`fuzz_test.rs`)
-- `ExternalLib/Kataglyphis-ContainerHub` — git submodule; canonical container/toolchain docs live there (`docs/windows-builds.md`). Do not edit it from this repo. It also supplies the CI building blocks this repo consumes: the in-container `linux/scripts/02-toolchain/rust/cargo_*.sh` step scripts and the composite actions under `.github/actions/` (`prepare-linux-ci-host`, `run-in-linux-container`, `cleanup-disk-space`).
+- `ExternalLib/Kataglyphis-ContainerHub` — git submodule and **the ground truth for every container and PowerShell concern**. See the section below before writing any helper.
+
+## ContainerHub is the ground truth
+
+Anything to do with containers, Dockerfiles, CI plumbing or PowerShell belongs to the submodule. **Search it before writing a helper.** Everything below was written locally first and later found to already exist there — usually in a better form, twice with a bug the local copy did not have:
+
+| Need | Use | Not |
+| --- | --- | --- |
+| `docker.exe` discovery (Stevedore) | `Resolve-DockerExe` | a hand-rolled candidate list |
+| `--isolation process` and friends | `Get-ContainerIsolationArgs` | inline flags |
+| Container teardown | `Remove-BuildContainerSafe` | `docker rm -f` (misses the wcifs teardown lock) |
+| Bind-mount probe, artifact delivery | `Test-ContainerBindMount`, `Test-BuildArtifactsDelivered` | assuming a green build delivered something |
+| SDK tools (makeappx, signtool) | `Resolve-WindowsSdkToolPath` | `Get-ChildItem -Recurse` over the Kits tree |
+| MSIX manifest tokens | `Expand-XmlTemplateTokens` | `-replace` — see below |
+| XML escaping, placeholder PNGs | `ConvertTo-XmlEscapedText`, `New-TransparentPng` | local redefinitions |
+| Config access | `Get-OrDefault`, `Get-ConfigValue` (`WindowsConfig.Common`) | copies |
+| Build logging and steps | `New-BuildContext`, `Invoke-BuildStep`, `Invoke-BuildExternal`, `Write-BuildLog*` | ad-hoc `Write-Host` wrappers |
+| Version normalising | `ConvertTo-NormalizedVersion` (pwsh), `version_util.sh --normalize` (bash) | a second implementation |
+| CI job plumbing | the composite actions under `.github/actions/` | hand-written `docker run` blocks |
+| In-container cargo steps | `linux/scripts/02-toolchain/rust/cargo_*.sh` | inline cargo invocations |
+
+**Never expand a manifest template with `-replace`.** PowerShell treats the replacement side as a substitution template, so a value containing `$&` re-inserts the whole matched token. A description of ``Renderer $& x`` produced `Desc="Renderer __MSIX_DESCRIPTION__amp; x"` — the literal token, shipped into the manifest. `Expand-XmlTemplateTokens` uses an ordinal `[string].Replace` and escapes each value itself.
+
+Two caveats:
+
+- **Nested module imports are module-private.** `WindowsBuild.Common` importing `WindowsScripts.Shared` does not re-export it to you; import each module you call into directly, or you get a "command not found" the first time that code path runs.
+- **Editing the submodule is allowed** (it is the same owner), but it is consumed by other repos. Change it there, push, then move this repo's submodule pointer — do not fork behaviour locally.
+
+Nothing here needs Windows PowerShell 5.1 semantics: every script carries `#requires -Version 7.0` and CI invokes `pwsh`.
 
 ## Build & test (host)
 
@@ -41,12 +69,13 @@ Driver: `Scripts\Windows\Container\Invoke-StevedoreBuild.ps1` (add `-Test` to al
 
 Hard-won host facts (verified 2026-07-17; full background in the submodule's `docs/windows-builds.md`):
 
-- **Use Stevedore's `docker.exe`** (`D:\Stevedore\bin\docker.exe` or `%ProgramFiles%\Stevedore\bin\docker.exe`), never nerdctl.
+- **Use Stevedore's `docker.exe`, never nerdctl** — but do not hard-code the path: `Resolve-DockerExe` already checks `$env:DOCKER_EXE`, both Stevedore locations and then PATH. nerdctl is excluded deliberately; it talks to containerd, not this lane's engine.
 - **Dev Drive (ReFS) volumes refuse bind mounts** with *"Der Dateisystem-Minifilter kann nicht an das Entwicklervolume angefügt werden"* unless `fsutil devdrv setfiltersallowed bindFlt, wcifs` has been run (elevated) and the volume remounted. The driver sidesteps this by staging to `%LOCALAPPDATA%\Temp`.
-- **Run containers with `--isolation process`** for the full host CPU count; Hyper-V isolation exposes only 2 CPUs. Mount targets must be paths that do not already exist in the image (e.g. `C:\ws-mnt`).
+- **Run containers with `--isolation process`** for the full host CPU count; Hyper-V isolation exposes only 2 CPUs. Get the flags from `Get-ContainerIsolationArgs` rather than inline. Mount targets must be paths that do not already exist in the image (e.g. `C:\ws-mnt`).
 - **Keep every build write container-local** (`CARGO_TARGET_DIR=C:\ct`, `CARGO_HOME=C:\ch`): the wcifs/bindFlt skew on this host breaks create-then-rename in image-layer dirs and two-path ops on bind mounts. Plain copies through the mount work; renames/moves may not. `docker cp` is unreliable — persist results via the mount.
-- **A dying docker CLI is not a dying build**: the client pipe intermittently drops (transient hcsshim/ttrpc flakiness) while the container keeps running. Check `docker inspect` container state before concluding failure; run containers **named and without `--rm`** so logs and state survive.
-- **Everything here is `pwsh` (PowerShell 7+), not Windows PowerShell 5.1.** Every script under `Scripts/Windows/` carries `#requires -Version 7.0` and the workflow invokes `pwsh` explicitly, so a 5.1 assumption is wrong wherever it still appears in a comment. Keep `$ErrorActionPreference` at `Continue` in the in-container scripts and check `$LASTEXITCODE` manually anyway — native-command stderr handling has changed across PowerShell versions and the explicit check is version-proof — and tee important output to the mounted scratch dir so a dropped docker client can't lose it.
+- **A dying docker CLI is not a dying build**: the client pipe intermittently drops (transient hcsshim/ttrpc flakiness) while the container keeps running. Check `docker inspect` container state before concluding failure; run containers **named and without `--rm`** so logs and state survive. Tear them down with `Remove-BuildContainerSafe` — a bare `docker rm -f` can return while the wcifs teardown still holds the name, and the next run then fails on the clash.
+- **Everything here is `pwsh` (PowerShell 7+).** Every script under `Scripts/Windows/` carries `#requires -Version 7.0` and CI invokes `pwsh`, so any surviving "Windows PowerShell 5.1" comment is wrong — those scripts would not start under it. Keep `$ErrorActionPreference` at `Continue` in the in-container scripts and check `$LASTEXITCODE` manually anyway (native-command stderr handling has shifted across PowerShell versions; the explicit check has not), and tee important output to the mounted scratch dir so a dropped docker client cannot lose it.
+- **Still not adopted:** `Test-BuildArtifactsDelivered` (a green build is not proof of delivery — it `docker exec`s the container, so it must run before teardown) and `Test-ContainerBindMount`. Both would fit `Invoke-StevedoreBuild.ps1`; neither could be exercised from the Linux verification box.
 
 ## Verified baselines (2026-07-17, container, 32 CPUs / 48 GB)
 

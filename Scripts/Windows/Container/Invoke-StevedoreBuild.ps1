@@ -56,15 +56,21 @@ param(
 $ProgressPreference = 'SilentlyContinue'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 
-# ---- resolve docker (Stevedore's docker.exe; nerdctl is broken on this lane) ----
-if ([string]::IsNullOrWhiteSpace($Docker)) {
-    $candidates = @(
-        $env:DOCKER_EXE,
-        'D:\Stevedore\bin\docker.exe',
-        (Join-Path $env:ProgramFiles 'Stevedore\bin\docker.exe')
-    ) | Where-Object { $_ -and (Test-Path $_) }
-    $Docker = if ($candidates) { @($candidates)[0] } else { (Get-Command docker -ErrorAction Stop).Source }
+# Container plumbing comes from ContainerHub, which is the ground truth for it:
+# Stevedore's docker.exe lookup, the isolation flags, and the wcifs-tolerant
+# container removal were all reimplemented here before.
+$containerHubModules = Join-Path $repoRoot 'ExternalLib\Kataglyphis-ContainerHub\windows\scripts\modules'
+$reuseModule = Join-Path $containerHubModules 'WindowsContainerBuild.Reuse.psm1'
+if (-not (Test-Path $reuseModule)) {
+    throw "Required module not found: $reuseModule (run: git submodule update --init --recursive)"
 }
+Import-Module $reuseModule -Force
+
+# Resolve-DockerExe checks the same candidates this script used to hard-code
+# ($env:DOCKER_EXE, both Stevedore locations, then PATH) and throws with an
+# install hint instead of a bare Get-Command failure. nerdctl is deliberately
+# not a candidate: it talks to containerd, not the Windows lane's engine.
+$Docker = Resolve-DockerExe -Override $Docker
 Write-Host "Using docker: $Docker"
 
 # ---- stage sources off the Dev Drive ----
@@ -78,9 +84,17 @@ Copy-Item (Join-Path $PSScriptRoot 'rust-build-all.ps1'), (Join-Path $PSScriptRo
 
 function Invoke-ContainerScript {
     param([Parameter(Mandatory)][string]$Script, [Parameter(Mandatory)][string]$Label)
-    & $Docker rm -f $ContainerName 2>&1 | Out-Null
-    Write-Host "`n==> [$Label] docker run --isolation process --memory ${MemoryGb}g $Image" -ForegroundColor Cyan
-    & $Docker run --name $ContainerName --isolation process --memory "${MemoryGb}g" `
+    # Remove-BuildContainerSafe, not a bare `docker rm -f`: on this host the
+    # wcifs teardown can still hold the container after rm returns, and the
+    # helper detects that and says so instead of letting the next `docker run`
+    # fail on a name clash.
+    [void](Remove-BuildContainerSafe -DockerExe $Docker -Name $ContainerName)
+    # --isolation process is required for the full host CPU count (Hyper-V
+    # isolation exposes 2). Centralised so this lane cannot drift from the
+    # others that need the same flag.
+    $isolationArgs = Get-ContainerIsolationArgs -Isolation 'process' -MemoryGb $MemoryGb
+    Write-Host "`n==> [$Label] docker run $($isolationArgs -join ' ') --memory ${MemoryGb}g $Image" -ForegroundColor Cyan
+    & $Docker run --name $ContainerName @isolationArgs --memory "${MemoryGb}g" `
         --mount "type=bind,source=$ws,target=C:\ws-mnt" `
         --mount "type=bind,source=$scratch,target=C:\host-scratch" `
         $Image pwsh -NoProfile -ExecutionPolicy Bypass -File "C:\host-scratch\$Script"
@@ -94,7 +108,7 @@ function Invoke-ContainerScript {
         Start-Sleep -Seconds 15
     }
     $exitCode = & $Docker inspect -f '{{.State.ExitCode}}' $ContainerName 2>$null
-    & $Docker rm -f $ContainerName 2>&1 | Out-Null
+    [void](Remove-BuildContainerSafe -DockerExe $Docker -Name $ContainerName)
     if ("$exitCode" -ne '0') { throw "[$Label] container run failed (exit $exitCode) -- see $scratch logs" }
     Write-Host "[$Label] OK" -ForegroundColor Green
 }
