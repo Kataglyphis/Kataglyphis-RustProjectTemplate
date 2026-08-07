@@ -86,7 +86,7 @@ jobs:
       PLATFORM: ${{ matrix.platform }}
       ARCH: ${{ matrix.arch }}
       BINARY: kataglyphis-rustprojecttemplate
-      BINARY_FILE: kataglyphis_rustprojecttemplate
+      BINARY_FILE: kataglyphis_cli
       # VERSION is computed by Scripts/compute_version.sh into GITHUB_ENV.
       REF_NAME: ${{ github.ref_name }}
       RUN_NUMBER: ${{ github.run_number }}

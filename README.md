@@ -146,7 +146,15 @@ The suites live in:
 - Integration tests: `tests/integration.rs`.
 - Fuzz (property-based) tests: `tests/fuzz_test.rs` via [proptest](https://proptest-rs.github.io/proptest/) (256 random inputs per case by default). There is no separate `cargo-fuzz`/libFuzzer setup.
 
-Latest verified run (2026-08-07, Stevedore Windows container): the 8 tests that predate `crates/webgpu_renderer` pass — 3 integration, 1 proptest fuzz case, 4 telemetry unit. **`kataglyphis_webgpu_renderer --lib` cannot start there**: it exits `0xc0000135` (`STATUS_DLL_NOT_FOUND`) before `main`, because a wgpu-linked binary imports `opengl32.dll` and Windows Server Core does not ship it. Not a regression — the old "8 passed" figure was recorded a day before that crate existed. See [AGENTS.md](AGENTS.md) for the full analysis and the workaround.
+Latest verified run (2026-08-07, Stevedore Windows container): the 8 tests that predate `crates/webgpu_renderer` pass — 3 integration, 1 proptest fuzz case, 4 telemetry unit.
+
+**`kataglyphis_webgpu_renderer` is now excluded from the container run on purpose.** Any of its test binaries links wgpu, and wgpu's `gles` backend makes the executable import `opengl32.dll` at load time; Windows Server Core does not ship that DLL, so the process dies with `0xc0000135` (`STATUS_DLL_NOT_FOUND`) before `main`. The loader resolves that import, so no runtime flag avoids it — and letting it run turned the entire `cargo test --workspace` into a crash with no results. The `gles` feature is kept deliberately: it is the OpenGL fallback for machines without Vulkan/DX12. Run those tests on a desktop Windows host, where the DLL exists:
+
+```pwsh
+cargo test -p kataglyphis_webgpu_renderer --locked
+```
+
+Not a regression either way — the old "8 passed" figure was recorded a day before that crate existed. See [AGENTS.md](AGENTS.md) for the full analysis.
 
 <!-- ROADMAP -->
 ## Run
@@ -159,13 +167,13 @@ cargo run -- read --path ../README.md
 Build + Run (CPU via tract):
 
 ```bash
-cargo run --bin kataglyphis_rustprojecttemplate --features gui_windows,onnx_tract -- gui --backend dx12
+cargo run --bin kataglyphis_cli --features gui_windows,onnx_tract -- gui --backend dx12
 ```
 
 Build + Run (ONNX Runtime + DirectML):
 
 ```bash
-cargo run --bin kataglyphis_rustprojecttemplate --features gui_windows,onnxruntime_directml -- gui --backend dx12
+cargo run --bin kataglyphis_cli --features gui_windows,onnxruntime_directml -- gui --backend dx12
 ```
 
 Build + Run (ONNX Runtime + CUDA, NVIDIA):
@@ -173,11 +181,11 @@ Build + Run (ONNX Runtime + CUDA, NVIDIA):
 ```bash
 # PowerShell
 $env:KATAGLYPHIS_ORT_DEVICE="cuda"
-cargo run --bin kataglyphis_rustprojecttemplate --features gui_windows,onnxruntime_cuda -- gui --backend dx12
+cargo run --bin kataglyphis_cli --features gui_windows,onnxruntime_cuda -- gui --backend dx12
 
 # CMD
 set KATAGLYPHIS_ORT_DEVICE=cuda
-cargo run --bin kataglyphis_rustprojecttemplate --features gui_windows,onnxruntime_cuda -- gui --backend dx12
+cargo run --bin kataglyphis_cli --features gui_windows,onnxruntime_cuda -- gui --backend dx12
 ```
 
 Optional environment variables:
@@ -273,7 +281,7 @@ pwsh -ExecutionPolicy Bypass -File .\Scripts\Windows\Container\Invoke-StevedoreB
 Artifacts land in `target\container\{debug,profile,release}` and are mirrored to the (gitignored) repo-root `debug\`, `profile\`, `release\` folders; each contains the CLI exe, cdylib (`.dll` + import lib), staticlib (`.lib`) and pdb. Latest verified run (2026-08-07, rustc 1.97.1): all three profiles built (debug 1m35s, profile 1m32s, release 1m12s), written straight into the repo through the mount, and the binaries run on the host, e.g.:
 
 ```pwsh
-.\release\kataglyphis_rustprojecttemplate.exe stats --path .\README.md
+.\release\kataglyphis_cli.exe stats --path .\README.md
 ```
 
 Host caveats the driver handles automatically. **ContainerHub is the authority on all of this** — these are pointers, not a second copy:
@@ -340,7 +348,7 @@ Output:
 - Staging-Inhalt: `dist\msix\staging\`
 
 Wichtige Parameter:
-- `-Binary` (Default: `kataglyphis_rustprojecttemplate`)
+- `-Binary` (Default: `kataglyphis_cli`)
 - `-Features` (Default: `gui_windows,onnxruntime_directml`)
 - `-Version` (Format: `Major.Minor.Build[.Revision]`)
 - `-Publisher` (muss zum Signaturzertifikat passen, z. B. `CN=Kataglyphis`)
@@ -368,7 +376,7 @@ Add-AppxPackage -Path $msixPath
 Läuft als Schritt von `Build-Windows.ps1` (abschaltbar mit `-SkipMsi`, oder
 `Msi.Enabled = $false` in `Scripts/Windows/Build-Windows.config.psd1`).
 
-Output: `dist\msi\kataglyphis_rustprojecttemplate-<VERSION>-x64.msi`
+Output: `dist\msi\kataglyphis_cli-<VERSION>-x64.msi`
 
 Gebaut wird mit **WiX Toolset v4** (`wix.exe build`), nicht mit `cargo-wix`:
 cargo-wix steuert auch in seiner neuesten Version (0.3.9) nur WiX v3 über

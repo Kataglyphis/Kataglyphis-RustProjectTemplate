@@ -32,5 +32,5 @@ onnxruntime_cuda = ["kataglyphis_rustprojecttemplate/onnxruntime_cuda"]
 burn_demos = ["kataglyphis_rustprojecttemplate/burn_demos"]
 
 [[bin]]
-name = "kataglyphis_rustprojecttemplate"
+name = "kataglyphis_cli"
 path = "src/main.rs"

@@ -5,7 +5,7 @@ param(
   [string]$Features = '',
   [string[]]$AppArgs = @('stats', '--path', 'README.md'),
   [string]$Package = 'kataglyphis_cli',
-  [string]$Binary = 'kataglyphis_rustprojecttemplate',
+  [string]$Binary = 'kataglyphis_cli',
   [string]$TargetDir = '',
   # Build the binary but skip launching it. Needed for GUI-featured builds in
   # the headless servercore CI container, where the process dies at load time

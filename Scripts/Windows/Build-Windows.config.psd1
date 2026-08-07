@@ -16,7 +16,7 @@
     Version = '0.1.0.0'
     MinVersion = '10.0.19041.0'
     ManifestTemplate = 'Scripts/Windows/AppxManifest.xml.template'
-    Binary = 'kataglyphis_rustprojecttemplate'
+    Binary = 'kataglyphis_cli'
   }
 
   Msi = @{
@@ -31,6 +31,6 @@
     # Path to license file (relative to workspace root)  
     LicenseFile = 'wix/License.rtf'
     # Output filename pattern (version will be appended)
-    OutputName = 'kataglyphis_rustprojecttemplate'
+    OutputName = 'kataglyphis_cli'
   }
 }

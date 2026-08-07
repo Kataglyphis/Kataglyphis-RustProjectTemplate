@@ -10,7 +10,7 @@ fn test_read_existing_file() {
     let mut file = File::create(&file_path).unwrap();
     writeln!(file, "Hello world").unwrap();
 
-    let mut cmd = assert_cmd::cargo::cargo_bin_cmd!("kataglyphis_rustprojecttemplate");
+    let mut cmd = assert_cmd::cargo::cargo_bin_cmd!("kataglyphis_cli");
     cmd.args(["read", "--path", file_path.to_str().unwrap()]);
     cmd.assert()
         .success()
@@ -19,7 +19,7 @@ fn test_read_existing_file() {
 
 #[test]
 fn test_read_nonexistent_file() {
-    let mut cmd = assert_cmd::cargo::cargo_bin_cmd!("kataglyphis_rustprojecttemplate");
+    let mut cmd = assert_cmd::cargo::cargo_bin_cmd!("kataglyphis_cli");
     cmd.args(["read", "--path", "nonexistent.txt"]);
     cmd.assert()
         .failure()
@@ -33,7 +33,7 @@ fn test_stats_output() {
     let mut file = File::create(&file_path).unwrap();
     writeln!(file, "First line\nSecond line with words\n").unwrap();
 
-    let mut cmd = assert_cmd::cargo::cargo_bin_cmd!("kataglyphis_rustprojecttemplate");
+    let mut cmd = assert_cmd::cargo::cargo_bin_cmd!("kataglyphis_cli");
     cmd.args(["stats", "--path", file_path.to_str().unwrap()]);
     cmd.assert()
         .success()

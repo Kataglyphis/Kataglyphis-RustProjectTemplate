@@ -40,19 +40,20 @@ pub fn resolve_model_path(explicit: Option<&str>) -> String {
 }
 
 enum Backend {
+    // tract 0.23's `run` takes `self: &Arc<Self>`, so the plan has to live in an
+    // Arc -- a Box no longer resolves the method at all.
     #[cfg(feature = "onnx_tract")]
-    Tract { model: Box<TractPlan> },
+    Tract {
+        model: std::sync::Arc<TractPlan>,
+    },
 
     #[cfg(feature = "onnxruntime")]
     Ort { session: ort::session::Session },
 }
 
+// See tract_backend.rs: tract 0.23 renamed `SimplePlan` to `RunnableModel`.
 #[cfg(feature = "onnx_tract")]
-type TractPlan = tract_onnx::prelude::SimplePlan<
-    tract_onnx::prelude::TypedFact,
-    Box<dyn tract_onnx::prelude::TypedOp>,
-    tract_onnx::prelude::TypedModel,
->;
+type TractPlan = tract_onnx::prelude::TypedRunnableModel;
 
 struct BackendLoad {
     backend: Backend,
@@ -132,9 +133,7 @@ impl PersonDetector {
         let (model, dims) = tract_backend::load_tract_model(model_path)?;
         info!("ONNX backend: tract ({}x{})", dims.0, dims.1);
         Ok(BackendLoad {
-            backend: Backend::Tract {
-                model: Box::new(model),
-            },
+            backend: Backend::Tract { model },
             input_dims: dims,
         })
     }
@@ -260,9 +259,16 @@ impl PersonDetector {
                 let out = outputs.first().context("Model returned no outputs")?;
 
                 let shape = out.shape().to_vec();
-                let data = out
-                    .as_slice::<f32>()
-                    .context("Model output is not contiguous f32")?;
+                // tract 0.23 removed `Tensor::as_slice`. `to_plain_array_view`
+                // is the safe replacement: it errors unless the storage is
+                // plain (contiguous) AND the datum type really is f32, which is
+                // exactly what the old call checked.
+                let view = out
+                    .to_plain_array_view::<f32>()
+                    .context("Model output is not plain f32")?;
+                let data = view
+                    .as_slice()
+                    .context("Model output view is not contiguous")?;
 
                 Ok((shape, data.to_vec()))
             }

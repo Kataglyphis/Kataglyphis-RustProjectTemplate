@@ -11,7 +11,7 @@ Cargo workspace (`Cargo.toml` at the root is both the workspace and the root pac
 - `crates/inference` — ONNX backends, feature-gated (`onnx_tract`, `onnxruntime`, `onnxruntime_directml`, `onnxruntime_cuda`)
 - `crates/gui` — feature-gated GUI (`gui_windows`, `gui_linux`, `gui_wgpu`, `gui_unix`)
 - `crates/webgpu_renderer` - WebGPU (wgpu) glTF renderer, native + wasm32/browser (`kataglyphis_webgpu_renderer`): PBR, cascaded shadows, SSAO, bloom, skinning, animations, LOD
-- `crates/cli` — the CLI binary; its bin target is named `kataglyphis_rustprojecttemplate` (read/stats/gui subcommands; `stats --path <file>`)
+- `crates/cli` — the CLI binary; its bin target is named `kataglyphis_cli` (read/stats/gui subcommands; `stats --path <file>`). It was renamed from `kataglyphis_rustprojecttemplate` on 2026-08-07 — see the pdb note below.
 - `tests/` — root-package integration tests (`integration.rs`) and proptest fuzz tests (`fuzz_test.rs`)
 - `ExternalLib/Kataglyphis-ContainerHub` — git submodule and **the ground truth for every container and PowerShell concern**. See the section below before writing any helper.
 
@@ -100,7 +100,11 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 
 Default features are empty — GUI and ONNX code only compiles with explicit `--features` (see README "Run"). "Fuzz" testing = proptest in `tests/fuzz_test.rs`; there is no cargo-fuzz/libFuzzer target.
 
-Known-benign warning: cargo reports a pdb/filename collision because the root **lib** and the CLI **bin** are both named `kataglyphis_rustprojecttemplate`. It may become a hard cargo error someday; renaming one target is the fix.
+**The pdb collision is fixed — do not undo it by renaming the bin back.** Cargo used to warn that the root **lib** and the CLI **bin**, both named `kataglyphis_rustprojecttemplate`, wrote the same `kataglyphis_rustprojecttemplate.pdb` (it comes from the lib's `cdylib` crate type, not the rlib), and that this *"may become a hard error in the future"* — [rust-lang/cargo#6313](https://github.com/rust-lang/cargo/issues/6313).
+
+The **bin** was renamed to `kataglyphis_cli`, not the lib, and that direction is deliberate: the C++ Vulkan engine imports the lib through Corrosion/cxxbridge as `kataglyphis_rustprojecttemplate` (see the generated `kataglyphis_rustprojecttemplate_bridge` target in the parent repo's CMake). Renaming `[lib] name` would change the produced DLL/LIB names and break that build from outside this repo. The package name and `[lib] name` therefore stay as they are.
+
+What moved with the bin: `Msix.Binary` and `Msi.OutputName` in `Scripts/Windows/Build-Windows.config.psd1`, `File Name=` in `wix/main.wxs`, `BINARY_FILE` in the Ubuntu workflow and `BINARY` in the Windows one, the `-Binary` default in `Run-AppProfiles.ps1`, and `--bin` in `Scripts/Linux/run_person_detection.sh`. Note the Ubuntu workflow's `BINARY` (hyphenated, `kataglyphis-rustprojecttemplate`) is the *distribution package* name and was correctly left alone — only `BINARY_FILE` is the executable.
 
 ## Build & test in the Stevedore Windows container
 
@@ -131,7 +135,7 @@ Hard-won host facts (verified 2026-07-17; full background in the submodule's `do
 **2026-08-07, winamd64, rustc 1.97.1** — `Invoke-StevedoreBuild.ps1 -MemoryGb 32`:
 
 - Builds: debug 1m35s, profile 1m32s, release 1m12s — all three green. Release binary verified on the host: `stats --path README.md` → `Lines: 476, Words: 1905, Bytes: 20104`.
-- Tests: the 8 that predate `crates/webgpu_renderer` still pass (3 integration, 1 proptest, 4 telemetry). **`kataglyphis_webgpu_renderer --lib` cannot start in this container**: `exit code 0xc0000135, STATUS_DLL_NOT_FOUND`, before `main`, so no test runs.
+- Tests: the 8 that predate `crates/webgpu_renderer` still pass (3 integration, 1 proptest, 4 telemetry). **`kataglyphis_webgpu_renderer` is excluded from the container run** — `Scripts/Windows/Container/rust-test-all.ps1` passes `--exclude kataglyphis_webgpu_renderer` and logs that it did. Its test binaries exit `0xc0000135` (`STATUS_DLL_NOT_FOUND`) before `main`, because linking wgpu with the `gles` backend makes the executable import `opengl32.dll`, which Server Core does not ship. The loader resolves that import, so no runtime flag helps; without the exclusion the whole `cargo test --workspace` crashed and reported nothing. `gles` stays on purpose (OpenGL fallback for hosts without Vulkan/DX12) — run `cargo test -p kataglyphis_webgpu_renderer --locked` on a desktop Windows machine instead.
 
   Not a regression from the wgpu 30 upgrade. The old "8 passed / 0 failed" baseline was recorded on 2026-07-17, and the renderer crate landed on 2026-07-18 — the container test lane has therefore *never* run with that crate present. The image is Server Core with no GPU stack; a wgpu-linked binary needs graphics DLLs it does not ship.
 
@@ -270,6 +274,17 @@ Verified 2026-08-07 by running `Build-Windows.ps1 -SkipTests` in `:winamd64`:
 Guard this with the golden tests, not with the compiler: a clip-space or Y-axis mistake compiles perfectly and only shows up in pixels. See the GPU note above for how to make them actually run.
 
 The upgrade was verified rendering-neutral: 333 tests pass, the only failure is the pre-existing instance-normal bug, and it still reports **exactly 987 differing pixels** — the same figure as before the upgrade. That number is the useful signal here; a changed clip-space or flipped Y would have moved it.
+
+## The 2026-08-07 tract 0.22 → 0.23 migration
+
+Dependabot offered this as `build(deps): bump tract-onnx from 0.22.3 to 0.23.4`. It is **not** a drop-in bump — it breaks in four separate ways, none of which the PR title suggests, and only `crates/inference/src/person_detection/{mod,tract_backend}.rs` are affected (the `onnx_tract` feature is off by default, so nothing else notices).
+
+- **`SimplePlan` is gone from the prelude.** It was renamed to `RunnableModel`; the alias to use is `TypedRunnableModel`, and it is **fully applied** — `pub type TypedRunnableModel = SimplePlan<TypedFact, Box<dyn TypedOp>>`. Passing it a generic argument (the old third `TypedModel` parameter) fails with *"type alias takes 0 generic arguments but 1 generic argument was supplied"*.
+- **`run` takes `self: &Arc<Self>`.** A `Box<TractPlan>` does not resolve the method at all — the error is a bare *"no method named `run`"*, which reads like a missing trait import and is not.
+- **`into_runnable()` already returns an `Arc`.** So the Arc is neither ours to add nor to strip; `load_tract_model` returns `Arc<TractPlan>` and the `Backend::Tract` variant stores it directly.
+- **`Tensor::as_slice` was removed.** The safe replacement is `to_plain_array_view::<f32>()`, which errors unless the storage is plain *and* the datum type matches — the same two conditions the old call checked. rustc's *"there is a method `slice` with a similar name"* suggestion points somewhere else entirely; do not follow it.
+
+The lockfile also gains `tract-extra`, `tract-pulse`, `tract-pulse-opl`, `tract-transformers` and `typeid`. `cargo deny check licenses` passes with them (verified, exit 0) — no new `deny.toml` allowances were needed.
 
 ## Conventions
 

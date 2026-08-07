@@ -2,13 +2,17 @@ use anyhow::Context;
 
 use super::model_utils::validate_model_path;
 
-type TractPlan = tract_onnx::prelude::SimplePlan<
-    tract_onnx::prelude::TypedFact,
-    Box<dyn tract_onnx::prelude::TypedOp>,
-    tract_onnx::prelude::TypedModel,
->;
+// tract 0.23 renamed `SimplePlan` to `RunnableModel` and the prelude no longer
+// exports the old name at all. `TypedRunnableModel` is fully applied - it takes
+// no generic argument - and stands for what used to be spelled out as
+// `SimplePlan<TypedFact, Box<dyn TypedOp>, TypedModel>`.
+type TractPlan = tract_onnx::prelude::TypedRunnableModel;
 
-pub(crate) fn load_tract_model(model_path: &str) -> anyhow::Result<(TractPlan, (u32, u32))> {
+// `into_runnable()` hands back an Arc already in 0.23, and `SimplePlan::run`
+// takes `self: &Arc<Self>` - so the Arc is not ours to add or remove.
+pub(crate) fn load_tract_model(
+    model_path: &str,
+) -> anyhow::Result<(std::sync::Arc<TractPlan>, (u32, u32))> {
     use tract_onnx::prelude::*;
 
     let canonical_path = validate_model_path(model_path)?;

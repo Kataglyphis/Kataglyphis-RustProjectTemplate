@@ -58,7 +58,7 @@
             <Component Id='binary0' Bitness='always64'>
                 <File
                     Id='exe0'
-                    Name='kataglyphis_rustprojecttemplate.exe'
+                    Name='kataglyphis_cli.exe'
                     DiskId='1'
                     Source='$(var.ExeSource)'
                     KeyPath='yes'/>

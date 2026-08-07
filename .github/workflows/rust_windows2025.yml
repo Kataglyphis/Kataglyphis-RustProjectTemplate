@@ -22,7 +22,7 @@ jobs:
       run:
         shell: pwsh
     env:
-      BINARY: kataglyphis_rustprojecttemplate
+      BINARY: kataglyphis_cli
       WINDOWS_CONTAINER_IMAGE: ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64
       WINDOWS_DOCKER_CPUS: '4'
       WINDOWS_DOCKER_MEMORY: 16g
