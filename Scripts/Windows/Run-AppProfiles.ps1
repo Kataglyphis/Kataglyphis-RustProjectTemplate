@@ -37,9 +37,9 @@ function Resolve-Profiles([string[]]$RequestedProfiles) {
     return $knownProfiles
   }
 
-  foreach ($profile in $normalizedProfiles) {
-    if ($profile -notin $knownProfiles) {
-      throw "Unsupported profile '$profile'. Valid values: $($knownProfiles -join ', ')."
+  foreach ($buildProfile in $normalizedProfiles) {
+    if ($buildProfile -notin $knownProfiles) {
+      throw "Unsupported profile '$buildProfile'. Valid values: $($knownProfiles -join ', ')."
     }
   }
 
@@ -53,11 +53,11 @@ $resolvedProfiles = Resolve-Profiles -RequestedProfiles $Profiles
 $resolvedTargetDir = if ([string]::IsNullOrWhiteSpace($TargetDir)) { 'target' } else { $TargetDir }
 $featureLabel = if ([string]::IsNullOrWhiteSpace($Features)) { '<none>' } else { $Features }
 
-foreach ($profile in $resolvedProfiles) {
+foreach ($buildProfile in $resolvedProfiles) {
   $buildArgs = @('build', '--package', $Package, '--bin', $Binary)
   $profileDir = 'debug'
 
-  switch ($profile) {
+  switch ($buildProfile) {
     'profile' {
       $buildArgs += @('--profile', 'profile')
       $profileDir = 'profile'
@@ -72,10 +72,10 @@ foreach ($profile in $resolvedProfiles) {
     $buildArgs += @('--features', $Features)
   }
 
-  Write-Host "==> Building $Binary [$profile] with features: $featureLabel"
+  Write-Host "==> Building $Binary [$buildProfile] with features: $featureLabel"
   & cargo @buildArgs
   if ($LASTEXITCODE -ne 0) {
-    throw "Build failed for profile '$profile' and features '$featureLabel'."
+    throw "Build failed for profile '$buildProfile' and features '$featureLabel'."
   }
 
   $binaryPath = Join-Path $repoRoot "$resolvedTargetDir\$profileDir\$Binary.exe"
@@ -88,10 +88,10 @@ foreach ($profile in $resolvedProfiles) {
     continue
   }
 
-  Write-Host "==> Running $Binary [$profile] with args: $($AppArgs -join ' ')"
+  Write-Host "==> Running $Binary [$buildProfile] with args: $($AppArgs -join ' ')"
   & $binaryPath @AppArgs
   if ($LASTEXITCODE -ne 0) {
-    throw "Run failed for profile '$profile' and features '$featureLabel' (exit $LASTEXITCODE)."
+    throw "Run failed for profile '$buildProfile' and features '$featureLabel' (exit $LASTEXITCODE)."
   }
 }
 

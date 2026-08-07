@@ -139,7 +139,7 @@ Hard-won host facts (verified 2026-07-17; full background in the submodule's `do
 
   Not a regression from the wgpu 30 upgrade. The old "8 passed / 0 failed" baseline was recorded on 2026-07-17, and the renderer crate landed on 2026-07-18 — the container test lane has therefore *never* run with that crate present. The image is Server Core with no GPU stack; a wgpu-linked binary needs graphics DLLs it does not ship.
 
-  Consequence: `Invoke-StevedoreBuild.ps1 -Test` fails as a whole. Use `-TestOnly` knowing the renderer will abort, or scope it (`cargo test --workspace --exclude kataglyphis_webgpu_renderer`), until the image carries the missing DLLs.
+  `Invoke-StevedoreBuild.ps1 -Test` used to fail as a whole because of this. It no longer does — the exclusion lives in `rust-test-all.ps1`, so the container lane is green and reports 8 passed. Drop the `--exclude` once the image carries the missing DLLs.
 
 **2026-07-17** (superseded, kept because it is what the 8-test figure refers to): builds debug 1m11s / profile 1m31s / release 1m08s; tests 8 passed / 0 failed, 1 doc-test ignored — measured before `crates/webgpu_renderer` existed.
 
@@ -285,6 +285,26 @@ Dependabot offered this as `build(deps): bump tract-onnx from 0.22.3 to 0.23.4`.
 - **`Tensor::as_slice` was removed.** The safe replacement is `to_plain_array_view::<f32>()`, which errors unless the storage is plain *and* the datum type matches — the same two conditions the old call checked. rustc's *"there is a method `slice` with a similar name"* suggestion points somewhere else entirely; do not follow it.
 
 The lockfile also gains `tract-extra`, `tract-pulse`, `tract-pulse-opl`, `tract-transformers` and `typeid`. `cargo deny check licenses` passes with them (verified, exit 0) — no new `deny.toml` allowances were needed.
+
+## Do not let `cargo update` take zune-core to 0.5.2
+
+`zune-core` is held at **0.5.1** in `Cargo.lock` on purpose. 0.5.2 breaks `zune-jpeg` 0.5.15:
+
+```
+error: macro expansion ends with an incomplete expression: expected expression
+  --> zune-jpeg-0.5.15/src/mcu_prog.rs:463:17
+error: could not compile `zune-jpeg` (lib) due to 1 previous error
+```
+
+zune-jpeg consumes a macro from zune-core, and 0.5.2 changed it. **There is no forward fix**: 0.5.15 is zune-jpeg's newest release and 0.5.2 is zune-core's, so the two are incompatible at their respective tips. Both arrive transitively (via `image`, into the renderer), so nothing in a `Cargo.toml` pins them — only the lockfile does.
+
+A bare `cargo update` reintroduces it silently, and it only shows up in a **release** build of the full workspace; `cargo test` and `cargo check -p ...` stay green because they never reach that crate. If you run `cargo update`, put it back:
+
+```bash
+cargo update -p zune-core --precise 0.5.1
+```
+
+Re-check when zune-jpeg publishes past 0.5.15.
 
 ## Conventions
 

@@ -12,7 +12,12 @@
 param(
 #requires -Version 7.0
 
-  [string[]]$Configurations = @('all'),
+  # NOTE: there is deliberately no -Configurations here. One used to be
+  # declared and nothing ever read it, so `-Configurations gui_windows` was
+  # accepted and silently ignored. The feature-matrix concept lives in
+  # Invoke-WindowsConfigMatrix.ps1, which implements it properly and drives
+  # Run-AppProfiles.ps1 per configuration. Use that script instead of
+  # reintroducing the parameter here.
   [switch]$SkipMsix,
   [switch]$SkipMsi,
   [switch]$SkipBuild,
@@ -78,7 +83,11 @@ function Sync-BuildArtifacts {
     throw "Sync-BuildArtifacts failed (robocopy exit $robocopyExit, serious error): '$Source' -> '$Destination'"
   }
   if (($robocopyExit -band 8) -ne 0) {
-    Write-Warning "Sync-BuildArtifacts: robocopy exit $robocopyExit - some files could not be copied (likely a transient lock); continuing."
+    # Through the build log, not Write-Warning: a partial copy is exactly the
+    # kind of thing you go looking for in the log file afterwards, and
+    # Write-Warning never reaches it. This is also what $Context is FOR - every
+    # call site already passes it and nothing used to read it.
+    Write-BuildLogWarning -Context $Context -Message "Sync-BuildArtifacts: robocopy exit $robocopyExit - some files could not be copied (likely a transient lock); continuing."
   }
   # Do not leak robocopy's nonzero success codes into callers that treat
   # $LASTEXITCODE as pass/fail.
@@ -491,8 +500,22 @@ try {
         throw "License file not found: $licenseRtf (Msi.LicenseFile = '$licenseRel', referenced by $wxsPath)."
       }
 
-      # The WXS takes every moving path as a preprocessor variable so it never
-      # has to assume a target\release next to the workspace root.
+      # Msi.ProductName and Msi.Manufacturer were declared in the config and
+      # never read, while those same two strings sat hard-coded in the WXS --
+      # two sources of truth, where editing the config silently did nothing.
+      # They are preprocessor variables now, so the config is the only one.
+      $msiProductName = Get-OrDefault (Get-ConfigValue -Config $config -Path 'Msi.ProductName') $msixDisplayName
+      $msiManufacturer = Get-OrDefault (Get-ConfigValue -Config $config -Path 'Msi.Manufacturer') $msixPublisherDisplayName
+      if ([string]::IsNullOrWhiteSpace($msiProductName)) {
+        throw "Msi.ProductName is empty and Msix.DisplayName gave no fallback; $wxsPath requires it."
+      }
+      if ([string]::IsNullOrWhiteSpace($msiManufacturer)) {
+        throw "Msi.Manufacturer is empty and Msix.PublisherDisplayName gave no fallback; $wxsPath requires it."
+      }
+
+      # The WXS takes every moving value as a preprocessor variable so it never
+      # has to assume a target\release next to the workspace root, and never
+      # duplicates a string the config already owns.
       $wixParams = @(
         'build',
         '-arch', 'x64',
@@ -500,6 +523,8 @@ try {
         '-d', "Version=$resolvedVersion",
         '-d', "ExeSource=$msiExePath",
         '-d', "LicenseRtf=$licenseRtf",
+        '-d', "ProductName=$msiProductName",
+        '-d', "Manufacturer=$msiManufacturer",
         '-out', $msiFile,
         $wxsPath
       )

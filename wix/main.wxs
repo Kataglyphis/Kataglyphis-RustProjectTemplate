@@ -16,9 +16,9 @@
      xmlns:ui='http://wixtoolset.org/schemas/v4/wxs/ui'>
 
     <Package
-        Name='Kataglyphis Rust Project Template'
+        Name='$(var.ProductName)'
         UpgradeCode='E8B9F4A1-2C3D-4E5F-A6B7-8C9D0E1F2A3B'
-        Manufacturer='Kataglyphis'
+        Manufacturer='$(var.Manufacturer)'
         Language='1033'
         Codepage='1252'
         Version='$(var.Version)'
@@ -29,7 +29,7 @@
         <SummaryInformation
             Keywords='Installer'
             Description='Rust project template with optional GUI, ONNX backends, profiling, packaging, and CI workflows.'
-            Manufacturer='Kataglyphis'
+            Manufacturer='$(var.Manufacturer)'
             Codepage='1252'/>
 
         <MajorUpgrade
@@ -37,13 +37,13 @@
             DowngradeErrorMessage='A newer version of [ProductName] is already installed. Setup will now exit.'/>
 
         <Media Id='1' Cabinet='media1.cab' EmbedCab='yes' DiskPrompt='CD-ROM #1'/>
-        <Property Id='DiskPrompt' Value='Kataglyphis Rust Project Template Installation'/>
+        <Property Id='DiskPrompt' Value='$(var.ProductName) Installation'/>
 
         <StandardDirectory Id='ProgramFiles64Folder'>
-            <Directory Id='APPLICATIONFOLDER' Name='Kataglyphis Rust Project Template'/>
+            <Directory Id='APPLICATIONFOLDER' Name='$(var.ProductName)'/>
         </StandardDirectory>
         <StandardDirectory Id='ProgramMenuFolder'>
-            <Directory Id='ApplicationProgramsFolder' Name='Kataglyphis Rust Project Template'/>
+            <Directory Id='ApplicationProgramsFolder' Name='$(var.ProductName)'/>
         </StandardDirectory>
 
         <DirectoryRef Id='APPLICATIONFOLDER'>
@@ -68,7 +68,7 @@
         <DirectoryRef Id='ApplicationProgramsFolder'>
             <Component Id='ApplicationShortcut' Bitness='always64'>
                 <Shortcut Id='ApplicationStartMenuShortcut'
-                    Name='Kataglyphis Rust Project Template'
+                    Name='$(var.ProductName)'
                     Description='Rust project template with optional GUI, ONNX backends, profiling, packaging, and CI workflows.'
                     Target='[!exe0]'
                     WorkingDirectory='APPLICATIONFOLDER'/>
