@@ -1,245 +1,236 @@
-name: Rust workflow on Ubuntu-24.04 (x86_64/ARM)
+name: Rust workflow on Ubuntu-24.04 (x86_64, ARM opt-in)
 
 on:
   push:
     branches: [ "main", "develop" ]
   pull_request:
     branches: [ "main", "develop" ]
+  workflow_dispatch:
+
+# Nothing in this workflow writes to the repository. The GHCR pull and the
+# docs publish authenticate with their own secrets, never with GITHUB_TOKEN,
+# so the default (often write) token permissions are pure attack surface.
+permissions:
+  contents: read
+
+# A 45-minute lane that has already been superseded by a newer push is wasted
+# runner time. Queued runs on main still finish - releases are cut from there.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   CARGO_TERM_COLOR: always
+  # Single source of truth for the build image. `:latest-cross`, never
+  # `:latest` - the submodule's AGENTS.md records that `:latest` went
+  # unrebuilt from 2026-04-16 while the cross lane was refreshed.
+  CONTAINER_IMAGE: ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross
+  # The image ships CARGO_HOME=/usr/local/cargo owned by root while the
+  # container runs as uid 1001. Every cargo step that WRITES (registry cache,
+  # `cargo install`, tarpaulin, rustdoc) dies with "Permission denied" unless
+  # CARGO_HOME points somewhere the uid owns. ContainerHub's cargo scripts
+  # carry a guard for this, but setting it here covers the direct cargo
+  # invocations below too - one place instead of six.
+  CONTAINER_ENV: -e CARGO_HOME=/tmp/cargo-home -e CARGO_TERM_COLOR=always
 
 jobs:
+  # The ARM lane is opt-in per commit, matching the convention the ContainerHub
+  # ecosystem already uses for its expensive lanes (see that submodule's
+  # `docs/ci-build-triggers.md`). Two reasons it cannot simply always run:
+  #   - `:latest-cross` currently resolves to an amd64-only manifest list, so
+  #     an arm64 runner's pull dies with "no matching manifest for
+  #     linux/arm64/v8" before a single build step executes. Repairing the
+  #     manifest is a ContainerHub-side job (`build-runtime-manifest.sh
+  #     --repair --push-manifest`); until then the lane cannot be green, and a
+  #     permanently-red lane trains everyone to ignore the badge.
+  #   - Even once repaired, a second full 45-minute cross build on every push
+  #     to a template repo is not worth its runner minutes.
+  # Put `[build-arm]` in the pushed HEAD commit message, or use the manual
+  # workflow_dispatch, to exercise it.
+  select-lanes:
+    name: Select lanes
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - id: pick
+        shell: bash
+        # The commit message arrives via env, NOT via `${{ }}` inside the
+        # script body: interpolating attacker-controllable text straight into
+        # a run block is the classic GitHub Actions script-injection hole.
+        env:
+          HEAD_MSG: ${{ github.event.head_commit.message }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          amd64='{"name":"amd64","runner":"ubuntu-24.04","platform":"linux/amd64","arch":"x64","artifact_suffix":"ubuntu-24.04-x64","docs":true}'
+          arm64='{"name":"arm64","runner":"ubuntu-24.04-arm","platform":"linux/arm64","arch":"arm64","artifact_suffix":"ubuntu-24.04-arm64","docs":false}'
+
+          include="${amd64}"
+          if [ "${EVENT}" = "workflow_dispatch" ] || printf '%s' "${HEAD_MSG}" | grep -qF '[build-arm]'; then
+            include="${amd64},${arm64}"
+            echo "ARM lane enabled."
+          else
+            echo "ARM lane skipped - add [build-arm] to the commit message to enable it."
+          fi
+
+          echo "matrix={\"include\":[${include}]}" >> "$GITHUB_OUTPUT"
+
   linux-pipeline:
     name: Build, test, package, and docs (${{ matrix.name }})
+    needs: select-lanes
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - name: amd64
-            runner: ubuntu-24.04
-            platform: linux/amd64
-            arch: x64
-            coverage_name: coverage-report
-            artifact_suffix: ubuntu-24.04-x64
-            docs: true
-          - name: arm64
-            runner: ubuntu-24.04-arm
-            platform: linux/arm64
-            arch: arm64
-            coverage_name: coverage-report-arm64
-            artifact_suffix: ubuntu-24.04-arm64
-            docs: false
+      matrix: ${{ fromJSON(needs.select-lanes.outputs.matrix) }}
     env:
       PLATFORM: ${{ matrix.platform }}
       ARCH: ${{ matrix.arch }}
       BINARY: kataglyphis-rustprojecttemplate
       BINARY_FILE: kataglyphis_rustprojecttemplate
-      # VERSION will be computed by the shared script (see step "Compute version")
+      # VERSION is computed by Scripts/compute_version.sh into GITHUB_ENV.
       REF_NAME: ${{ github.ref_name }}
       RUN_NUMBER: ${{ github.run_number }}
       PACKAGE_TYPES: tar,deb,AppImage,Flatpak
     steps:
-      - name: Free Disk Space on Host
-        uses: jlumbroso/free-disk-space@main
+      # Free disk, checkout (recursive), registry login and a retried image
+      # pull - four steps that used to be ~35 hand-maintained lines here, and
+      # drifted from the sibling Windows lane. Now one shared action.
+      - name: Prepare the CI host
+        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/prepare-linux-ci-host@main
         with:
-          tool-cache: true
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: false
-          swap-storage: true
-
-      - name: 📥 Checkout repository
-        uses: actions/checkout@v7.0.1
-        with:
-          fetch-depth: 0
-          submodules: recursive
+          image: ${{ env.CONTAINER_IMAGE }}
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GHCR_PAT }}
 
       - name: Compute version
         id: compute_version
-        run: |
-          bash Scripts/compute_version.sh
         shell: bash
-
-      - name: Login to GitHub Container Registry
-        run: echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-
-      - name: Pull container image (once)
-        run: |
-          for i in 1 2 3; do
-            echo "Attempt $i to pull container..."
-            if timeout 900 docker pull ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross; then
-              echo "Successfully pulled container"
-              exit 0
-            fi
-            echo "Pull failed, waiting before retry..."
-            sleep 30
-          done
-          echo "Failed to pull container after 3 attempts"
-          exit 1
+        run: bash Scripts/compute_version.sh
 
       - name: Debug build
-        run: |
-          docker run --rm \
-            --platform ${{ env.PLATFORM }} \
-            -v ${{ github.workspace }}:/workspace \
-            -w /workspace \
-            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross \
-            bash -lc '
-            set -e
-            git config --global --add safe.directory /workspace || true
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_debug.sh
-            '
+        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/run-in-linux-container@main
+        with:
+          image: ${{ env.CONTAINER_IMAGE }}
+          extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
+          script: >-
+            bash -lc 'set -e;
+            git config --global --add safe.directory /workspace || true;
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_debug.sh'
 
       - name: Security checks (cargo audit + cargo deny)
-        continue-on-error: false
-        run: |
-          docker run --rm \
-            --platform ${{ env.PLATFORM }} \
-            -v ${{ github.workspace }}:/workspace \
-            -w /workspace \
-            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross \
-            bash -lc '
-            set -e
-            git config --global --add safe.directory /workspace || true
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_security_checks.sh
-            '
+        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/run-in-linux-container@main
+        with:
+          image: ${{ env.CONTAINER_IMAGE }}
+          extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
+          script: >-
+            bash -lc 'set -e;
+            git config --global --add safe.directory /workspace || true;
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_security_checks.sh'
 
-      - name: Check formatting
-        continue-on-error: true
-        run: |
-          docker run --rm \
-            --platform ${{ env.PLATFORM }} \
-            -v ${{ github.workspace }}:/workspace \
-            -w /workspace \
-            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross \
-            bash -lc '
-            set -e
-            git config --global --add safe.directory /workspace || true
-            apt-get update && apt-get install -y libunwind-dev libdw-dev libgtk-4-dev
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_fmt_clippy.sh
-          '
+      # This step used to be `continue-on-error: true` and had NEVER once run
+      # to completion. It died with exit 127 on every single build:
+      #   - it called ContainerHub's `cargo_fmt_clippy.sh`, whose first line is
+      #     `rustup component add rustfmt` - but the runtime image deliberately
+      #     ships no rustup (see that repo's install-rust.sh: rustfmt and
+      #     clippy are baked in at image-build time and the runtime stage has
+      #     no rustup on PATH), so the script exits 127 before cargo runs;
+      #   - the `apt-get install libgtk-4-dev ...` prologue failed too
+      #     ("/var/lib/apt/lists/partial is missing - Permission denied"): the
+      #     container is uid 1001, apt needs root. It was never installing
+      #     anything, so the deps it was meant to provide were never there.
+      # `continue-on-error` turned both into a green tick, and an entire crate
+      # (crates/webgpu_renderer) reached main unformatted and with 12 clippy
+      # errors as a result. So: call cargo directly (the components are already
+      # in the image), and let the step GATE.
+      #
+      # Default features on purpose, not --all-features: gui_linux needs GTK4
+      # headers and onnxruntime needs the ORT libs, neither of which this
+      # container has and neither of which uid 1001 can apt-install. A lint
+      # gate that cannot run is worse than a narrower one that does.
+      - name: Check formatting and clippy
+        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/run-in-linux-container@main
+        with:
+          image: ${{ env.CONTAINER_IMAGE }}
+          extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
+          script: >-
+            bash -lc 'set -e;
+            git config --global --add safe.directory /workspace || true;
+            cargo fmt --all -- --check;
+            cargo clippy --workspace --all-targets --locked -- -D warnings'
 
       - name: Run unit, integration, and doc tests
-        run: |
-          docker run --rm \
-            --platform ${{ env.PLATFORM }} \
-            -v ${{ github.workspace }}:/workspace \
-            -w /workspace \
-            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross \
-            bash -lc '
-            set -e
-            git config --global --add safe.directory /workspace || true
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_test.sh
-            '
+        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/run-in-linux-container@main
+        with:
+          image: ${{ env.CONTAINER_IMAGE }}
+          extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
+          script: >-
+            bash -lc 'set -e;
+            git config --global --add safe.directory /workspace || true;
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_test.sh'
 
       - name: Run coverage
-        run: |
-          docker run --rm \
-            --platform ${{ env.PLATFORM }} \
-            -v ${{ github.workspace }}:/workspace \
-            -w /workspace \
-            -e CARGO_HOME=/tmp/cargo-home \
-            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross \
-            bash -lc '
-            set -e
-            git config --global --add safe.directory /workspace || true
-            # The image ships CARGO_HOME=/usr/local/cargo owned by root; the
-            # container runs as uid 1001, and cargo-tarpaulin needs to WRITE the
-            # registry cache (the read-only test step never did), so it died with
-            # "Permission denied" creating .../registry/cache. Point CARGO_HOME at
-            # a writable /tmp dir - same root cause and fix as the C++ CARGO_HOME
-            # fallback.
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_coverage.sh
-            '
-
-      # coverage reports are uploaded together with other artifacts later
+        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/run-in-linux-container@main
+        with:
+          image: ${{ env.CONTAINER_IMAGE }}
+          extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
+          script: >-
+            bash -lc 'set -e;
+            git config --global --add safe.directory /workspace || true;
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_coverage.sh'
 
       - name: Run benchmarks
-        run: |
-          docker run --rm \
-            --platform ${{ env.PLATFORM }} \
-            -v ${{ github.workspace }}:/workspace \
-            -w /workspace \
-            -e CARGO_HOME=/tmp/cargo-home \
-            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross \
-            bash -lc '
-            set -e
-            git config --global --add safe.directory /workspace || true
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_bench.sh
-            '
+        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/run-in-linux-container@main
+        with:
+          image: ${{ env.CONTAINER_IMAGE }}
+          extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
+          script: >-
+            bash -lc 'set -e;
+            git config --global --add safe.directory /workspace || true;
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_bench.sh'
 
       - name: 🛠️ Build release binary
-        run: |
-          docker run --rm \
-            --platform ${{ env.PLATFORM }} \
-            -v ${{ github.workspace }}:/workspace \
-            -w /workspace \
-            -e CARGO_HOME=/tmp/cargo-home \
-            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross \
-            bash -lc '
-            set -e
-            git config --global --add safe.directory /workspace || true
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_release.sh
-            '
+        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/run-in-linux-container@main
+        with:
+          image: ${{ env.CONTAINER_IMAGE }}
+          extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
+          script: >-
+            bash -lc 'set -e;
+            git config --global --add safe.directory /workspace || true;
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_release.sh'
 
+      # --privileged is here so AppImage creation can reach FUSE. --device
+      # /dev/fuse would be the narrower grant, but the AppImage tooling also
+      # wants the mount capability; extract-and-run avoids FUSE entirely and
+      # is the better long-term fix.
       - name: 📦 Create archive (tar, deb, AppImage, Flatpak)
-        run: |
-          # Run the packaging container and expose /dev/fuse into it so AppImage
-          # creation can use FUSE. Passing --device is preferred to --privileged.
-          # Ask AppImage binaries to extract-and-run instead of using FUSE. This
-          # avoids needing --privileged or kernel FUSE on the runner.
-          docker run --rm \
-            --privileged \
-            --platform ${{ env.PLATFORM }} \
-            -e BINARY="${BINARY}" \
-            -e BINARY_FILE="${BINARY_FILE}" \
-            -e VERSION="${VERSION}" \
-            -e PACKAGE_TYPES="${PACKAGE_TYPES}" \
-            -e PLATFORM="${PLATFORM}" \
-            -e ARCH="${ARCH}" \
-            -v ${{ github.workspace }}:/workspace \
-            -w /workspace \
-            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross \
-            bash -lc '
-            set -e
-            git config --global --add safe.directory /workspace || true
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/06-packaging/package_archive.sh \
-              --binary "${BINARY}" \
-              --binary-file "${BINARY_FILE}" \
-              --binary-path "target/release/${BINARY_FILE}" \
-              --version "${VERSION}" \
-              --package-types "${PACKAGE_TYPES}" \
-              --platform "${PLATFORM}" \
-              --arch "${ARCH}" \
-              --flatpak-manifest "packaging/flatpak/kataglyphis.flatpak.json" \
-              --desktop-file "packaging/flatpak/kataglyphis.desktop" \
-              --icon-file "packaging/flatpak/icon.png" \
-              --archive-out-file "dist/archive_path.txt" \
-              --no-github-output
-            '
+        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/run-in-linux-container@main
+        with:
+          image: ${{ env.CONTAINER_IMAGE }}
+          extra-args: >-
+            --privileged --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
+            -e BINARY="${{ env.BINARY }}"
+            -e BINARY_FILE="${{ env.BINARY_FILE }}"
+            -e VERSION="${{ env.VERSION }}"
+            -e PACKAGE_TYPES="${{ env.PACKAGE_TYPES }}"
+            -e PLATFORM="${{ env.PLATFORM }}"
+            -e ARCH="${{ env.ARCH }}"
+          script: >-
+            bash -lc 'set -e;
+            git config --global --add safe.directory /workspace || true;
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/06-packaging/package_archive.sh
+            --binary "${BINARY}"
+            --binary-file "${BINARY_FILE}"
+            --binary-path "target/release/${BINARY_FILE}"
+            --version "${VERSION}"
+            --package-types "${PACKAGE_TYPES}"
+            --platform "${PLATFORM}"
+            --arch "${ARCH}"
+            --flatpak-manifest "packaging/flatpak/kataglyphis.flatpak.json"
+            --desktop-file "packaging/flatpak/kataglyphis.desktop"
+            --icon-file "packaging/flatpak/icon.png"
+            --archive-out-file "dist/archive_path.txt"
+            --no-github-output'
 
-      - name: Read package archive path
-        if: always()
-        id: package
-        run: |
-          if [ -f dist/archive_path.txt ]; then
-            echo "archive_path=$(cat dist/archive_path.txt)" >> "$GITHUB_OUTPUT"
-          else
-            echo "archive_path=" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: 📦 Prepare archive variables
-        shell: bash
-        id: vars
-        run: |
-          # Use VERSION from env (set by compute_version.sh)
-          VERSION_SAFE=${VERSION//\//-}
-          echo "archive_name=${BINARY}-${VERSION_SAFE}-${{ matrix.runner }}-${ARCH}.tar.gz" >> "$GITHUB_OUTPUT"
-          
       - name: Upload all artifacts
         if: always()
         uses: actions/upload-artifact@v7.0.1
@@ -250,35 +241,27 @@ jobs:
             tarpaulin-report.xml
             target/release/${{ env.BINARY_FILE }}
             dist/**
-            dist/*.flatpak
-          
+
       - name: Create docs
         if: matrix.docs
-        run: |
-          docker run --rm \
-            --platform ${{ env.PLATFORM }} \
-            -v ${{ github.workspace }}:/workspace \
-            -w /workspace \
-            -e CARGO_HOME=/tmp/cargo-home \
-            ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross \
-            bash -lc '
-            set -e
-            git config --global --add safe.directory /workspace || true
-            # Same root-owned-CARGO_HOME fix as the coverage/bench/release steps:
-            # the image ships CARGO_HOME=/usr/local/cargo owned by root while the
-            # container runs as uid 1001, and cargo doc must WRITE the registry
-            # cache, so it died with "Permission denied" creating .../registry/cache.
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_build_doc.sh
-            '
+        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/run-in-linux-container@main
+        with:
+          image: ${{ env.CONTAINER_IMAGE }}
+          extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
+          script: >-
+            bash -lc 'set -e;
+            git config --global --add safe.directory /workspace || true;
+            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_build_doc.sh'
 
       - name: Fix permissions on generated docs
         if: matrix.docs
-        run: |
-          sudo chown -R $USER:$USER ./target/doc
+        run: sudo chown -R "$USER:$USER" ./target/doc
 
       - name: 📂 Sync files to domain
-        if: matrix.docs
-        # Best-effort docs publish: a transient FTP control-socket timeout
+        # Only publish docs from the default branch. Every push to develop used
+        # to overwrite the live documentation with in-progress state.
+        if: matrix.docs && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        # Best-effort publish: a transient FTP control-socket timeout
         # (observed 2026-07-22) must NOT red-light a lane whose build, test
         # and package all passed. The step still shows as failed with a
         # warning annotation - it just no longer fails the job.
@@ -290,4 +273,57 @@ jobs:
           password: ${{ secrets.PW }}
           local-dir: "./target/doc/"
 
-        
+  # Every optional feature is currently built by NOTHING: the lane above uses
+  # default features (which are empty) and the Windows lane is opt-in. That is
+  # how a GStreamer major-version skew between crates/gui and crates/media
+  # survived unnoticed until 2026-08-07 - two -sys layers binding one system
+  # libgstreamer, and no build anywhere that would link them together.
+  #
+  # Every combination below was verified green on 2026-08-07 (Ubuntu 24.04,
+  # Rust 1.97.1), so a failure here is an image problem, not a broken feature.
+  # The image supplies what they need: GStreamer is source-built into
+  # /opt/gstreamer and already on PKG_CONFIG_PATH, and libssl-dev arrives via
+  # ContainerHub's package-lists.sh. Do NOT "fix" a failure by apt-installing
+  # libgstreamer*-dev — the image purges the distro packages deliberately.
+  #
+  # `gui_unix` is deliberately ABSENT: it is the only feature needing
+  # libgtk-4-dev, which ContainerHub excludes on purpose because the
+  # foreign-arch GTK dev chain pulls target-side Python and breaks cross builds
+  # on python3-minimal's postinst. `gui_linux`, despite the name, is the wgpu
+  # path and needs no GTK.
+  #
+  # Opt-in because it is a second full container pull per combination, not
+  # because it is expected to fail. Enable with `[build-features]` in the
+  # commit message, or workflow_dispatch.
+  feature-matrix:
+    name: Feature check (${{ matrix.features }})
+    needs: select-lanes
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message || '', '[build-features]') }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        features:
+          - gstreamer
+          - gui_linux
+          - gui_linux,gstreamer
+          - onnxruntime
+          - burn_demos
+    steps:
+      - name: Prepare the CI host
+        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/prepare-linux-ci-host@main
+        with:
+          image: ${{ env.CONTAINER_IMAGE }}
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GHCR_PAT }}
+          fetch-depth: '1'
+
+      - name: cargo check --features ${{ matrix.features }}
+        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/run-in-linux-container@main
+        with:
+          image: ${{ env.CONTAINER_IMAGE }}
+          extra-args: ${{ env.CONTAINER_ENV }}
+          script: >-
+            bash -lc 'set -e;
+            git config --global --add safe.directory /workspace || true;
+            cargo check --locked --features ${{ matrix.features }}'

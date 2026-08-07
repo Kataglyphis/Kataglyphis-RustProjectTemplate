@@ -1,11 +1,36 @@
-# To get started with Dependabot version updates, you'll need to specify which
-# package ecosystems to update and where the package manifests are located.
-# Please see the documentation for all configuration options:
+# Dependabot version updates.
 # https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
-
+#
+# Two ecosystems: Cargo crates and the pinned GitHub Actions in
+# .github/workflows. Only the former was covered before, and un-watched action
+# pins are exactly the ones that quietly rot - a workflow keeps working on an
+# old major for years until the runner drops it.
+#
+# No "docker" ecosystem on purpose: this repo contains no Dockerfile. The
+# build images are defined in the Kataglyphis-ContainerHub submodule, and
+# Dependabot does not traverse submodules - an entry here would be dead
+# config that looks like coverage. Image updates arrive by bumping the
+# submodule pointer instead.
 version: 2
 updates:
-  - package-ecosystem: "cargo" # See documentation for possible values
-    directory: "/" # Location of package manifests
+  - package-ecosystem: "cargo"
+    directory: "/"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      # Patch/minor churn across ~700 transitive crates is noise as individual
+      # PRs. Batch it, and let anything semver-breaking come through alone so
+      # it gets reviewed on its own merits (burn, wgpu, gstreamer and ort are
+      # all pre-1.0 or pinned, so their bumps ARE breaking).
+      cargo-minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns: ["*"]
