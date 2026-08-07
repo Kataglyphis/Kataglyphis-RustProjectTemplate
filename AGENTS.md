@@ -40,20 +40,30 @@ Two consumer-specific traps, both hit on 2026-08-07:
 - **A CRLF checkout breaks it before anything runs.** The scripts are executed by bash inside the container; a `\r` makes it fail with `set: pipefail\r: invalid option name`, which names neither the file nor line endings. `.gitattributes` now pins `*.sh` to LF in both repos, but git does not rewrite an existing checkout: `git ls-files -z '*.sh' | xargs -0 rm -f && git checkout -- .`
 - **The image's Rust may be older than its own pin.** See "Known gaps" — `latest-cross` shipped Ubuntu's rustc 1.93.1 while `versions.env` pinned 1.97.1, which surfaced as a dependency's MSRV error, not as an image problem. Fixed in ContainerHub; check `rustc --version` in the container if a build fails on an MSRV floor. Everything below was written locally first and later found to already exist there — usually in a better form, twice with a bug the local copy did not have:
 
-| Need | Use | Not |
-| --- | --- | --- |
-| `docker.exe` discovery (Stevedore) | `Resolve-DockerExe` | a hand-rolled candidate list |
-| `--isolation process` and friends | `Get-ContainerIsolationArgs` | inline flags |
-| Container teardown | `Remove-BuildContainerSafe` | `docker rm -f` (misses the wcifs teardown lock) |
-| Bind-mount probe, artifact delivery | `Test-ContainerBindMount`, `Test-BuildArtifactsDelivered` | assuming a green build delivered something |
-| SDK tools (makeappx, signtool) | `Resolve-WindowsSdkToolPath` | `Get-ChildItem -Recurse` over the Kits tree |
-| MSIX manifest tokens | `Expand-XmlTemplateTokens` | `-replace` — see below |
-| XML escaping, placeholder PNGs | `ConvertTo-XmlEscapedText`, `New-TransparentPng` | local redefinitions |
-| Config access | `Get-OrDefault`, `Get-ConfigValue` (`WindowsConfig.Common`) | copies |
-| Build logging and steps | `New-BuildContext`, `Invoke-BuildStep`, `Invoke-BuildExternal`, `Write-BuildLog*` | ad-hoc `Write-Host` wrappers |
-| Version normalising | `ConvertTo-NormalizedVersion` (pwsh), `version_util.sh --normalize` (bash) | a second implementation |
-| CI job plumbing | the composite actions under `.github/actions/` | hand-written `docker run` blocks |
-| In-container cargo steps | `linux/scripts/02-toolchain/rust/cargo_*.sh` | inline cargo invocations |
+All paths below are relative to `ExternalLib/Kataglyphis-ContainerHub/`.
+
+| Need | Use | Defined in | Not |
+| --- | --- | --- | --- |
+| `docker.exe` discovery (Stevedore) | `Resolve-DockerExe` | [`windows/scripts/modules/WindowsContainerBuild.Reuse.psm1`](ExternalLib/Kataglyphis-ContainerHub/windows/scripts/modules/WindowsContainerBuild.Reuse.psm1) | a hand-rolled candidate list |
+| `--isolation process` and friends | `Get-ContainerIsolationArgs` | same file | inline flags |
+| Container teardown | `Remove-BuildContainerSafe` | same file | `docker rm -f` (misses the wcifs teardown lock) |
+| Bind-mount probe, artifact delivery | `Test-ContainerBindMount`, `Test-BuildArtifactsDelivered` | same file | assuming a green build delivered something |
+| SDK tools (makeappx, signtool) | `Resolve-WindowsSdkToolPath` | [`windows/scripts/modules/WindowsMsix.Common.psm1`](ExternalLib/Kataglyphis-ContainerHub/windows/scripts/modules/WindowsMsix.Common.psm1) | `Get-ChildItem -Recurse` over the Kits tree |
+| MSIX manifest tokens | `Expand-XmlTemplateTokens` | same file | `-replace` — see below |
+| XML escaping, placeholder PNGs | `ConvertTo-XmlEscapedText`, `New-TransparentPng` | same file | local redefinitions |
+| Config access | `Get-OrDefault`, `Get-ConfigValue` | [`windows/scripts/modules/WindowsConfig.Common.psm1`](ExternalLib/Kataglyphis-ContainerHub/windows/scripts/modules/WindowsConfig.Common.psm1) | copies |
+| Build logging and steps | `New-BuildContext`, `Invoke-BuildStep`, `Invoke-BuildExternal`, `Write-BuildLog*` | [`windows/scripts/modules/WindowsBuild.Common.psm1`](ExternalLib/Kataglyphis-ContainerHub/windows/scripts/modules/WindowsBuild.Common.psm1) | ad-hoc `Write-Host` wrappers |
+| Tool guards, version normalising (pwsh) | `Assert-Command`, `ConvertTo-NormalizedVersion` | [`windows/scripts/modules/WindowsScripts.Shared.psm1`](ExternalLib/Kataglyphis-ContainerHub/windows/scripts/modules/WindowsScripts.Shared.psm1) | a second implementation |
+| Logging inside a container | `Start-ContainerLog`, `Write-ContainerLog`, `Invoke-ContainerLoggedCommand` | [`windows/scripts/modules/WindowsContainerLog.Common.psm1`](ExternalLib/Kataglyphis-ContainerHub/windows/scripts/modules/WindowsContainerLog.Common.psm1) | a `Say`/`Run-Logged` pair per script |
+| CI version stamping (bash) | `version_util.sh --github-env` / `--resolve-ci` / `--normalize` | [`linux/scripts/02-toolchain/rust/version_util.sh`](ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/version_util.sh) | re-reading VERSION.txt yourself |
+| In-container cargo steps | `cargo_debug.sh`, `cargo_release.sh`, `cargo_test.sh`, `cargo_coverage.sh`, … | [`linux/scripts/02-toolchain/rust/`](ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust) | inline cargo invocations |
+| Linux packaging (tar/deb/AppImage/Flatpak) | `package_archive.sh` | [`linux/scripts/06-packaging/package_archive.sh`](ExternalLib/Kataglyphis-ContainerHub/linux/scripts/06-packaging/package_archive.sh) | bespoke packaging |
+| CI job plumbing | `prepare-linux-ci-host`, `run-in-linux-container`, `run-in-windows-container`, `clone-into-short-path`, `cleanup-disk-space`, `assert-docker-disk-space` | [`.github/actions/`](ExternalLib/Kataglyphis-ContainerHub/.github/actions) | hand-written `docker run` blocks |
+| Linting workflows locally | `lint-workflows.sh <root>` (pinned, SHA-verified actionlint) | [`linux/scripts/lint-workflows.sh`](ExternalLib/Kataglyphis-ContainerHub/linux/scripts/lint-workflows.sh) | bootstrapping your own |
+| Agentic loop | config + runner templates | [`shared/agentic-loop/templates/`](ExternalLib/Kataglyphis-ContainerHub/shared/agentic-loop/templates) | writing one from scratch |
+| Bash helpers (logging, retry, SHA'd downloads, parallelism) | `logging.sh`, `downloads.sh`, `parallelism.sh`, … | [`linux/scripts/01-core/`](ExternalLib/Kataglyphis-ContainerHub/linux/scripts/01-core) | new implementations |
+
+**One caveat about `cargo_fmt_clippy.sh`**: it is the one script in that rust directory this repo must *not* call — its first line is `rustup component add rustfmt`, and neither image can satisfy that offline. Call `cargo fmt` / `cargo clippy` directly. See the CI section.
 
 **Never expand a manifest template with `-replace`.** PowerShell treats the replacement side as a substitution template, so a value containing `$&` re-inserts the whole matched token. A description of ``Renderer $& x`` produced `Desc="Renderer __MSIX_DESCRIPTION__amp; x"` — the literal token, shipped into the manifest. `Expand-XmlTemplateTokens` uses an ordinal `[string].Replace` and escapes each value itself.
 
@@ -63,6 +73,14 @@ Two caveats:
 - **Editing the submodule is allowed** (it is the same owner), but it is consumed by other repos. Change it there, push, then move this repo's submodule pointer — do not fork behaviour locally.
 
 Nothing here needs Windows PowerShell 5.1 semantics: every script carries `#requires -Version 7.0` and CI invokes `pwsh`.
+
+## Where the documentation actually lives
+
+This repo owns only `AGENTS.md`, `README.md`, `BACKLOG.md` and `crates/webgpu_renderer/README.md`. There is **no `docs/` directory here**, which matters because the renderer source refers to six design documents as if there were:
+
+`docs/renderer-bounds-invariant.md`, `docs/gpu-golden-testing.md`, `docs/model-loading.md`, `docs/shader-sharing.md`, `docs/webgpu-gltf-rust-plan.md`, `docs/webgpu-srgb-audit.md`
+
+They live in the **parent** repository, `Kataglyphis-BeschleunigerBallett/docs/` — the comments say "repo root" and mean the superproject's root, one level above this submodule. Worth knowing twice over: `bounds.rs` calls `renderer-bounds-invariant.md` the checklist for not repeating eight identical bugs, and if this template is ever used standalone those six references dangle with nothing to point at. From `crates/webgpu_renderer/` the correct relative prefix is `../../../../docs/` (four levels: crate → crates → repo → ExternalLib → superproject); `../../../` lands in `ExternalLib/` and was wrong in that README until 2026-08-07.
 
 ## Build & test (host)
 
