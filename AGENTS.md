@@ -77,10 +77,18 @@ Hard-won host facts (verified 2026-07-17; full background in the submodule's `do
 - **Everything here is `pwsh` (PowerShell 7+).** Every script under `Scripts/Windows/` carries `#requires -Version 7.0` and CI invokes `pwsh`, so any surviving "Windows PowerShell 5.1" comment is wrong — those scripts would not start under it. Keep `$ErrorActionPreference` at `Continue` in the in-container scripts and check `$LASTEXITCODE` manually anyway (native-command stderr handling has shifted across PowerShell versions; the explicit check has not), and tee important output to the mounted scratch dir so a dropped docker client cannot lose it.
 - **Still not adopted:** `Test-BuildArtifactsDelivered` (a green build is not proof of delivery — it `docker exec`s the container, so it must run before teardown) and `Test-ContainerBindMount`. Both would fit `Invoke-StevedoreBuild.ps1`; neither could be exercised from the Linux verification box.
 
-## Verified baselines (2026-07-17, container, 32 CPUs / 48 GB)
+## Verified baselines (container, 32 CPUs)
 
-- Builds: debug 1m11s, profile 1m31s, release 1m08s — all green; binaries verified on the host (`stats --path README.md`).
-- Tests (debug): **8 passed / 0 failed** — 3 integration, 1 proptest fuzz case, 4 telemetry unit; 1 doc-test ignored.
+**2026-08-07, winamd64, rustc 1.97.1** — `Invoke-StevedoreBuild.ps1 -MemoryGb 32`:
+
+- Builds: debug 1m35s, profile 1m32s, release 1m12s — all three green. Release binary verified on the host: `stats --path README.md` → `Lines: 476, Words: 1905, Bytes: 20104`.
+- Tests: the 8 that predate `crates/webgpu_renderer` still pass (3 integration, 1 proptest, 4 telemetry). **`kataglyphis_webgpu_renderer --lib` cannot start in this container**: `exit code 0xc0000135, STATUS_DLL_NOT_FOUND`, before `main`, so no test runs.
+
+  Not a regression from the wgpu 30 upgrade. The old "8 passed / 0 failed" baseline was recorded on 2026-07-17, and the renderer crate landed on 2026-07-18 — the container test lane has therefore *never* run with that crate present. The image is Server Core with no GPU stack; a wgpu-linked binary needs graphics DLLs it does not ship.
+
+  Consequence: `Invoke-StevedoreBuild.ps1 -Test` fails as a whole. Use `-TestOnly` knowing the renderer will abort, or scope it (`cargo test --workspace --exclude kataglyphis_webgpu_renderer`), until the image carries the missing DLLs.
+
+**2026-07-17** (superseded, kept because it is what the 8-test figure refers to): builds debug 1m11s / profile 1m31s / release 1m08s; tests 8 passed / 0 failed, 1 doc-test ignored — measured before `crates/webgpu_renderer` existed.
 
 ## Continuous integration
 
