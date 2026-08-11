@@ -45,7 +45,7 @@ Set-StrictMode -Version Latest
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 # One bootstrap resolves every module ContainerHub-first, with
-# Scripts/Windows/modules/ as the project-specific fallback. It replaces four
+# scripts/windows/modules/ as the project-specific fallback. It replaces four
 # near-identical hard-coded import blocks; a module that moves upstream is now
 # picked up without editing this script, and a missing submodule reports the
 # exact `git submodule update` command instead of a bare path.

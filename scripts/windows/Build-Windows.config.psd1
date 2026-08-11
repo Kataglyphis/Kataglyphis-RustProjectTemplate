@@ -15,7 +15,7 @@
     Description = 'Rust project template with optional GUI, ONNX backends, profiling, packaging, and CI workflows.'
     Version = '0.1.0.0'
     MinVersion = '10.0.19041.0'
-    ManifestTemplate = 'Scripts/Windows/AppxManifest.xml.template'
+    ManifestTemplate = 'scripts/windows/AppxManifest.xml.template'
     Binary = 'kataglyphis_cli'
   }
 

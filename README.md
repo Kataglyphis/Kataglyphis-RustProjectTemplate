@@ -261,19 +261,19 @@ cargo run --features gui_windows -- gui --backend primary
 
 The workspace builds and tests inside the [Kataglyphis ContainerHub](https://github.com/Kataglyphis/kataglyphis-containerhub) Windows developer image (`ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64`) using [Stevedore](https://github.com/slonopotamus/stevedore)'s `docker.exe`.
 
-> **ContainerHub is the ground truth for container and PowerShell functionality.** The scripts here are thin drivers: `docker.exe` discovery, isolation flags, container teardown, SDK-tool lookup, MSIX manifest expansion, config access and build-step logging all come from its modules under `windows/scripts/modules/`. Before adding a helper to `Scripts/Windows/`, check whether ContainerHub already has it — several that were written locally turned out to exist there in a better form. Everything is `pwsh` (PowerShell 7+); nothing here runs under Windows PowerShell 5.1.
+> **ContainerHub is the ground truth for container and PowerShell functionality.** The scripts here are thin drivers: `docker.exe` discovery, isolation flags, container teardown, SDK-tool lookup, MSIX manifest expansion, config access and build-step logging all come from its modules under `windows/scripts/modules/`. Before adding a helper to `scripts/windows/`, check whether ContainerHub already has it — several that were written locally turned out to exist there in a better form. Everything is `pwsh` (PowerShell 7+); nothing here runs under Windows PowerShell 5.1.
 
 The driver **bind-mounts this repository directly into the container** (as `C:\ws-mnt`) — no copy, so artifacts land straight in your tree and `ExternalLib/` is available inside. It builds all three profiles (`dev`/debug, `profile` = release + debuginfo, `release` = fat LTO) and optionally the full debug test suite:
 
 ```pwsh
 # build debug + profile + release in the container
-pwsh -ExecutionPolicy Bypass -File .\Scripts\Windows\Container\Invoke-StevedoreBuild.ps1
+pwsh -ExecutionPolicy Bypass -File .\scripts\windows\Container\Invoke-StevedoreBuild.ps1
 
 # build AND run cargo test --workspace (unit + integration + proptest fuzz + doc)
-pwsh -ExecutionPolicy Bypass -File .\Scripts\Windows\Container\Invoke-StevedoreBuild.ps1 -Test
+pwsh -ExecutionPolicy Bypass -File .\scripts\windows\Container\Invoke-StevedoreBuild.ps1 -Test
 
 # only if your host refuses the mount (see below)
-pwsh -ExecutionPolicy Bypass -File .\Scripts\Windows\Container\Invoke-StevedoreBuild.ps1 -StageSources
+pwsh -ExecutionPolicy Bypass -File .\scripts\windows\Container\Invoke-StevedoreBuild.ps1 -StageSources
 ```
 
 > **Dev Drive (ReFS) is not a blocker — reading through a bind mount works.** What does not work is create-then-rename through it (`bindFlt` rejects `copySync`/`renameSync` with errno 3), which is precisely what cargo does. The driver keeps every build write container-local (`CARGO_TARGET_DIR=C:\ct`, `CARGO_HOME=C:\ch`), so only a plain artifact copy crosses the mount. If a host really does refuse it, `docker run` fails at once with *"Der Dateisystem-Minifilter kann nicht an das Entwicklervolume angefügt werden"*; fix it permanently with one elevated `fsutil devdrv setfiltersallowed bindFlt, wcifs` and a remount, or use `-StageSources` meanwhile. `fsutil devdrv query` needs elevation itself, so a failing query tells you nothing — just try the mount.
@@ -374,7 +374,7 @@ Add-AppxPackage -Path $msixPath
 ### Windows MSI packaging
 
 Läuft als Schritt von `Build-Windows.ps1` (abschaltbar mit `-SkipMsi`, oder
-`Msi.Enabled = $false` in `Scripts/Windows/Build-Windows.config.psd1`).
+`Msi.Enabled = $false` in `scripts/windows/Build-Windows.config.psd1`).
 
 Output: `dist\msi\kataglyphis_cli-<VERSION>-x64.msi`
 

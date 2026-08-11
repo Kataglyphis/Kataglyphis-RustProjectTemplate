@@ -27,7 +27,7 @@ protocol exists and the backlog is empty" — it was neither.
 
 ## Not adopted yet
 
-The loop itself — config, runner wrappers, `Scripts/AgenticLoop/` — is not set
+The loop itself — config, runner wrappers, `scripts/AgenticLoop/` — is not set
 up. Copy-and-edit templates live in ContainerHub's
 `shared/agentic-loop/templates/`; a consumer supplies this file, a config JSON,
 thin runner wrappers, and optionally per-engine system prompts.

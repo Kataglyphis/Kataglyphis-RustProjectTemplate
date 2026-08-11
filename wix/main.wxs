@@ -6,7 +6,7 @@
   WiX Toolset v4 schema, built directly with `wix.exe build` (NOT cargo-wix).
   cargo-wix 0.3.9 is the latest release and it only drives WiX v3
   (candle.exe + light.exe); the container image ships WiX 4.0.6, which is a
-  single `wix.exe` and has no candle/light at all. See Scripts/Windows/Build-Windows.ps1.
+  single `wix.exe` and has no candle/light at all. See scripts/windows/Build-Windows.ps1.
 
   Paths that move with the build (the binary follows CARGO_TARGET_DIR) are
   passed in as preprocessor variables with `wix build -d Name=Value`, so

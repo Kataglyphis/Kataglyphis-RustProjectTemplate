@@ -34,7 +34,7 @@
     Restrict to one phase (default: build; add -Test for both).
 
 .EXAMPLE
-    pwsh -ExecutionPolicy Bypass -File .\Scripts\Windows\Container\Invoke-StevedoreBuild.ps1 -Test
+    pwsh -ExecutionPolicy Bypass -File .\scripts\windows\Container\Invoke-StevedoreBuild.ps1 -Test
 #>
 param(
 #requires -Version 7.0
