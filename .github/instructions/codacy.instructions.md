@@ -1,1 +1,0 @@
-../ExternalLib/Kataglyphis-ContainerHub/.github/instructions/codacy.instructions.md
