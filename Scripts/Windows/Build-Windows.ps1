@@ -38,106 +38,31 @@ Set-StrictMode -Version Latest
 # whole Windows Kits tree; the module version consults VsDevCmd's
 # WindowsSdkVerBinPath / WindowsSDKVersion first and scans newest-first.
 
-# Robocopy-backed tree sync. This script has always CALLED Sync-BuildArtifacts
-# but no ContainerHub module version has ever DEFINED it - the packaging path
-# simply never executed until the 2026-07-22 lane peel reached it, and it died
-# on the first call. Defined locally with the semantics the call sites assume.
-function Sync-BuildArtifacts {
-  [CmdletBinding()]
-  param(
-    [Parameter(Mandatory = $true)] [object] $Context,
-    [Parameter(Mandatory = $true)] [string] $Source,
-    [Parameter(Mandatory = $true)] [string] $Destination,
-    [switch] $ExcludeCommonRustAndCppCache
-  )
-
-  if (-not (Test-Path $Destination)) {
-    New-Item -ItemType Directory -Force -Path $Destination | Out-Null
-  }
-
-  # /E subdirs, /MT multithreaded, /R:1 /W:1 no retry-hangs on locked files,
-  # /FFT coarse timestamps (bind mounts), /NOOFFLOAD no copy-offload over the
-  # VM boundary - same rationale as Sync-FastLocalArtifactsToHost in
-  # WindowsFlutter.Common.psm1.
-  $robocopyArgs = @(
-    $Source, $Destination,
-    '/E', '/MT:16', '/R:1', '/W:1', '/FFT', '/NOOFFLOAD',
-    '/NFL', '/NDL', '/NJH', '/NJS', '/nc', '/ns', '/np'
-  )
-  if ($ExcludeCommonRustAndCppCache) {
-    $robocopyArgs += @('/XD', 'target', '.git', 'node_modules', 'build-clangcl-debug', 'build-clangcl-release', 'build-clangcl-profile')
-  }
-
-  & robocopy.exe @robocopyArgs > $null 2>&1
-  $robocopyExit = $LASTEXITCODE
-  # Robocopy exit codes are a BITMASK, not a severity scale:
-  #   1 copied, 2 extra, 4 mismatch, 8 some files could not be copied,
-  #   16 serious error / nothing copied.
-  # Only 16 means the mirror did not happen. Bit 8 (exit 9 = 8+1 in CI) fires
-  # routinely on a live bind-mounted tree - a transient lock on one file while
-  # the rest copy fine - and treating it as fatal killed the packaging step.
-  # The sibling Sync-FastLocalArtifactsToHost ignores the code entirely for
-  # the same reason; this at least warns on a partial copy and fails only on
-  # the catastrophic bit.
-  if ($robocopyExit -ge 16) {
-    throw "Sync-BuildArtifacts failed (robocopy exit $robocopyExit, serious error): '$Source' -> '$Destination'"
-  }
-  if (($robocopyExit -band 8) -ne 0) {
-    # Through the build log, not Write-Warning: a partial copy is exactly the
-    # kind of thing you go looking for in the log file afterwards, and
-    # Write-Warning never reaches it. This is also what $Context is FOR - every
-    # call site already passes it and nothing used to read it.
-    Write-BuildLogWarning -Context $Context -Message "Sync-BuildArtifacts: robocopy exit $robocopyExit - some files could not be copied (likely a transient lock); continuing."
-  }
-  # Do not leak robocopy's nonzero success codes into callers that treat
-  # $LASTEXITCODE as pass/fail.
-  $global:LASTEXITCODE = 0
-}
-
 # Normalize-Version now comes from ContainerHub's WindowsScripts.Shared.psm1 as
 # ConvertTo-NormalizedVersion ("Normalize" is not an approved PowerShell verb,
 # and an unapproved one in a shared module warns on every import). It sits
 # beside the bash twin (version_util.sh --normalize) it has to agree with.
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-$containerHubModulesRoot = Join-Path $repoRoot 'ExternalLib\Kataglyphis-ContainerHub\windows\scripts\modules'
+# One bootstrap resolves every module ContainerHub-first, with
+# Scripts/Windows/modules/ as the project-specific fallback. It replaces four
+# near-identical hard-coded import blocks; a module that moves upstream is now
+# picked up without editing this script, and a missing submodule reports the
+# exact `git submodule update` command instead of a bare path.
+#
+# Import-BuildModule pulls WindowsScripts.Shared in whether or not it is listed,
+# which is what the four blocks below had each worked around by hand: a nested
+# Import-Module inside a .psm1 binds into THAT module's private scope and never
+# reaches this session, so importing only WindowsBuild.Common left
+# Resolve-WorkspacePath undefined.
+. (Join-Path $PSScriptRoot 'Resolve-BuildModule.ps1')
 
-$buildModule = Join-Path $containerHubModulesRoot 'WindowsBuild.Common.psm1'
-if (-not (Test-Path $buildModule)) {
-  throw "Required module not found: $buildModule"
-}
-
-Import-Module $buildModule -Force
-
-# WindowsBuild.Common imports WindowsScripts.Shared for ITS OWN internals,
-# but nested module imports are module-private in PowerShell - the caller
-# never sees Resolve-WorkspacePath, and this script died on exactly that the
-# first time CI ever reached it (every earlier lane failure sat upstream).
-# Import the shared module directly.
-$sharedModule = Join-Path $containerHubModulesRoot 'WindowsScripts.Shared.psm1'
-if (-not (Test-Path $sharedModule)) {
-  throw "Required module not found: $sharedModule"
-}
-Import-Module $sharedModule -Force
-
-# Get-OrDefault / Get-ConfigValue live here. They were previously copy-pasted
-# into this file, character for character - so a fix to either copy silently
-# missed the other. Same nested-import caveat as above: WindowsBuild.Common
-# importing this module does not re-export it to us.
-$configModule = Join-Path $containerHubModulesRoot 'WindowsConfig.Common.psm1'
-if (-not (Test-Path $configModule)) {
-  throw "Required module not found: $configModule"
-}
-Import-Module $configModule -Force
-
-# The whole MSIX path below was a second implementation of this module:
-# SDK tool lookup, XML escaping, token expansion and the transparent-PNG
-# placeholder all already live here.
-$msixModule = Join-Path $containerHubModulesRoot 'WindowsMsix.Common.psm1'
-if (-not (Test-Path $msixModule)) {
-  throw "Required module not found: $msixModule"
-}
-Import-Module $msixModule -Force
+Import-BuildModule @(
+  'WindowsScripts.Shared'   # Assert-Command, ConvertTo-NormalizedVersion, Resolve-WorkspacePath
+  'WindowsBuild.Common'     # build context/log/step primitives, Sync-BuildArtifacts
+  'WindowsConfig.Common'    # Get-OrDefault, Get-ConfigValue
+  'WindowsMsix.Common'      # Resolve-WindowsSdkToolPath, ConvertTo-XmlSafeText, New-TransparentImage
+)
 
 $defaultConfigPath = Join-Path $PSScriptRoot 'Build-Windows.config.psd1'
 $configPath = Get-OrDefault $env:BUILD_WINDOWS_CONFIG $defaultConfigPath
