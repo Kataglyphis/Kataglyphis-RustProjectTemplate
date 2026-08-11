@@ -104,7 +104,7 @@ Default features are empty — GUI and ONNX code only compiles with explicit `--
 
 The **bin** was renamed to `kataglyphis_cli`, not the lib, and that direction is deliberate: the C++ Vulkan engine imports the lib through Corrosion/cxxbridge as `kataglyphis_rustprojecttemplate` (see the generated `kataglyphis_rustprojecttemplate_bridge` target in the parent repo's CMake). Renaming `[lib] name` would change the produced DLL/LIB names and break that build from outside this repo. The package name and `[lib] name` therefore stay as they are.
 
-What moved with the bin: `Msix.Binary` and `Msi.OutputName` in `scripts/windows/Build-Windows.config.psd1`, `File Name=` in `wix/main.wxs`, `BINARY_FILE` in the Ubuntu workflow and `BINARY` in the Windows one, the `-Binary` default in `Run-AppProfiles.ps1`, and `--bin` in `scripts/linux/run_person_detection.sh`. Note the Ubuntu workflow's `BINARY` (hyphenated, `kataglyphis-rustprojecttemplate`) is the *distribution package* name and was correctly left alone — only `BINARY_FILE` is the executable.
+What moved with the bin: `Msix.Binary` and `Msi.OutputName` in `scripts/windows/Build-Windows.config.psd1`, `File Name=` in `wix/main.wxs`, `BINARY_FILE` in the Ubuntu workflow and `BINARY` in the Windows one, the `-Binary` default in `Run-AppProfiles.ps1`, and `--bin` in `scripts/linux/run-person-detection.sh`. Note the Ubuntu workflow's `BINARY` (hyphenated, `kataglyphis-rustprojecttemplate`) is the *distribution package* name and was correctly left alone — only `BINARY_FILE` is the executable.
 
 ## Build & test in the Stevedore Windows container
 

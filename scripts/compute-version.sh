@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# compute_version.sh — thin wrapper.
+# compute-version.sh — thin wrapper.
 #
 # The logic (VERSION.txt -> REF_NAME -> RUN_NUMBER, plus the four-component
 # MSIX form, plus the GITHUB_ENV/GITHUB_OUTPUT writes) lives in ContainerHub:

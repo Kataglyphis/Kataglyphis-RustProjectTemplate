@@ -48,5 +48,5 @@ docker run --rm -it \
     apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
         libgtk-4-dev libavfilter9 || true
 
-    bash scripts/linux/run_person_detection.sh
+    bash scripts/linux/run-person-detection.sh
     '

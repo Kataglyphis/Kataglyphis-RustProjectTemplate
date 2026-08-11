@@ -67,9 +67,9 @@ jobs:
           token: ${{ github.token }}
 
       - name: Compute version
-        id: compute_version
+        id: compute-version
         shell: bash
-        run: scripts/compute_version.sh
+        run: scripts/compute-version.sh
 
       - name: Cleanup disk space
         uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/cleanup-disk-space@main
