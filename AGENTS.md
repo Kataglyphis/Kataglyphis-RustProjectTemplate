@@ -19,17 +19,30 @@ Cargo workspace (`Cargo.toml` at the root is both the workspace and the root pac
 
 Anything to do with containers, Dockerfiles, CI plumbing or PowerShell belongs to the submodule. **Search it before writing a helper.**
 
-**Do not re-derive host knowledge here — read it there.** Everything about Stevedore, Rancher Desktop, wcifs/bindFlt and the container hosts is already written down, in more depth than this file should carry:
+**Do not re-derive host knowledge here — read it there.** Everything about
+Stevedore, Rancher Desktop, wcifs/bindFlt and the container hosts is already
+written down, in more depth than this file should carry. Start at
+[`ExternalLib/Kataglyphis-ContainerHub/docs/INDEX.md`](ExternalLib/Kataglyphis-ContainerHub/docs/INDEX.md)
+— it maps topic → owning document, so one hop survives upstream reorganisation.
+
+The entries this repo reaches for most:
 
 | Question | Document |
 | --- | --- |
 | How do I set up a Windows host for Stevedore? (services, `docker-users`, CNI nat conf, pwsh, gates) | `docs/windows-host-setup.md` |
 | Why does a layer commit fail / what is process isolation doing? wcifs, bindFlt, the `ActivateLayer 0x20` bug | `docs/windows-builds.md` |
+| Dev Drive filter setup, bind mount vs tar-pipe, container reuse | `docs/windows-container-build-performance.md` |
 | How do I run Linux containers on Windows? | `docs/rancher-desktop-linux-containers.md` |
 | Which image, which tag, which engine? | `docs/adopting-in-a-new-project.md` |
 | Why did my lane not run? | `docs/ci-build-triggers.md` |
 
-When something in this file contradicts one of those, the submodule wins — that has already happened once: this file claimed Dev Drive volumes *refuse* bind mounts, while `windows-builds.md` says they work and it is create-then-rename that fails.
+When something in this file contradicts one of those, **the submodule wins**.
+That has happened twice, both times because a procedure was retyped here instead
+of linked: this file once claimed Dev Drive volumes *refuse* bind mounts (they
+work; it is create-then-rename that fails), and it carried a `fsutil devdrv`
+command that was missing `/volume` and split its filter list on a space — so it
+could never have worked. Both are why § *Build & test in the Stevedore Windows
+container* now links rather than restates.
 
 ## Linux containers locally (Rancher Desktop)
 
@@ -110,25 +123,52 @@ What moved with the bin: `Msix.Binary` and `Msi.OutputName` in `scripts/windows/
 
 Driver: `scripts\windows\Container\Invoke-StevedoreBuild.ps1` (add `-Test` to also run the test suite; `-TestOnly` to skip building). It **bind-mounts this repository straight into the container** as `C:\ws-mnt`, runs the in-container scripts (`rust-build-all.ps1`, `rust-test-all.ps1`) in `ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64`, and the artifacts land directly in `target\container\<profile>`, mirrored to the gitignored root `debug\`, `profile\`, `release\`.
 
-Mounting the repo — not a copy of it — is the default, ReFS Dev Drive or not. **The constraint is write, not read**: `bindFlt` rejects `copySync`/`renameSync` with errno 3, so create-then-rename through the mount fails, which is exactly what cargo does. That is handled by keeping every build write container-local (`CARGO_TARGET_DIR=C:\ct`, `CARGO_HOME=C:\ch`); only a plain artifact copy crosses the mount at the end, and plain copies work.
+Mounting the repo — not a copy of it — is the default, ReFS Dev Drive or not.
+It also means `ExternalLib/` is present inside the container, so anything
+importing ContainerHub modules (e.g. `Build-Windows.ps1`) works without special
+staging.
 
-`-StageSources` restores the old behaviour (robocopy to `%LOCALAPPDATA%\Temp`, mount the copy) for a host that genuinely refuses the mount — the symptom is `docker run` failing immediately with *"Der Dateisystem-Minifilter kann nicht an das Entwicklervolume angefügt werden"*. The permanent fix there is one elevated `fsutil devdrv setfiltersallowed bindFlt, wcifs` plus a remount. `fsutil devdrv query` needs elevation itself, so a failing query proves nothing — try the mount.
+**The host-side mechanics are upstream's, not this repo's.** Why writes through
+a bind mount fail while reads succeed, how to allow the Dev Drive filters, what
+`--isolation process` does to the CPU count, the wcifs teardown lock, the
+transient hcsshim client-pipe drops, and why the Windows lane is Stevedore's
+`docker.exe` rather than nerdctl: all in
+[`docs/windows-builds.md`](ExternalLib/Kataglyphis-ContainerHub/docs/windows-builds.md)
+and
+[`docs/windows-container-build-performance.md`](ExternalLib/Kataglyphis-ContainerHub/docs/windows-container-build-performance.md).
+Read those before changing the driver. **Do not copy their commands back into
+this file** — the last copy of the `fsutil devdrv` line that lived here was
+malformed and stayed that way through several edits.
 
-Mounting the repo also means `ExternalLib/` is present inside the container, so anything importing ContainerHub modules (e.g. `Build-Windows.ps1`) works without special staging.
+What is specific to *this* repo, because cargo is what makes it bite:
 
-Hard-won host facts (verified 2026-07-17; full background in the submodule's `docs/windows-builds.md`):
-
-- **Use Stevedore's `docker.exe`, never nerdctl — for WINDOWS containers.** Do not hard-code the path: `Resolve-DockerExe` checks `$env:DOCKER_EXE`, both Stevedore locations, then PATH. nerdctl is excluded deliberately because it talks to containerd, not this lane's engine. The rule inverts for Linux containers, where Rancher Desktop *is* containerd and `nerdctl` is correct — see the Rancher section above. Both CLIs exist on this host and neither error tells you that you picked the wrong one.
-
-  Stevedore ships a full containerd stack too (`containerd.exe`, `ctr.exe`, `nerdctl.exe`, `buildctl.exe`) and the service runs, but its pipe needs elevation: a non-admin `nerdctl version` fails with `cannot access containerd socket "\\.\pipe\containerd-containerd": Zugriff verweigert` (measured 2026-08-07). Docker's pipe does not. That is the practical reason the Windows lane is docker-only, on top of the engine mismatch.
-- **Dev Drive (ReFS) bind mounts: measure, do not assume.** A volume whose filters were never allowed refuses them with *"Der Dateisystem-Minifilter kann nicht an das Entwicklervolume angefügt werden"*; `fsutil devdrv setfiltersallowed bindFlt, wcifs` (elevated) plus a remount fixes that permanently. **On this host they work** — mounting the repo straight off ReFS `D:` into the container was verified on 2026-08-07 (`--mount type=bind,source=D:\GitHub\...` → the tree is readable, exit 0). Note `fsutil devdrv query` needs elevation, so a failing query says nothing; try the mount.
-
-  Reading works; **writing through the mount is the caveat**, and it is why the driver stages to `%LOCALAPPDATA%\Temp` and keeps build output container-local rather than because mounting is impossible. Per the submodule's `docs/windows-builds.md`, `bindFlt` rejects `copySync`/`renameSync` with errno 3, so create-then-rename — which cargo and CMake both do — is what actually breaks.
-- **Run containers with `--isolation process`** for the full host CPU count; Hyper-V isolation exposes only 2 CPUs. Get the flags from `Get-ContainerIsolationArgs` rather than inline. Mount targets must be paths that do not already exist in the image (e.g. `C:\ws-mnt`).
-- **Keep every build write container-local** (`CARGO_TARGET_DIR=C:\ct`, `CARGO_HOME=C:\ch`): the wcifs/bindFlt skew on this host breaks create-then-rename in image-layer dirs and two-path ops on bind mounts. Plain copies through the mount work; renames/moves may not. `docker cp` is unreliable — persist results via the mount.
-- **A dying docker CLI is not a dying build**: the client pipe intermittently drops (transient hcsshim/ttrpc flakiness) while the container keeps running. Check `docker inspect` container state before concluding failure; run containers **named and without `--rm`** so logs and state survive. Tear them down with `Remove-BuildContainerSafe` — a bare `docker rm -f` can return while the wcifs teardown still holds the name, and the next run then fails on the clash.
-- **Everything here is `pwsh` (PowerShell 7+).** Every script under `scripts/windows/` carries `#requires -Version 7.0` and CI invokes `pwsh`, so any surviving "Windows PowerShell 5.1" comment is wrong — those scripts would not start under it. Keep `$ErrorActionPreference` at `Continue` in the in-container scripts and check `$LASTEXITCODE` manually anyway (native-command stderr handling has shifted across PowerShell versions; the explicit check has not), and tee important output to the mounted scratch dir so a dropped docker client cannot lose it.
-- **Still not adopted:** `Test-BuildArtifactsDelivered` (a green build is not proof of delivery — it `docker exec`s the container, so it must run before teardown) and `Test-ContainerBindMount`. Both would fit `Invoke-StevedoreBuild.ps1`; neither could be exercised from the Linux verification box.
+- **Every build write stays container-local** — `CARGO_TARGET_DIR=C:\ct`,
+  `CARGO_HOME=C:\ch`. Cargo's create-then-rename is exactly the pattern a bind
+  mount rejects, so only a plain artifact copy crosses the mount at the end.
+  That copy direction works; do not "simplify" it into a rename or a `docker cp`.
+- **`-StageSources`** restores the old robocopy-to-`%LOCALAPPDATA%\Temp` path for
+  a host whose Dev Drive filters were never allowed (symptom: `docker run` exits
+  immediately with *"Der Dateisystem-Minifilter kann nicht an das
+  Entwicklervolume angefügt werden"*). The permanent fix is a host setting — see
+  *Dev Drive filter setup* in the performance doc above; `-StageSources` is the
+  workaround, not the cure.
+- **Mount target must not already exist in the image** — hence `C:\ws-mnt`.
+- **Get container flags from the modules, never inline**: `Resolve-DockerExe`,
+  `Get-ContainerIsolationArgs`, `Remove-BuildContainerSafe`. The last one matters
+  most: a bare `docker rm -f` can return while teardown still holds the name, and
+  the next run fails on the clash.
+- **Run containers named and without `--rm`** so logs and state survive a dropped
+  client, and tee important output to the mounted scratch dir.
+- **Everything here is `pwsh` (PowerShell 7+).** Every script under
+  `scripts/windows/` carries `#requires -Version 7.0`, so any surviving "Windows
+  PowerShell 5.1" comment is wrong — those scripts would not start under it. Keep
+  `$ErrorActionPreference` at `Continue` in the in-container scripts and check
+  `$LASTEXITCODE` manually anyway.
+- **Still not adopted:** `Test-BuildArtifactsDelivered` (a green build is not
+  proof of delivery — it `docker exec`s the container, so it must run before
+  teardown) and `Test-ContainerBindMount`. Both would fit
+  `Invoke-StevedoreBuild.ps1`; neither could be exercised from the Linux
+  verification box.
 
 ## Verified baselines (container, 32 CPUs)
 
