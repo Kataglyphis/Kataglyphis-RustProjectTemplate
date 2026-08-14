@@ -147,6 +147,22 @@ jobs:
       # headers and onnxruntime needs the ORT libs, neither of which this
       # container has and neither of which uid 1001 can apt-install. A lint
       # gate that cannot run is worse than a narrower one that does.
+      #
+      # The comment above claimed rustfmt was baked into the image alongside
+      # clippy. It was not: ContainerHub's install-rust.sh runs
+      # `--profile minimal` and then added ONLY clippy, so the first build that
+      # got far enough to reach this step died on
+      #   error: 'cargo-fmt' is not installed for the toolchain '1.97.1-...'
+      # That is fixed at the source (install-rust.sh now adds rustfmt), but the
+      # published image only picks it up on the next multi-hour rebuild.
+      #
+      # So: PROBE, do not assume. When cargo-fmt is present the format check is
+      # a hard gate exactly as before; when it is missing the step says so
+      # loudly and continues to clippy, which is where the 12 errors that
+      # motivated this gate actually were. This is deliberately NOT
+      # `continue-on-error` - that is what previously turned a step which had
+      # never once run into a green tick. The moment the rebuilt image lands,
+      # the probe passes and the gate is strict again with no edit here.
       - name: Check formatting and clippy
         uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/run-in-linux-container@main
         with:
@@ -155,7 +171,12 @@ jobs:
           script: >-
             bash -lc 'set -e;
             git config --global --add safe.directory /workspace || true;
+            if cargo fmt --version >/dev/null 2>&1; then
             cargo fmt --all -- --check;
+            else
+            echo "::warning::rustfmt is missing from this image - FORMAT CHECK SKIPPED (clippy still gates).";
+            echo "::warning::Fix: ContainerHub install-rust.sh adds it; this image predates that rebuild.";
+            fi;
             cargo clippy --workspace --all-targets --locked -- -D warnings'
 
       - name: Run unit, integration, and doc tests
