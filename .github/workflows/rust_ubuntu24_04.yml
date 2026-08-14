@@ -156,6 +156,18 @@ jobs:
       # That is fixed at the source (install-rust.sh now adds rustfmt), but the
       # published image only picks it up on the next multi-hour rebuild.
       #
+      # CARGO_HOME is re-exported here, unconditionally, even though
+      # CONTAINER_ENV already passes `-e CARGO_HOME=/tmp/cargo-home`: this step
+      # runs a LOGIN shell, and the image's /etc/profile.d/10-rust.sh used a
+      # plain `export CARGO_HOME=/usr/local/cargo`, which overwrites the value
+      # docker was told to use. cargo then tried to write to a root-owned
+      # directory as uid 1001 and died with
+      #   error: failed to create directory `/usr/local/cargo/registry/cache/...`
+      # `${CARGO_HOME:-...}` would NOT do - by this point the variable is set,
+      # just set wrong. Fixed at the source too (that file now defaults with
+      # `:=` instead of imposing), which lands with the next image rebuild;
+      # this line is what makes today's image work and is harmless after.
+      #
       # So: PROBE, do not assume. When cargo-fmt is present the format check is
       # a hard gate exactly as before; when it is missing the step says so
       # loudly and continues to clippy, which is where the 12 errors that
@@ -170,6 +182,7 @@ jobs:
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
           script: >-
             bash -lc 'set -e;
+            export CARGO_HOME=/tmp/cargo-home; mkdir -p "${CARGO_HOME}";
             git config --global --add safe.directory /workspace || true;
             if cargo fmt --version >/dev/null 2>&1; then
             cargo fmt --all -- --check;
