@@ -183,6 +183,7 @@ jobs:
           script: >-
             bash -lc 'set -e;
             export CARGO_HOME=/tmp/cargo-home; mkdir -p "${CARGO_HOME}";
+            export PATH="/usr/local/cargo/bin:${PATH}";
             git config --global --add safe.directory /workspace || true;
             if cargo fmt --version >/dev/null 2>&1; then
             cargo fmt --all -- --check;
