@@ -190,16 +190,15 @@ jobs:
             echo "::warning::rustfmt is missing from this image - FORMAT CHECK SKIPPED (clippy still gates).";
             echo "::warning::Fix: ContainerHub install-rust.sh adds it; this image predates that rebuild.";
             fi;
-            clippy_bin="$(command -v cargo-clippy || true)";
-            case "${clippy_bin}" in
-            /usr/local/cargo/*)
-            cargo clippy --workspace --all-targets --locked -- -D warnings ;;
-            "")
-            echo "::warning::clippy is missing from this image - CLIPPY GATE SKIPPED." ;;
-            *)
-            echo "::warning::cargo-clippy resolves to ${clippy_bin}, not the pinned toolchain - CLIPPY GATE SKIPPED.";
-            echo "::warning::That is Ubuntu.s clippy deb (rustc 1.93.1); it cannot build this dependency set. ContainerHub install-rust.sh now installs the component; this image predates that rebuild." ;;
-            esac'
+            rustc_v="$(rustc --version 2>/dev/null | sed -n "s/^rustc \([0-9]*\.[0-9]*\).*/\1/p")";
+            clippy_v="$(cargo clippy --version 2>/dev/null | sed -n "s/^clippy 0\.1\.\([0-9]*\).*/1.\1/p")";
+            echo "rustc ${rustc_v:-?} / clippy-driver ${clippy_v:-?}";
+            if [ -n "${rustc_v}" ] && [ "${rustc_v}" = "${clippy_v}" ]; then
+            cargo clippy --workspace --all-targets --locked -- -D warnings;
+            else
+            echo "::warning::CLIPPY GATE SKIPPED - clippy drives rustc ${clippy_v:-unknown}, but this toolchain is rustc ${rustc_v:-unknown}.";
+            echo "::warning::A mismatched clippy compiles the crates itself, so it fails on code the real toolchain accepts. ContainerHub install-rust.sh now installs the component into the pinned toolchain; this image predates that rebuild.";
+            fi'
 
       - name: Run unit, integration, and doc tests
         uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/run-in-linux-container@main
