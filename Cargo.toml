@@ -1,5 +1,13 @@
 [workspace]
-resolver = "2"
+# resolver "3" is MSRV-aware: it will not pick a dependency version whose
+# `rust-version` exceeds the one declared in [workspace.package] below.
+# With resolver "2" the lockfile silently floated ahead of the toolchain in
+# the CI build image (rustc 1.93.1) until `cargo` refused to build at all:
+#   error: rustc 1.93.1 is not supported by the following package:
+#     sysinfo@0.39.6 requires rustc 1.95
+# Pinning the offending crate by hand only defers the next occurrence; making
+# the resolver honour the MSRV prevents the whole class.
+resolver = "3"
 members = [
     "crates/core",
     "crates/telemetry",
@@ -35,7 +43,12 @@ gstreamer = "0.25"
 gstreamer-app = "0.25"
 gstreamer-video = "0.25"
 libloading = "0.9"
-sysinfo = "0.39"
+# 0.38, not 0.39: the ENTIRE 0.39.x line declares rust-version 1.95, so
+# `sysinfo = "0.39"` contradicted this workspace's own rust-version = "1.92.0"
+# and could not build on the CI image's rustc 1.93.1. 0.38.x declares 1.88 and
+# exposes the same API this repo uses (System, Pid, ProcessesToUpdate,
+# refresh_processes). Raise this again once the workspace MSRV moves past 1.95.
+sysinfo = "0.38"
 flutter_rust_bridge = "=2.12.0"
 wmi = "0.18"
 

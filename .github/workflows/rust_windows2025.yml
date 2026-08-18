@@ -37,62 +37,34 @@ jobs:
       MSIX_DESCRIPTION: Rust project template with optional GUI, ONNX backends, profiling, packaging, and CI workflows.
 
     steps:
-      #- name: Enable Git long paths
-      #  run: git config --global core.longpaths true
-
-      # Windows MAX_PATH is the whole problem here. The runner workspace is
-      # D:\a\<repo>\<repo> (repo name doubled, ~75 chars), and the nested
-      # submodule chain - RustProjectTemplate -> ContainerHub -> DocumANTation
-      # -> md2pdfLib -> latex/{smile,awesome-beamer} - pushes
-      # .git/modules/.../objects/pack/pack-*.keep past 260 characters. A
-      # recursive checkout here dies with "Filename too long" and
-      # "fatal: '$GIT_DIR' too big" before any build step runs. So check out
-      # WITHOUT submodules, then clone the whole tree into a SHORT path where
-      # the same chain fits, and build from there.
-      - name: Checkout repository (no submodules; see the short-path clone below)
-        uses: actions/checkout@v7.0.1
+      # Der komplette Prolog - long paths, Checkout ohne Submodule,
+      # Kurzpfad-Klon, data-root auf D:, Disk-Cleanup, Registry-Login, Pull,
+      # Disk-Report - kommt aus ContainerHub. Er war hier ~50 Zeilen und in drei
+      # Schwester-Repos identisch.
+      #
+      # Der Kurzpfad-Klon bleibt Pflicht: die Kette RustProjectTemplate ->
+      # ContainerHub -> DocumANTation -> md2pdfLib -> latex/{smile,awesome-beamer}
+      # reisst .git/modules/.../pack-*.keep ueber 260 Zeichen, und ein rekursiver
+      # Checkout stirbt mit "Filename too long" bzw. "'$GIT_DIR' too big".
+      #
+      # required-free-gb ersetzt den separaten assert-docker-disk-space-Schritt:
+      # die Action prueft die ZIELplatte, bevor sie die data-root dorthin
+      # verschiebt - also frueher, und auf genau dem Laufwerk, auf dem das Image
+      # dann landet.
+      - name: Prepare Windows container host
+        id: prep
+        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/prepare-windows-container-host@main
         with:
+          image: ${{ env.WINDOWS_CONTAINER_IMAGE }}
+          registry-password: ${{ secrets.GHCR_PAT }}
           fetch-depth: 0
-          submodules: false
-
-      # This used to be ~10 hand-written lines here. ContainerHub ships the
-      # identical fix - including the SSH->token-HTTPS rewrite that .gitmodules
-      # forces (it pins git@github.com: for ContainerHub and a hosted runner has
-      # no SSH key) - so consume it instead of maintaining a second copy that
-      # can drift from the one BeschleunigerBallett's Windows lane uses.
-      - name: Clone full tree with submodules into a short path (D:\ws)
-        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/clone-into-short-path@main
-        with:
-          target: /d/ws
-          token: ${{ github.token }}
+          short-path-target: /d/ws
+          required-free-gb: '70'
 
       - name: Compute version
         id: compute-version
         shell: bash
         run: scripts/compute-version.sh
-
-      - name: Cleanup disk space
-        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/cleanup-disk-space@main
-
-      # Cleaning is not the same as having cleaned ENOUGH. The winamd64 image is
-      # ~54 GB to import, and a drive measured with 59.3 GB free still failed
-      # with hcsshim::ImportLayer "not enough space on the disk (0x70)" - after
-      # `docker pull` had already ground away for ~40 minutes. Fail in seconds
-      # instead, on the drive Docker's data-root actually lives on.
-      - name: Assert enough disk for the image import
-        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/assert-docker-disk-space@main
-        with:
-          required-free-gb: '70'
-
-      - name: Login to GitHub
-        uses: docker/login-action@v4.6.0
-        with:
-          registry: ghcr.io
-          username: Kataglyphis
-          password: ${{ secrets.GHCR_PAT }}
-
-      - name: Pull image
-        run: docker pull ${{ env.WINDOWS_CONTAINER_IMAGE }}
 
       # The four container steps below used to be hand-written `docker run`
       # blocks repeating --memory/--cpus/--mount/-w twelve times between them.
@@ -196,18 +168,18 @@ jobs:
         uses: actions/upload-artifact@v7.0.1
         with:
           name: ${{ env.BINARY }}-${{ steps.vars.outputs.version }}-windows-2025-x64
-          path: D:/ws/dist/${{ steps.vars.outputs.archive_name }}
+          path: ${{ steps.prep.outputs.workspace }}/dist/${{ steps.vars.outputs.archive_name }}
 
       - name: Upload MSIX artifact
         uses: actions/upload-artifact@v7.0.1
         with:
           name: ${{ env.MSIX_PACKAGE_NAME }}-${{ steps.vars.outputs.version }}-x64-msix
-          path: D:/ws/dist/msix/*.msix
+          path: ${{ steps.prep.outputs.workspace }}/dist/msix/*.msix
 
       - name: Upload MSI artifact
         uses: actions/upload-artifact@v7.0.1
         with:
           name: ${{ env.BINARY }}-${{ steps.vars.outputs.version }}-x64-msi
-          path: D:/ws/dist/msi/*.msi
+          path: ${{ steps.prep.outputs.workspace }}/dist/msi/*.msi
 
 
