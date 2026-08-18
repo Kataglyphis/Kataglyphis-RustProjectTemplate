@@ -24,7 +24,7 @@ pub(crate) fn load_ort_session(model_path: &str) -> Result<(ort::session::Sessio
 
     #[cfg(feature = "onnxruntime_cuda")]
     {
-        use ort::execution_providers::{CUDAExecutionProvider, ExecutionProvider};
+        use ort::ep::{ExecutionProvider, CUDA};
         let device = config::ort_device();
 
         info!("ORT device request: {device}");
@@ -33,7 +33,7 @@ pub(crate) fn load_ort_session(model_path: &str) -> Result<(ort::session::Sessio
             #[cfg(all(feature = "onnxruntime_cuda", windows))]
             ensure_ort_cuda_provider_dylibs_next_to_exe()?;
 
-            let cuda = CUDAExecutionProvider::default();
+            let cuda = CUDA::default();
             match cuda.is_available() {
                 Ok(true) => {}
                 Ok(false) => {
@@ -67,9 +67,9 @@ pub(crate) fn load_ort_session(model_path: &str) -> Result<(ort::session::Sessio
 
     #[cfg(all(feature = "onnxruntime_directml", windows))]
     {
-        use ort::execution_providers::DirectMLExecutionProvider;
+        use ort::ep::DirectML;
         builder = builder
-            .with_execution_providers([DirectMLExecutionProvider::default().build()])
+            .with_execution_providers([DirectML::default().build()])
             .with_ort_context("Failed to configure ORT DirectML execution provider")?;
         info!("ORT DirectML execution provider enabled");
     }

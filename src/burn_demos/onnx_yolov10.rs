@@ -29,9 +29,9 @@ pub fn onnx_yolov10_demo<TrainB: AutodiffBackend>(
 
     #[cfg(all(feature = "onnxruntime_directml", windows))]
     {
-        use ort::execution_providers::DirectMLExecutionProvider;
+        use ort::ep::DirectML;
         builder = builder
-            .with_execution_providers([DirectMLExecutionProvider::default().build()])
+            .with_execution_providers([DirectML::default().build()])
             .with_ort_context("Failed to configure ORT DirectML execution provider")?;
     }
 
