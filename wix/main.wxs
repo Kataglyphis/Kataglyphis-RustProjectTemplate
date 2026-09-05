@@ -1,6 +1,6 @@
 <?xml version='1.0' encoding='utf-8'?>
 <!--
-  Kataglyphis Rust Project Template
+  OxidANT
   WiX installer configuration.
 
   WiX Toolset v4 schema, built directly with `wix.exe build` (NOT cargo-wix).
@@ -28,7 +28,7 @@
 
         <SummaryInformation
             Keywords='Installer'
-            Description='Rust project template with optional GUI, ONNX backends, profiling, packaging, and CI workflows.'
+            Description='OxidANT — Rust project template with optional GUI, ONNX backends, profiling, packaging, and CI workflows.'
             Manufacturer='$(var.Manufacturer)'
             Codepage='1252'/>
 
@@ -69,11 +69,11 @@
             <Component Id='ApplicationShortcut' Bitness='always64'>
                 <Shortcut Id='ApplicationStartMenuShortcut'
                     Name='$(var.ProductName)'
-                    Description='Rust project template with optional GUI, ONNX backends, profiling, packaging, and CI workflows.'
+                    Description='OxidANT — Rust project template with optional GUI, ONNX backends, profiling, packaging, and CI workflows.'
                     Target='[!exe0]'
                     WorkingDirectory='APPLICATIONFOLDER'/>
                 <RemoveFolder Id='CleanUpShortCut' Directory='ApplicationProgramsFolder' On='uninstall'/>
-                <RegistryValue Root='HKCU' Key='Software\Kataglyphis\RustProjectTemplate' Name='installed' Type='integer' Value='1' KeyPath='yes'/>
+                <RegistryValue Root='HKCU' Key='Software\Kataglyphis\OxidANT' Name='installed' Type='integer' Value='1' KeyPath='yes'/>
             </Component>
         </DirectoryRef>
 
@@ -110,7 +110,7 @@
         <Property Id='ARPPRODUCTICON' Value='ProductICO' />
         -->
 
-        <Property Id='ARPHELPLINK' Value='https://github.com/Kataglyphis/RustProjectTemplate'/>
+        <Property Id='ARPHELPLINK' Value='https://github.com/Kataglyphis/OxidANT'/>
 
         <!--
           Requires `-ext WixToolset.UI.wixext` on the wix build command line.

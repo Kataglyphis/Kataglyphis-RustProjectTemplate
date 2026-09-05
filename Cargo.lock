@@ -4446,8 +4446,8 @@ dependencies = [
  "assert_cmd",
  "clap",
  "kataglyphis_gui",
- "oxidant",
  "log",
+ "oxidant",
  "predicates",
  "tempfile",
  "tokio",
@@ -4507,42 +4507,6 @@ dependencies = [
  "gstreamer-app",
  "gstreamer-video",
  "log",
-]
-
-[[package]]
-name = "oxidant"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "assert_cmd",
- "burn",
- "burn-autodiff",
- "burn-ndarray",
- "chrono",
- "clap",
- "cxx",
- "cxx-build",
- "env_logger",
- "flutter_rust_bridge",
- "js-sys",
- "kataglyphis_core",
- "kataglyphis_gui",
- "kataglyphis_inference",
- "kataglyphis_media",
- "kataglyphis_telemetry",
- "libloading 0.9.0",
- "log",
- "ndarray 0.17.2",
- "ort",
- "plotters",
- "predicates",
- "proptest",
- "serde",
- "sysinfo 0.39.6",
- "tempfile",
- "tokio",
- "wasm-bindgen",
- "wmi",
 ]
 
 [[package]]
@@ -5774,6 +5738,42 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "36820e9051aca1014ddc75770aab4d68bc1e9e632f0f5627c4086bc216fb583b"
 dependencies = [
  "ttf-parser 0.25.1",
+]
+
+[[package]]
+name = "oxidant"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assert_cmd",
+ "burn",
+ "burn-autodiff",
+ "burn-ndarray",
+ "chrono",
+ "clap",
+ "cxx",
+ "cxx-build",
+ "env_logger",
+ "flutter_rust_bridge",
+ "js-sys",
+ "kataglyphis_core",
+ "kataglyphis_gui",
+ "kataglyphis_inference",
+ "kataglyphis_media",
+ "kataglyphis_telemetry",
+ "libloading 0.9.0",
+ "log",
+ "ndarray 0.17.2",
+ "ort",
+ "plotters",
+ "predicates",
+ "proptest",
+ "serde",
+ "sysinfo 0.39.6",
+ "tempfile",
+ "tokio",
+ "wasm-bindgen",
+ "wmi",
 ]
 
 [[package]]

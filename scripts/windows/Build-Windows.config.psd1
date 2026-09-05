@@ -8,10 +8,10 @@
   }
 
   Msix = @{
-    PackageName = 'Kataglyphis.RustProjectTemplate'
+    PackageName = 'Kataglyphis.OxidANT'
     Publisher = 'CN=Kataglyphis'
     PublisherDisplayName = 'Kataglyphis'
-    DisplayName = 'Kataglyphis Rust Project Template'
+    DisplayName = 'OxidANT'
     Description = 'Rust project template with optional GUI, ONNX backends, profiling, packaging, and CI workflows.'
     Version = '0.1.0.0'
     MinVersion = '10.0.19041.0'
@@ -23,7 +23,7 @@
     # Enable/disable MSI packaging
     Enabled = $true
     # Product name shown in installer
-    ProductName = 'Kataglyphis Rust Project Template'
+    ProductName = 'OxidANT'
     # Manufacturer name
     Manufacturer = 'Kataglyphis'
     # Path to WiX source file (relative to workspace root)

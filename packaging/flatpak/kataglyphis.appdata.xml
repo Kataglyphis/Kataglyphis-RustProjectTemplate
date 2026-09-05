@@ -2,14 +2,14 @@
 <component type="desktop">
   <id>io.kataglyphis.Kataglyphis</id>
   <metadata_license>CC0-1.0</metadata_license>
-  <name>Kataglyphis RustProjectTemplate</name>
+  <name>OxidANT</name>
   <summary>Example Rust project template packaged by Kataglyphis</summary>
   <description>
-    Kataglyphis RustProjectTemplate is an example application showing how to
+    OxidANT is an example application showing how to
     package a Rust binary into multiple formats (tar, deb, AppImage, Flatpak).
   </description>
-  <url type="homepage">https://github.com/kataglyphis/Kataglyphis-RustProjectTemplate</url>
+  <url type="homepage">https://github.com/Kataglyphis/OxidANT</url>
   <provides>
-    <binary>kataglyphis-rustprojecttemplate</binary>
+    <binary>oxidant</binary>
   </provides>
 </component>

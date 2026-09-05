@@ -3,7 +3,7 @@
     <img src="images/logo.png" alt="logo" width="200" />
   </a>
 
-  <h1>Kataglyphis-RustProjectTemplate</h1>
+  <h1>OxidANT</h1>
  
   <h4>Collecting Rust best practices. Part of the <a href="https://github.com/Kataglyphis/kataglyphis-containerhub">Kataglyphis Ecosystem</a> for robust code sharing and rapid development.</h4>
 </div>
@@ -14,9 +14,9 @@
   </a>
 </div>
 
-[![Rust workflow on Ubuntu-24.04](https://github.com/Kataglyphis/RustProjectTemplate/actions/workflows/rust_ubuntu24_04.yml/badge.svg)](https://github.com/Kataglyphis/RustProjectTemplate/actions/workflows/rust_ubuntu24_04.yml)
-[![Rust workflow on Windows 2025](https://github.com/Kataglyphis/RustProjectTemplate/actions/workflows/rust_windows2025.yml/badge.svg)](https://github.com/Kataglyphis/RustProjectTemplate/actions/workflows/rust_windows2025.yml)
-[![CodeQL](https://github.com/Kataglyphis/RustProjectTemplate/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/Kataglyphis/RustProjectTemplate/actions/workflows/github-code-scanning/codeql)
+[![Rust workflow on Ubuntu-24.04](https://github.com/Kataglyphis/OxidANT/actions/workflows/rust_ubuntu24_04.yml/badge.svg)](https://github.com/Kataglyphis/OxidANT/actions/workflows/rust_ubuntu24_04.yml)
+[![Rust workflow on Windows 2025](https://github.com/Kataglyphis/OxidANT/actions/workflows/rust_windows2025.yml/badge.svg)](https://github.com/Kataglyphis/OxidANT/actions/workflows/rust_windows2025.yml)
+[![CodeQL](https://github.com/Kataglyphis/OxidANT/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/Kataglyphis/OxidANT/actions/workflows/github-code-scanning/codeql)
 
 For **__official docs__** follow this [link](https://rust.jonasheinle.de).
 
@@ -25,7 +25,7 @@ For **__official docs__** follow this [link](https://rust.jonasheinle.de).
 <!-- [![Linux build](https://github.com/Kataglyphis/GraphicsEngineVulkan/actions/workflows/Linux.yml/badge.svg)](https://github.com/Kataglyphis/GraphicsEngineVulkan/actions/workflows/Linux.yml)
 [![Windows build](https://github.com/Kataglyphis/GraphicsEngineVulkan/actions/workflows/Windows.yml/badge.svg)](https://github.com/Kataglyphis/GraphicsEngineVulkan/actions/workflows/Windows.yml)
 -->
-[![TopLang](https://img.shields.io/github/languages/top/Kataglyphis/RustProjectTemplate)]() 
+[![TopLang](https://img.shields.io/github/languages/top/Kataglyphis/OxidANT)]() 
 [![Donate](https://img.shields.io/badge/Donate-PayPal-green.svg)](https://www.paypal.com/paypalme/JonasHeinle)
 [![Twitter](https://img.shields.io/twitter/follow/Cataglyphis_?style=social)](https://twitter.com/Cataglyphis_)
  
@@ -116,7 +116,7 @@ cargo upgrade --incompatible
 
 1. Clone the repo
    ```bash
-   git clone --recurse-submodules git@github.com:Kataglyphis/RustProjectTemplate.git
+   git clone --recurse-submodules git@github.com:Kataglyphis/OxidANT.git
    ```
  
 ## Tests
@@ -321,38 +321,47 @@ Voraussetzungen:
 - Windows SDK (inkl. `makeappx` und `signtool`) — der Pfad wird über ContainerHubs `Resolve-WindowsSdkToolPath` gefunden (respektiert `WindowsSdkVerBinPath`/`WindowsSDKVersion` aus VsDevCmd)
 - **PowerShell 7+ (`pwsh`)** — 5.1 reicht nicht; alle Skripte tragen `#requires -Version 7.0`
 
-MSIX bauen (inkl. Release-Build):
+**Der normale Weg ist `Build-Windows.ps1`.** Es packt MSIX selbst (ab Zeile 209)
+und zieht jeden Wert aus dem `Msix`-Block von `scripts/windows/Build-Windows.config.psd1`,
+überschreibbar per Umgebungsvariable (`MSIX_PACKAGE_NAME`, `MSIX_DISPLAY_NAME`, …):
 
 ```pwsh
-pwsh -ExecutionPolicy Bypass -File .\third_party\ContainerHub\windows\scripts\rust\New-MsixPackage.ps1
+pwsh -ExecutionPolicy Bypass -File .\scripts\windows\Build-Windows.ps1
 ```
 
-MSIX bauen und mit einer vorhandenen PFX signieren:
+Abschaltbar mit `-SkipMsix`. **Dieser Weg signiert nicht** — er liefert ein
+unsigniertes Paket.
+
+Zum Signieren gibt es nur ContainerHubs eigenständiges Skript. Es hat **sechs
+Pflichtparameter ohne Defaults**, und sein Default für `-ManifestTemplatePath`
+(`packaging\msix\AppxManifest.template.xml`) existiert in diesem Repo nicht —
+das Template liegt unter `scripts/windows/`:
 
 ```pwsh
-pwsh -ExecutionPolicy Bypass -File .\scripts\windows\New-MsixPackage.ps1 `
-  -CertificatePath .\certs\my-signing-cert.pfx `
-  -CertificatePassword "<PASSWORD>"
-```
-
-MSIX bauen und Testzertifikat automatisch erzeugen:
-
-```pwsh
-pwsh -ExecutionPolicy Bypass -File .\scripts\windows\New-MsixPackage.ps1 `
+pwsh -ExecutionPolicy Bypass -File .\third_party\ContainerHub\windows\scripts\rust\New-MsixPackage.ps1 `
+  -Workspace . `
+  -Binary kataglyphis_cli `
+  -PackageName Kataglyphis.OxidANT `
+  -Publisher 'CN=Kataglyphis' `
+  -PublisherDisplayName Kataglyphis `
+  -DisplayName OxidANT `
+  -ManifestTemplatePath scripts\windows\AppxManifest.xml.template `
   -CreateTestCertificate `
   -CertificatePassword "<TEST_CERT_PASSWORD>"
 ```
 
+Für eine vorhandene PFX statt `-CreateTestCertificate` das Paar
+`-CertificatePath .\certs\my-signing-cert.pfx -CertificatePassword "<PASSWORD>"`
+setzen. `-Publisher` muss zum Zertifikat passen.
+
 Output:
-- Paket: `dist\msix\Kataglyphis.RustProjectTemplate_<VERSION>_x64.msix`
+- Paket: `dist\msix\Kataglyphis.OxidANT_<VERSION>_x64.msix`
 - Staging-Inhalt: `dist\msix\staging\`
 
-Wichtige Parameter:
-- `-Binary` (Default: `kataglyphis_cli`)
-- `-Features` (Default: `gui_windows,onnxruntime_directml`)
-- `-Version` (Format: `Major.Minor.Build[.Revision]`)
-- `-Publisher` (muss zum Signaturzertifikat passen, z. B. `CN=Kataglyphis`)
-- `-SkipBuild` (packt vorhandenen Release-Build erneut)
+Weitere optionale Parameter des ContainerHub-Skripts: `-Features` (Default `""`),
+`-Version` (Default `0.1.0.0`, Format `Major.Minor.Build[.Revision]`),
+`-CargoTargetDir` (Default `target-msix`), `-SkipBuild` (packt einen vorhandenen
+Release-Build erneut).
 
 MSIX installieren (mit Testzertifikat):
 
@@ -361,8 +370,8 @@ MSIX installieren (mit Testzertifikat):
 3. Paket installieren.
 
 ```pwsh
-$certPath = "C:\\GitHub\\Inference-Engine\\third_party\\RustProjectTemplate\\dist\\msix\\Kataglyphis.RustProjectTemplate.testcert.pfx"
-$msixPath = "C:\\GitHub\\Inference-Engine\\third_party\\RustProjectTemplate\\dist\\msix\\Kataglyphis.RustProjectTemplate_0.1.0.0_x64.msix"
+$certPath = "C:\\GitHub\\Inference-Engine\\third_party\\OxidANT\\dist\\msix\\Kataglyphis.OxidANT.testcert.pfx"
+$msixPath = "C:\\GitHub\\Inference-Engine\\third_party\\OxidANT\\dist\\msix\\Kataglyphis.OxidANT_0.1.0.0_x64.msix"
 $pwd = ConvertTo-SecureString "<TEST_CERT_PASSWORD>" -AsPlainText -Force
 
 Import-PfxCertificate -FilePath $certPath -Password $pwd -CertStoreLocation "Cert:\\LocalMachine\\Root"
@@ -389,7 +398,7 @@ Image bereits installiert ist.
 Installationsprüfung:
 
 ```pwsh
-Get-AppxPackage -Name "Kataglyphis.RustProjectTemplate" | Select-Object Name, PackageFullName, Status
+Get-AppxPackage -Name "Kataglyphis.OxidANT" | Select-Object Name, PackageFullName, Status
 ```
 
 Troubleshooting:
@@ -403,11 +412,11 @@ Get-AppxLog -ActivityID <ACTIVITY_ID>
 
 App nach Installation starten:
 
-- Über das Startmenü nach `Kataglyphis RustProjectTemplate` suchen und starten.
+- Über das Startmenü nach `OxidANT` suchen und starten.
 - Oder per PowerShell:
 
 ```pwsh
-$pkg = Get-AppxPackage -Name "Kataglyphis.RustProjectTemplate"
+$pkg = Get-AppxPackage -Name "Kataglyphis.OxidANT"
 Start-Process "shell:AppsFolder\$($pkg.PackageFamilyName)!App"
 ```
 
@@ -417,13 +426,13 @@ MSIX Update / Reinstall:
 - Dann erneut installieren:
 
 ```pwsh
-Add-AppxPackage -Path "C:\\GitHub\\Inference-Engine\\third_party\\RustProjectTemplate\\dist\\msix\\Kataglyphis.RustProjectTemplate_<NEW_VERSION>_x64.msix"
+Add-AppxPackage -Path "C:\\GitHub\\Inference-Engine\\third_party\\OxidANT\\dist\\msix\\Kataglyphis.OxidANT_<NEW_VERSION>_x64.msix"
 ```
 
 MSIX deinstallieren:
 
 ```pwsh
-Get-AppxPackage -Name "Kataglyphis.RustProjectTemplate" | Remove-AppxPackage
+Get-AppxPackage -Name "Kataglyphis.OxidANT" | Remove-AppxPackage
 ```
 
 ### Linux

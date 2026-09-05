@@ -398,7 +398,7 @@ fn first_frame_uses_the_correct_cascade_and_tile_counts() {
 }
 
 /// Reads `Resources/ShadersSlang/forward/forward.slang`, four directories up
-/// from this crate (out of the `Kataglyphis-RustProjectTemplate` submodule
+/// from this crate (out of the `OxidANT` submodule
 /// into the superproject tree). Returns `None` — with an `eprintln!` — when
 /// that tree is not present, matching the existing no-GPU skip convention so
 /// the pin tests below don't fail in a checkout of the submodule alone.

@@ -30,10 +30,10 @@ jobs:
       # Provide inputs for version computation script
       REF_NAME: ${{ github.ref_name }}
       RUN_NUMBER: ${{ github.run_number }}
-      MSIX_PACKAGE_NAME: Kataglyphis.RustProjectTemplate
+      MSIX_PACKAGE_NAME: Kataglyphis.OxidANT
       MSIX_PUBLISHER: CN=Kataglyphis
       MSIX_PUBLISHER_DISPLAY_NAME: Kataglyphis
-      MSIX_DISPLAY_NAME: Kataglyphis Rust Project Template
+      MSIX_DISPLAY_NAME: OxidANT
       MSIX_DESCRIPTION: Rust project template with optional GUI, ONNX backends, profiling, packaging, and CI workflows.
 
     steps:
@@ -42,7 +42,7 @@ jobs:
       # Disk-Report - kommt aus ContainerHub. Er war hier ~50 Zeilen und in drei
       # Schwester-Repos identisch.
       #
-      # Der Kurzpfad-Klon bleibt Pflicht: die Kette RustProjectTemplate ->
+      # Der Kurzpfad-Klon bleibt Pflicht: die Kette OxidANT ->
       # ContainerHub -> DocumANTation -> md2pdfLib -> latex/{smile,awesome-beamer}
       # reisst .git/modules/.../pack-*.keep ueber 260 Zeichen, und ein rekursiver
       # Checkout stirbt mit "Filename too long" bzw. "'$GIT_DIR' too big".
