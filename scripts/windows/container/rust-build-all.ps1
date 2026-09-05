@@ -3,7 +3,7 @@
 # Builds the workspace in dev (debug), profile, and release, then copies artifacts
 # back to the bind-mounted repo. All build writes go to fresh container-local dirs
 # (C:\ct, C:\ch) to dodge the wcifs/bindFlt rename bugs on this host/base skew
-# (see Kataglyphis-ContainerHub docs/windows-builds.md, run-side wcifs symptoms).
+# (see ContainerHub docs/windows-builds.md, run-side wcifs symptoms).
 #requires -Version 7.0
 
 # NB: EAP stays 'Continue' and $LASTEXITCODE is checked by hand -- native-command

@@ -7,7 +7,7 @@
 # old major for years until the runner drops it.
 #
 # No "docker" ecosystem on purpose: this repo contains no Dockerfile. The
-# build images are defined in the Kataglyphis-ContainerHub submodule, and
+# build images are defined in the ContainerHub submodule, and
 # Dependabot does not traverse submodules - an entry here would be dead
 # config that looks like coverage. Image updates arrive by bumping the
 # submodule pointer instead.

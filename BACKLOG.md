@@ -25,6 +25,14 @@ protocol exists and the backlog is empty" — it was neither.
       `KATAGLYPHIS_REQUIRE_GPU=1`) so the ~40 headless golden tests stop
       silently skipping and reporting as passed.
 
+- [ ] The Ubuntu lane can only produce a tarball. ContainerHub's
+      `package_archive.sh` writes the tar and stops; its `create_deb()` was
+      deleted on 2026-08-08 as unreachable, and `--flatpak-manifest`,
+      `--desktop-file` and `--appdata-file` are checked for existence and then
+      never read. `PACKAGE_TYPES` now says `tar`, which is honest but narrow.
+      Restoring deb/AppImage/Flatpak means changing ContainerHub, not this repo
+      -- the packaging/flatpak/ files here are ready and unused.
+
 ## Not adopted yet
 
 The loop itself — config, runner wrappers, `scripts/AgenticLoop/` — is not set

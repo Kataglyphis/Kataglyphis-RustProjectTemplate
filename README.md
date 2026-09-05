@@ -5,7 +5,7 @@
 
   <h1>OxidANT</h1>
  
-  <h4>Collecting Rust best practices. Part of the <a href="https://github.com/Kataglyphis/kataglyphis-containerhub">Kataglyphis Ecosystem</a> for robust code sharing and rapid development.</h4>
+  <h4>Collecting Rust best practices. Part of the <a href="https://github.com/Kataglyphis/ContainerHub">Kataglyphis Ecosystem</a> for robust code sharing and rapid development.</h4>
 </div>
 
 <div align="center">
@@ -58,7 +58,7 @@ skinning, animations, LOD, hot shader reload, and headless golden tests.
 See `crates/webgpu_renderer/README.md` for demos and the SPIR-V/GLSL
 shader-export pipeline shared with the C++ Vulkan engine.
 
-This template is a foundational part of the **Kataglyphis Ecosystem**, providing robust Rust best practices. It works synergistically with other projects like [Kataglyphis ContainerHub](https://github.com/Kataglyphis/kataglyphis-containerhub) to provide seamless code sharing, rapid development, and consistent identity across our web and systems engineering stack.
+This template is a foundational part of the **Kataglyphis Ecosystem**, providing robust Rust best practices. It works synergistically with other projects like [Kataglyphis ContainerHub](https://github.com/Kataglyphis/ContainerHub) to provide seamless code sharing, rapid development, and consistent identity across our web and systems engineering stack.
 
 ### Key Features
 
@@ -259,7 +259,7 @@ cargo run --features gui_windows -- gui --backend primary
 
 ### Windows: build & test in the Stevedore container
 
-The workspace builds and tests inside the [Kataglyphis ContainerHub](https://github.com/Kataglyphis/kataglyphis-containerhub) Windows developer image (`ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64`) using [Stevedore](https://github.com/slonopotamus/stevedore)'s `docker.exe`.
+The workspace builds and tests inside the [Kataglyphis ContainerHub](https://github.com/Kataglyphis/ContainerHub) Windows developer image (`ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64`) using [Stevedore](https://github.com/slonopotamus/stevedore)'s `docker.exe`.
 
 > **ContainerHub is the ground truth for container and PowerShell functionality.** The scripts here are thin drivers: `docker.exe` discovery, isolation flags, container teardown, SDK-tool lookup, MSIX manifest expansion, config access and build-step logging all come from its modules under `windows/scripts/modules/`. Before adding a helper to `scripts/windows/`, check whether ContainerHub already has it — several that were written locally turned out to exist there in a better form. Everything is `pwsh` (PowerShell 7+); nothing here runs under Windows PowerShell 5.1.
 
