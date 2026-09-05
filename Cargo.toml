@@ -36,7 +36,7 @@ gstreamer-app = "0.25"
 gstreamer-video = "0.25"
 libloading = "0.9"
 sysinfo = "0.39"
-flutter_rust_bridge = "=2.12.0"
+flutter_rust_bridge = "=2.13.0"
 wmi = "0.18"
 
 [package]
