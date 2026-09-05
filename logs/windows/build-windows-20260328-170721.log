@@ -4426,9 +4426,9 @@
 [19:17:58] warning: build failed, waiting for other jobs to finish...
 [19:17:58] ERROR: <<< FAILED: Unit Tests (Duration: 18:44.109)
 [19:17:58] ERROR:     Error: Command failed with exit code 101: cargo test --all --verbose
-[19:17:58]     Stack: at Invoke-BuildExternal, C:\workspace\ExternalLib\Kataglyphis-ContainerHub\windows\scripts\modules\WindowsBuild.Common.psm1: line 171
+[19:17:58]     Stack: at Invoke-BuildExternal, C:\workspace\third_party\ContainerHub\windows\scripts\modules\WindowsBuild.Common.psm1: line 171
 at <ScriptBlock>, C:\workspace\Scripts\Windows\Build-Windows.ps1: line 178
-at Invoke-BuildStep, C:\workspace\ExternalLib\Kataglyphis-ContainerHub\windows\scripts\modules\WindowsBuild.Common.psm1: line 220
+at Invoke-BuildStep, C:\workspace\third_party\ContainerHub\windows\scripts\modules\WindowsBuild.Common.psm1: line 220
 at <ScriptBlock>, C:\workspace\Scripts\Windows\Build-Windows.ps1: line 177
 
 [19:17:58] ============================================================

@@ -3670,9 +3670,9 @@
 [21:38:55] [0m 
 [21:38:55] ERROR: <<< FAILED: Format Check (Duration: 00:02.064)
 [21:38:55] ERROR:     Error: Command failed with exit code 1: cargo fmt --all -- --check
-[21:38:55]     Stack: at Invoke-BuildExternal, C:\workspace\ExternalLib\Kataglyphis-ContainerHub\windows\scripts\modules\WindowsBuild.Common.psm1: line 171
+[21:38:55]     Stack: at Invoke-BuildExternal, C:\workspace\third_party\ContainerHub\windows\scripts\modules\WindowsBuild.Common.psm1: line 171
 at <ScriptBlock>, C:\workspace\Scripts\Windows\Build-Windows.ps1: line 168
-at Invoke-BuildStep, C:\workspace\ExternalLib\Kataglyphis-ContainerHub\windows\scripts\modules\WindowsBuild.Common.psm1: line 220
+at Invoke-BuildStep, C:\workspace\third_party\ContainerHub\windows\scripts\modules\WindowsBuild.Common.psm1: line 220
 at <ScriptBlock>, C:\workspace\Scripts\Windows\Build-Windows.ps1: line 166
 
 [21:38:55] ============================================================

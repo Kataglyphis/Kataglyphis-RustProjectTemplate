@@ -3672,9 +3672,9 @@
 [10:57:13] error: could not compile `kataglyphis_rustprojecttemplate` (lib) due to 1 previous error
 [10:57:13] ERROR: <<< FAILED: Linting (cargo clippy) (Duration: 00:10.229)
 [10:57:13] ERROR:     Error: Command failed with exit code 101: cargo clippy --all-targets --all-features -- -D warnings
-[10:57:13]     Stack: at Invoke-BuildExternal, C:\workspace\ExternalLib\Kataglyphis-ContainerHub\windows\scripts\modules\WindowsBuild.Common.psm1: line 171
+[10:57:13]     Stack: at Invoke-BuildExternal, C:\workspace\third_party\ContainerHub\windows\scripts\modules\WindowsBuild.Common.psm1: line 171
 at <ScriptBlock>, C:\workspace\Scripts\Windows\Build-Windows.ps1: line 173
-at Invoke-BuildStep, C:\workspace\ExternalLib\Kataglyphis-ContainerHub\windows\scripts\modules\WindowsBuild.Common.psm1: line 220
+at Invoke-BuildStep, C:\workspace\third_party\ContainerHub\windows\scripts\modules\WindowsBuild.Common.psm1: line 220
 at <ScriptBlock>, C:\workspace\Scripts\Windows\Build-Windows.ps1: line 171
 
 [10:57:13] ============================================================

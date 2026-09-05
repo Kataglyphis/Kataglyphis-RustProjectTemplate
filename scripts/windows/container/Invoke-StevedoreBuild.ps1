@@ -10,7 +10,7 @@
     repo root (<repo>\debug, \profile, \release; gitignored).
 
     Host quirks this script works around (verified 2026-07-17, see
-    ExternalLib\Kataglyphis-ContainerHub\docs\windows-builds.md):
+    third_party\ContainerHub\docs\windows-builds.md):
     - Dev Drive (ReFS) sources cannot be bind-mounted unless bindFlt/wcifs are
       allowed on the volume ("Der Dateisystem-Minifilter kann nicht an das
       Entwicklervolume angefügt werden"). The sources are therefore staged to a
@@ -65,7 +65,7 @@ $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 # Container plumbing comes from ContainerHub, which is the ground truth for it:
 # Stevedore's docker.exe lookup, the isolation flags, and the wcifs-tolerant
 # container removal were all reimplemented here before.
-$containerHubModules = Join-Path $repoRoot 'ExternalLib\Kataglyphis-ContainerHub\windows\scripts\modules'
+$containerHubModules = Join-Path $repoRoot 'third_party\ContainerHub\windows\scripts\modules'
 $reuseModule = Join-Path $containerHubModules 'WindowsContainerBuild.Reuse.psm1'
 if (-not (Test-Path $reuseModule)) {
     throw "Required module not found: $reuseModule (run: git submodule update --init --recursive)"

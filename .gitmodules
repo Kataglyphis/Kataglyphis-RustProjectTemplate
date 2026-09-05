@@ -1,4 +1,4 @@
-[submodule "ExternalLib/Kataglyphis-ContainerHub"]
-	path = ExternalLib/Kataglyphis-ContainerHub
+[submodule "third_party/ContainerHub"]
+	path = third_party/ContainerHub
 	url = git@github.com:Kataglyphis/ContainerHub.git
 	branch = main

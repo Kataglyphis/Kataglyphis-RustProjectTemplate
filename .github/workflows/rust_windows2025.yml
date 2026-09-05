@@ -151,7 +151,7 @@ jobs:
           image: ${{ env.WINDOWS_CONTAINER_IMAGE }}
           cpus: ${{ env.WINDOWS_DOCKER_CPUS }}
           memory: ${{ env.WINDOWS_DOCKER_MEMORY }}
-          file: C:\ws\ExternalLib\Kataglyphis-ContainerHub\windows\scripts\rust\New-Archive.ps1
+          file: C:\ws\third_party\ContainerHub\windows\scripts\rust\New-Archive.ps1
           extra-args: |
             --env
             BINARY=${{ env.BINARY }}

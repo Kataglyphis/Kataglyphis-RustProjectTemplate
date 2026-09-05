@@ -13,7 +13,7 @@ Cargo workspace (`Cargo.toml` at the root is both the workspace and the root pac
 - `crates/webgpu_renderer` - WebGPU (wgpu) glTF renderer, native + wasm32/browser (`kataglyphis_webgpu_renderer`): PBR, cascaded shadows, SSAO, bloom, skinning, animations, LOD
 - `crates/cli` — the CLI binary; its bin target is named `kataglyphis_cli` (read/stats/gui subcommands; `stats --path <file>`). It was renamed from `kataglyphis_rustprojecttemplate` on 2026-08-07 — see the pdb note below.
 - `tests/` — root-package integration tests (`integration.rs`) and proptest fuzz tests (`fuzz_test.rs`)
-- `ExternalLib/Kataglyphis-ContainerHub` — git submodule and **the ground truth for every container and PowerShell concern**. See the section below before writing any helper.
+- `third_party/ContainerHub` — git submodule and **the ground truth for every container and PowerShell concern**. See the section below before writing any helper.
 
 ## ContainerHub is the ground truth
 
@@ -22,7 +22,7 @@ Anything to do with containers, Dockerfiles, CI plumbing or PowerShell belongs t
 **Do not re-derive host knowledge here — read it there.** Everything about
 Stevedore, Rancher Desktop, wcifs/bindFlt and the container hosts is already
 written down, in more depth than this file should carry. Start at
-[`ExternalLib/Kataglyphis-ContainerHub/docs/INDEX.md`](ExternalLib/Kataglyphis-ContainerHub/docs/INDEX.md)
+[`third_party/ContainerHub/docs/INDEX.md`](third_party/ContainerHub/docs/INDEX.md)
 — it maps topic → owning document, so one hop survives upstream reorganisation.
 
 The entries this repo reaches for most:
@@ -53,28 +53,28 @@ Two consumer-specific traps, both hit on 2026-08-07:
 - **A CRLF checkout breaks it before anything runs.** The scripts are executed by bash inside the container; a `\r` makes it fail with `set: pipefail\r: invalid option name`, which names neither the file nor line endings. `.gitattributes` now pins `*.sh` to LF in both repos, but git does not rewrite an existing checkout: `git ls-files -z '*.sh' | xargs -0 rm -f && git checkout -- .`
 - **The image's Rust may be older than its own pin.** See "Known gaps" — `latest-cross` shipped Ubuntu's rustc 1.93.1 while `versions.env` pinned 1.97.1, which surfaced as a dependency's MSRV error, not as an image problem. Fixed in ContainerHub; check `rustc --version` in the container if a build fails on an MSRV floor. Everything below was written locally first and later found to already exist there — usually in a better form, twice with a bug the local copy did not have:
 
-All paths below are relative to `ExternalLib/Kataglyphis-ContainerHub/`.
+All paths below are relative to `third_party/ContainerHub/`.
 
 | Need | Use | Defined in | Not |
 | --- | --- | --- | --- |
-| `docker.exe` discovery (Stevedore) | `Resolve-DockerExe` | [`windows/scripts/modules/WindowsContainerBuild.Reuse.psm1`](ExternalLib/Kataglyphis-ContainerHub/windows/scripts/modules/WindowsContainerBuild.Reuse.psm1) | a hand-rolled candidate list |
+| `docker.exe` discovery (Stevedore) | `Resolve-DockerExe` | [`windows/scripts/modules/WindowsContainerBuild.Reuse.psm1`](third_party/ContainerHub/windows/scripts/modules/WindowsContainerBuild.Reuse.psm1) | a hand-rolled candidate list |
 | `--isolation process` and friends | `Get-ContainerIsolationArgs` | same file | inline flags |
 | Container teardown | `Remove-BuildContainerSafe` | same file | `docker rm -f` (misses the wcifs teardown lock) |
 | Bind-mount probe, artifact delivery | `Test-ContainerBindMount`, `Test-BuildArtifactsDelivered` | same file | assuming a green build delivered something |
-| SDK tools (makeappx, signtool) | `Resolve-WindowsSdkToolPath` | [`windows/scripts/modules/WindowsMsix.Common.psm1`](ExternalLib/Kataglyphis-ContainerHub/windows/scripts/modules/WindowsMsix.Common.psm1) | `Get-ChildItem -Recurse` over the Kits tree |
+| SDK tools (makeappx, signtool) | `Resolve-WindowsSdkToolPath` | [`windows/scripts/modules/WindowsMsix.Common.psm1`](third_party/ContainerHub/windows/scripts/modules/WindowsMsix.Common.psm1) | `Get-ChildItem -Recurse` over the Kits tree |
 | MSIX manifest tokens | `Expand-XmlTemplateTokens` | same file | `-replace` — see below |
 | XML escaping, placeholder PNGs | `ConvertTo-XmlEscapedText`, `New-TransparentPng` | same file | local redefinitions |
-| Config access | `Get-OrDefault`, `Get-ConfigValue` | [`windows/scripts/modules/WindowsConfig.Common.psm1`](ExternalLib/Kataglyphis-ContainerHub/windows/scripts/modules/WindowsConfig.Common.psm1) | copies |
-| Build logging and steps | `New-BuildContext`, `Invoke-BuildStep`, `Invoke-BuildExternal`, `Write-BuildLog*` | [`windows/scripts/modules/WindowsBuild.Common.psm1`](ExternalLib/Kataglyphis-ContainerHub/windows/scripts/modules/WindowsBuild.Common.psm1) | ad-hoc `Write-Host` wrappers |
-| Tool guards, version normalising (pwsh) | `Assert-Command`, `ConvertTo-NormalizedVersion` | [`windows/scripts/modules/WindowsScripts.Shared.psm1`](ExternalLib/Kataglyphis-ContainerHub/windows/scripts/modules/WindowsScripts.Shared.psm1) | a second implementation |
-| Logging inside a container | `Start-ContainerLog`, `Write-ContainerLog`, `Invoke-ContainerLoggedCommand` | [`windows/scripts/modules/WindowsContainerLog.Common.psm1`](ExternalLib/Kataglyphis-ContainerHub/windows/scripts/modules/WindowsContainerLog.Common.psm1) | a `Say`/`Run-Logged` pair per script |
-| CI version stamping (bash) | `version_util.sh --github-env` / `--resolve-ci` / `--normalize` | [`linux/scripts/02-toolchain/rust/version_util.sh`](ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/version_util.sh) | re-reading VERSION.txt yourself |
-| In-container cargo steps | `cargo_debug.sh`, `cargo_release.sh`, `cargo_test.sh`, `cargo_coverage.sh`, … | [`linux/scripts/02-toolchain/rust/`](ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust) | inline cargo invocations |
-| Linux packaging (tar/deb/AppImage/Flatpak) | `package_archive.sh` | [`linux/scripts/06-packaging/package_archive.sh`](ExternalLib/Kataglyphis-ContainerHub/linux/scripts/06-packaging/package_archive.sh) | bespoke packaging |
-| CI job plumbing | `prepare-linux-ci-host`, `run-in-linux-container`, `run-in-windows-container`, `clone-into-short-path`, `cleanup-disk-space`, `assert-docker-disk-space` | [`.github/actions/`](ExternalLib/Kataglyphis-ContainerHub/.github/actions) | hand-written `docker run` blocks |
-| Linting workflows locally | `lint-workflows.sh <root>` (pinned, SHA-verified actionlint) | [`linux/scripts/lint-workflows.sh`](ExternalLib/Kataglyphis-ContainerHub/linux/scripts/lint-workflows.sh) | bootstrapping your own |
-| Agentic loop | config + runner templates | [`shared/agentic-loop/templates/`](ExternalLib/Kataglyphis-ContainerHub/shared/agentic-loop/templates) | writing one from scratch |
-| Bash helpers (logging, retry, SHA'd downloads, parallelism) | `logging.sh`, `downloads.sh`, `parallelism.sh`, … | [`linux/scripts/01-core/`](ExternalLib/Kataglyphis-ContainerHub/linux/scripts/01-core) | new implementations |
+| Config access | `Get-OrDefault`, `Get-ConfigValue` | [`windows/scripts/modules/WindowsConfig.Common.psm1`](third_party/ContainerHub/windows/scripts/modules/WindowsConfig.Common.psm1) | copies |
+| Build logging and steps | `New-BuildContext`, `Invoke-BuildStep`, `Invoke-BuildExternal`, `Write-BuildLog*` | [`windows/scripts/modules/WindowsBuild.Common.psm1`](third_party/ContainerHub/windows/scripts/modules/WindowsBuild.Common.psm1) | ad-hoc `Write-Host` wrappers |
+| Tool guards, version normalising (pwsh) | `Assert-Command`, `ConvertTo-NormalizedVersion` | [`windows/scripts/modules/WindowsScripts.Shared.psm1`](third_party/ContainerHub/windows/scripts/modules/WindowsScripts.Shared.psm1) | a second implementation |
+| Logging inside a container | `Start-ContainerLog`, `Write-ContainerLog`, `Invoke-ContainerLoggedCommand` | [`windows/scripts/modules/WindowsContainerLog.Common.psm1`](third_party/ContainerHub/windows/scripts/modules/WindowsContainerLog.Common.psm1) | a `Say`/`Run-Logged` pair per script |
+| CI version stamping (bash) | `version_util.sh --github-env` / `--resolve-ci` / `--normalize` | [`linux/scripts/02-toolchain/rust/version_util.sh`](third_party/ContainerHub/linux/scripts/02-toolchain/rust/version_util.sh) | re-reading VERSION.txt yourself |
+| In-container cargo steps | `cargo_debug.sh`, `cargo_release.sh`, `cargo_test.sh`, `cargo_coverage.sh`, … | [`linux/scripts/02-toolchain/rust/`](third_party/ContainerHub/linux/scripts/02-toolchain/rust) | inline cargo invocations |
+| Linux packaging (tar/deb/AppImage/Flatpak) | `package_archive.sh` | [`linux/scripts/06-packaging/package_archive.sh`](third_party/ContainerHub/linux/scripts/06-packaging/package_archive.sh) | bespoke packaging |
+| CI job plumbing | `prepare-linux-ci-host`, `run-in-linux-container`, `run-in-windows-container`, `clone-into-short-path`, `cleanup-disk-space`, `assert-docker-disk-space` | [`.github/actions/`](third_party/ContainerHub/.github/actions) | hand-written `docker run` blocks |
+| Linting workflows locally | `lint-workflows.sh <root>` (pinned, SHA-verified actionlint) | [`linux/scripts/lint-workflows.sh`](third_party/ContainerHub/linux/scripts/lint-workflows.sh) | bootstrapping your own |
+| Agentic loop | config + runner templates | [`shared/agentic-loop/templates/`](third_party/ContainerHub/shared/agentic-loop/templates) | writing one from scratch |
+| Bash helpers (logging, retry, SHA'd downloads, parallelism) | `logging.sh`, `downloads.sh`, `parallelism.sh`, … | [`linux/scripts/01-core/`](third_party/ContainerHub/linux/scripts/01-core) | new implementations |
 
 **One caveat about `cargo_fmt_clippy.sh`**: it is the one script in that rust directory this repo must *not* call — its first line is `rustup component add rustfmt`, and neither image can satisfy that offline. Call `cargo fmt` / `cargo clippy` directly. See the CI section.
 
@@ -124,7 +124,7 @@ What moved with the bin: `Msix.Binary` and `Msi.OutputName` in `scripts/windows/
 Driver: `scripts\windows\Container\Invoke-StevedoreBuild.ps1` (add `-Test` to also run the test suite; `-TestOnly` to skip building). It **bind-mounts this repository straight into the container** as `C:\ws-mnt`, runs the in-container scripts (`rust-build-all.ps1`, `rust-test-all.ps1`) in `ghcr.io/kataglyphis/kataglyphis_beschleuniger:winamd64`, and the artifacts land directly in `target\container\<profile>`, mirrored to the gitignored root `debug\`, `profile\`, `release\`.
 
 Mounting the repo — not a copy of it — is the default, ReFS Dev Drive or not.
-It also means `ExternalLib/` is present inside the container, so anything
+It also means `third_party/` is present inside the container, so anything
 importing ContainerHub modules (e.g. `Build-Windows.ps1`) works without special
 staging.
 
@@ -133,9 +133,9 @@ a bind mount fail while reads succeed, how to allow the Dev Drive filters, what
 `--isolation process` does to the CPU count, the wcifs teardown lock, the
 transient hcsshim client-pipe drops, and why the Windows lane is Stevedore's
 `docker.exe` rather than nerdctl: all in
-[`docs/windows-builds.md`](ExternalLib/Kataglyphis-ContainerHub/docs/windows-builds.md)
+[`docs/windows-builds.md`](third_party/ContainerHub/docs/windows-builds.md)
 and
-[`docs/windows-container-build-performance.md`](ExternalLib/Kataglyphis-ContainerHub/docs/windows-container-build-performance.md).
+[`docs/windows-container-build-performance.md`](third_party/ContainerHub/docs/windows-container-build-performance.md).
 Read those before changing the driver. **Do not copy their commands back into
 this file** — the last copy of the `fsutil devdrv` line that lived here was
 malformed and stayed that way through several edits.
@@ -205,7 +205,7 @@ Facts that cost real debugging time:
 Lint the workflows locally with the submodule's pinned, SHA-verified actionlint (works from Git Bash on Windows):
 
 ```bash
-bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/lint-workflows.sh .
+bash third_party/ContainerHub/linux/scripts/lint-workflows.sh .
 ```
 
 The trailing `.` is load-bearing: without it the script lints ContainerHub's own workflows instead of this repo's, and reports green either way.

@@ -115,7 +115,7 @@ jobs:
           script: >-
             bash -lc 'set -e;
             git config --global --add safe.directory /workspace || true;
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_debug.sh'
+            bash third_party/ContainerHub/linux/scripts/02-toolchain/rust/cargo_debug.sh'
 
       - name: Security checks (cargo audit + cargo deny)
         uses: Kataglyphis/ContainerHub/.github/actions/run-in-linux-container@main
@@ -125,7 +125,7 @@ jobs:
           script: >-
             bash -lc 'set -e;
             git config --global --add safe.directory /workspace || true;
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_security_checks.sh'
+            bash third_party/ContainerHub/linux/scripts/02-toolchain/rust/cargo_security_checks.sh'
 
       # This step used to be `continue-on-error: true` and had NEVER once run
       # to completion. It died with exit 127 on every single build:
@@ -166,7 +166,7 @@ jobs:
           script: >-
             bash -lc 'set -e;
             git config --global --add safe.directory /workspace || true;
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_test.sh'
+            bash third_party/ContainerHub/linux/scripts/02-toolchain/rust/cargo_test.sh'
 
       - name: Run coverage
         uses: Kataglyphis/ContainerHub/.github/actions/run-in-linux-container@main
@@ -176,7 +176,7 @@ jobs:
           script: >-
             bash -lc 'set -e;
             git config --global --add safe.directory /workspace || true;
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_coverage.sh'
+            bash third_party/ContainerHub/linux/scripts/02-toolchain/rust/cargo_coverage.sh'
 
       - name: Run benchmarks
         uses: Kataglyphis/ContainerHub/.github/actions/run-in-linux-container@main
@@ -186,7 +186,7 @@ jobs:
           script: >-
             bash -lc 'set -e;
             git config --global --add safe.directory /workspace || true;
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_bench.sh'
+            bash third_party/ContainerHub/linux/scripts/02-toolchain/rust/cargo_bench.sh'
 
       - name: 🛠️ Build release binary
         uses: Kataglyphis/ContainerHub/.github/actions/run-in-linux-container@main
@@ -196,7 +196,7 @@ jobs:
           script: >-
             bash -lc 'set -e;
             git config --global --add safe.directory /workspace || true;
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_release.sh'
+            bash third_party/ContainerHub/linux/scripts/02-toolchain/rust/cargo_release.sh'
 
       # --privileged is here so AppImage creation can reach FUSE. --device
       # /dev/fuse would be the narrower grant, but the AppImage tooling also
@@ -217,7 +217,7 @@ jobs:
           script: >-
             bash -lc 'set -e;
             git config --global --add safe.directory /workspace || true;
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/06-packaging/package_archive.sh
+            bash third_party/ContainerHub/linux/scripts/06-packaging/package_archive.sh
             --binary "${BINARY}"
             --binary-file "${BINARY_FILE}"
             --binary-path "target/release/${BINARY_FILE}"
@@ -251,7 +251,7 @@ jobs:
           script: >-
             bash -lc 'set -e;
             git config --global --add safe.directory /workspace || true;
-            bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_build_doc.sh'
+            bash third_party/ContainerHub/linux/scripts/02-toolchain/rust/cargo_build_doc.sh'
 
       - name: Fix permissions on generated docs
         if: matrix.docs

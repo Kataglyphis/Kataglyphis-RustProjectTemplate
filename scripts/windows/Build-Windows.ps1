@@ -273,7 +273,7 @@ try {
 
       $logoPath = Join-Path $workspacePath 'images\logo.png'
       if (-not (Test-Path $logoPath)) {
-        $logoPath = Join-Path $workspacePath 'ExternalLib\Kataglyphis-ContainerHub\images\logo.png'
+        $logoPath = Join-Path $workspacePath 'third_party\ContainerHub\images\logo.png'
       }
       if (Test-Path $logoPath) {
         Write-BuildLog -Context $context -Message "Copying logos from $logoPath"

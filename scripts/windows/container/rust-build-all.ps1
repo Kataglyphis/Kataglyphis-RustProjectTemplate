@@ -12,7 +12,7 @@ $ProgressPreference = 'SilentlyContinue'
 
 # Logging comes from ContainerHub. The driver copies this module next to this
 # script into the mounted scratch dir, because the staged sources deliberately
-# exclude ExternalLib - nothing under windows/scripts/modules/ is reachable
+# exclude third_party - nothing under windows/scripts/modules/ is reachable
 # from inside the container otherwise.
 Import-Module 'C:\host-scratch\WindowsContainerLog.Common.psm1' -Force
 

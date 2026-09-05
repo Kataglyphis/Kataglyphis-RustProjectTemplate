@@ -7,7 +7,7 @@
 
 $ProgressPreference = 'SilentlyContinue'
 # See rust-build-all.ps1: the driver stages this module into the scratch mount
-# because ExternalLib is excluded from the sources copied into the container.
+# because third_party is excluded from the sources copied into the container.
 Import-Module 'C:\host-scratch\WindowsContainerLog.Common.psm1' -Force
 Start-ContainerLog -Path 'C:\host-scratch\in-container-test.log'
 

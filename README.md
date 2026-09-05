@@ -263,7 +263,7 @@ The workspace builds and tests inside the [Kataglyphis ContainerHub](https://git
 
 > **ContainerHub is the ground truth for container and PowerShell functionality.** The scripts here are thin drivers: `docker.exe` discovery, isolation flags, container teardown, SDK-tool lookup, MSIX manifest expansion, config access and build-step logging all come from its modules under `windows/scripts/modules/`. Before adding a helper to `scripts/windows/`, check whether ContainerHub already has it — several that were written locally turned out to exist there in a better form. Everything is `pwsh` (PowerShell 7+); nothing here runs under Windows PowerShell 5.1.
 
-The driver **bind-mounts this repository directly into the container** (as `C:\ws-mnt`) — no copy, so artifacts land straight in your tree and `ExternalLib/` is available inside. It builds all three profiles (`dev`/debug, `profile` = release + debuginfo, `release` = fat LTO) and optionally the full debug test suite:
+The driver **bind-mounts this repository directly into the container** (as `C:\ws-mnt`) — no copy, so artifacts land straight in your tree and `third_party/` is available inside. It builds all three profiles (`dev`/debug, `profile` = release + debuginfo, `release` = fat LTO) and optionally the full debug test suite:
 
 ```pwsh
 # build debug + profile + release in the container
@@ -292,14 +292,14 @@ Host caveats the driver handles automatically. **ContainerHub is the authority o
 
 | Topic | Read |
 | --- | --- |
-| Setting up a Windows host for Stevedore (services, `docker-users`, CNI nat conf) | [`docs/windows-host-setup.md`](ExternalLib/Kataglyphis-ContainerHub/docs/windows-host-setup.md) |
-| Windows container internals: wcifs/bindFlt, process isolation, layer-commit bug | [`docs/windows-builds.md`](ExternalLib/Kataglyphis-ContainerHub/docs/windows-builds.md) |
-| Running Linux containers on Windows (Rancher Desktop) | [`docs/rancher-desktop-linux-containers.md`](ExternalLib/Kataglyphis-ContainerHub/docs/rancher-desktop-linux-containers.md) |
-| Wiring a new project to all of it | [`docs/adopting-in-a-new-project.md`](ExternalLib/Kataglyphis-ContainerHub/docs/adopting-in-a-new-project.md) |
+| Setting up a Windows host for Stevedore (services, `docker-users`, CNI nat conf) | [`docs/windows-host-setup.md`](third_party/ContainerHub/docs/windows-host-setup.md) |
+| Windows container internals: wcifs/bindFlt, process isolation, layer-commit bug | [`docs/windows-builds.md`](third_party/ContainerHub/docs/windows-builds.md) |
+| Running Linux containers on Windows (Rancher Desktop) | [`docs/rancher-desktop-linux-containers.md`](third_party/ContainerHub/docs/rancher-desktop-linux-containers.md) |
+| Wiring a new project to all of it | [`docs/adopting-in-a-new-project.md`](third_party/ContainerHub/docs/adopting-in-a-new-project.md) |
 
 ### Linux containers locally (Rancher Desktop)
 
-The Linux image is **always** `ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross`, in CI and locally. Rancher Desktop defaults to the **containerd** engine, so use `nerdctl`, not `docker` — and from Git Bash disable path mangling or the mount argument is destroyed. Full instructions: [`docs/rancher-desktop-linux-containers.md`](ExternalLib/Kataglyphis-ContainerHub/docs/rancher-desktop-linux-containers.md).
+The Linux image is **always** `ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross`, in CI and locally. Rancher Desktop defaults to the **containerd** engine, so use `nerdctl`, not `docker` — and from Git Bash disable path mangling or the mount argument is destroyed. Full instructions: [`docs/rancher-desktop-linux-containers.md`](third_party/ContainerHub/docs/rancher-desktop-linux-containers.md).
 
 ```pwsh
 $env:MSYS_NO_PATHCONV=1; $env:MSYS2_ARG_CONV_EXCL='*'
@@ -307,7 +307,7 @@ rdctl shell nerdctl --namespace default run --rm --user root `
   -v kata-cargo-cache:/cargo-cache `
   -v /mnt/d/path/to/repo:/workspace -w /workspace `
   ghcr.io/kataglyphis/kataglyphis_beschleuniger:latest-cross `
-  bash -lc 'export CARGO_HOME=/cargo-cache; bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_release.sh'
+  bash -lc 'export CARGO_HOME=/cargo-cache; bash third_party/ContainerHub/linux/scripts/02-toolchain/rust/cargo_release.sh'
 ```
 
 Two things that will bite on a Windows checkout, both verified 2026-08-07:
@@ -324,7 +324,7 @@ Voraussetzungen:
 MSIX bauen (inkl. Release-Build):
 
 ```pwsh
-pwsh -ExecutionPolicy Bypass -File .\ExternalLib\Kataglyphis-ContainerHub\windows\scripts\rust\New-MsixPackage.ps1
+pwsh -ExecutionPolicy Bypass -File .\third_party\ContainerHub\windows\scripts\rust\New-MsixPackage.ps1
 ```
 
 MSIX bauen und mit einer vorhandenen PFX signieren:
@@ -361,8 +361,8 @@ MSIX installieren (mit Testzertifikat):
 3. Paket installieren.
 
 ```pwsh
-$certPath = "C:\\GitHub\\Kataglyphis-Inference-Engine\\ExternalLib\\Kataglyphis-RustProjectTemplate\\dist\\msix\\Kataglyphis.RustProjectTemplate.testcert.pfx"
-$msixPath = "C:\\GitHub\\Kataglyphis-Inference-Engine\\ExternalLib\\Kataglyphis-RustProjectTemplate\\dist\\msix\\Kataglyphis.RustProjectTemplate_0.1.0.0_x64.msix"
+$certPath = "C:\\GitHub\\Inference-Engine\\third_party\\RustProjectTemplate\\dist\\msix\\Kataglyphis.RustProjectTemplate.testcert.pfx"
+$msixPath = "C:\\GitHub\\Inference-Engine\\third_party\\RustProjectTemplate\\dist\\msix\\Kataglyphis.RustProjectTemplate_0.1.0.0_x64.msix"
 $pwd = ConvertTo-SecureString "<TEST_CERT_PASSWORD>" -AsPlainText -Force
 
 Import-PfxCertificate -FilePath $certPath -Password $pwd -CertStoreLocation "Cert:\\LocalMachine\\Root"
@@ -417,7 +417,7 @@ MSIX Update / Reinstall:
 - Dann erneut installieren:
 
 ```pwsh
-Add-AppxPackage -Path "C:\\GitHub\\Kataglyphis-Inference-Engine\\ExternalLib\\Kataglyphis-RustProjectTemplate\\dist\\msix\\Kataglyphis.RustProjectTemplate_<NEW_VERSION>_x64.msix"
+Add-AppxPackage -Path "C:\\GitHub\\Inference-Engine\\third_party\\RustProjectTemplate\\dist\\msix\\Kataglyphis.RustProjectTemplate_<NEW_VERSION>_x64.msix"
 ```
 
 MSIX deinstallieren:

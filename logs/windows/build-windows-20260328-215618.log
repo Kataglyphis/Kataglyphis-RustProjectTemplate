@@ -3654,9 +3654,9 @@
 [22:24:06]  pub use native::*;
 [22:24:07] ERROR: <<< FAILED: Format Check (Duration: 00:02.048)
 [22:24:07] ERROR:     Error: Command failed with exit code 1: cargo fmt --all -- --check
-[22:24:07]     Stack: at Invoke-BuildExternal, C:\workspace\ExternalLib\Kataglyphis-ContainerHub\windows\scripts\modules\WindowsBuild.Common.psm1: line 171
+[22:24:07]     Stack: at Invoke-BuildExternal, C:\workspace\third_party\ContainerHub\windows\scripts\modules\WindowsBuild.Common.psm1: line 171
 at <ScriptBlock>, C:\workspace\Scripts\Windows\Build-Windows.ps1: line 168
-at Invoke-BuildStep, C:\workspace\ExternalLib\Kataglyphis-ContainerHub\windows\scripts\modules\WindowsBuild.Common.psm1: line 220
+at Invoke-BuildStep, C:\workspace\third_party\ContainerHub\windows\scripts\modules\WindowsBuild.Common.psm1: line 220
 at <ScriptBlock>, C:\workspace\Scripts\Windows\Build-Windows.ps1: line 166
 
 [22:24:07] ============================================================

@@ -9,7 +9,7 @@ set -euo pipefail
 # here before. Expects REF_NAME and RUN_NUMBER in the environment; writes
 # VERSION and MSIX_VERSION for subsequent steps.
 
-version_util="ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/version_util.sh"
+version_util="third_party/ContainerHub/linux/scripts/02-toolchain/rust/version_util.sh"
 
 if [[ ! -f "$version_util" ]]; then
   echo "ERROR: ${version_util} not found." >&2
