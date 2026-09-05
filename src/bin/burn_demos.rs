@@ -98,8 +98,8 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::TensorDemo => kataglyphis_rustprojecttemplate::burn_demos::simple::tensor_demo::<
-            kataglyphis_rustprojecttemplate::burn_demos::InferenceBackend,
+        Command::TensorDemo => oxidant::burn_demos::simple::tensor_demo::<
+            oxidant::burn_demos::InferenceBackend,
         >(),
 
         Command::LinearRegression {
@@ -108,7 +108,7 @@ fn main() -> anyhow::Result<()> {
             lr,
             batch_size,
             plot_path,
-        } => kataglyphis_rustprojecttemplate::burn_demos::simple::linear_regression_demo(
+        } => oxidant::burn_demos::simple::linear_regression_demo(
             epochs,
             steps_per_epoch,
             lr,
@@ -120,7 +120,7 @@ fn main() -> anyhow::Result<()> {
             epochs,
             lr,
             plot_path,
-        } => kataglyphis_rustprojecttemplate::burn_demos::simple::xor_demo(epochs, lr, plot_path),
+        } => oxidant::burn_demos::simple::xor_demo(epochs, lr, plot_path),
 
         Command::TwoMoons {
             epochs,
@@ -130,7 +130,7 @@ fn main() -> anyhow::Result<()> {
             noise,
             seed,
             plot_path,
-        } => kataglyphis_rustprojecttemplate::burn_demos::two_moons::two_moons_demo(
+        } => oxidant::burn_demos::two_moons::two_moons_demo(
             epochs,
             steps_per_epoch,
             lr,
@@ -147,7 +147,7 @@ fn main() -> anyhow::Result<()> {
             num_anchors,
             train_steps,
             lr,
-        } => kataglyphis_rustprojecttemplate::burn_demos::simple::yolo_tiny_demo(
+        } => oxidant::burn_demos::simple::yolo_tiny_demo(
             height,
             width,
             num_classes,
@@ -172,9 +172,9 @@ fn main() -> anyhow::Result<()> {
             });
 
             // burn 0.21: `Device` hangs off the `BackendTypes` supertrait now.
-            let device = <kataglyphis_rustprojecttemplate::burn_demos::TrainingBackend as burn::tensor::backend::BackendTypes>::Device::default();
-            kataglyphis_rustprojecttemplate::burn_demos::onnx_yolov10::onnx_yolov10_demo::<
-                kataglyphis_rustprojecttemplate::burn_demos::TrainingBackend,
+            let device = <oxidant::burn_demos::TrainingBackend as burn::tensor::backend::BackendTypes>::Device::default();
+            oxidant::burn_demos::onnx_yolov10::onnx_yolov10_demo::<
+                oxidant::burn_demos::TrainingBackend,
             >(
                 &model_path,
                 warmup,
@@ -187,6 +187,6 @@ fn main() -> anyhow::Result<()> {
             .with_context(|| format!("onnx-yolov10 demo failed (model={})", model_path.display()))
         }
 
-        Command::SaveLoad => kataglyphis_rustprojecttemplate::burn_demos::simple::save_load_demo(),
+        Command::SaveLoad => oxidant::burn_demos::simple::save_load_demo(),
     }
 }

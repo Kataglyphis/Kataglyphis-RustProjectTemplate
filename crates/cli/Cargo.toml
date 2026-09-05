@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-kataglyphis_rustprojecttemplate = { path = "../../" }
+oxidant = { path = "../../" }
 kataglyphis_gui = { path = "../gui", optional = true }
 clap = { version = "4", features = ["derive"] }
 log = { workspace = true }
@@ -24,12 +24,12 @@ tokio = { version = "1", default-features = false, features = ["macros", "rt", "
 
 [features]
 default = []
-gui_windows = ["kataglyphis_gui/gui_windows", "kataglyphis_rustprojecttemplate/gui_windows"]
-gui_unix = ["kataglyphis_gui/gui_unix", "kataglyphis_rustprojecttemplate/gui_unix"]
-onnx_tract = ["kataglyphis_rustprojecttemplate/onnx_tract"]
-onnxruntime_directml = ["kataglyphis_rustprojecttemplate/onnxruntime_directml"]
-onnxruntime_cuda = ["kataglyphis_rustprojecttemplate/onnxruntime_cuda"]
-burn_demos = ["kataglyphis_rustprojecttemplate/burn_demos"]
+gui_windows = ["kataglyphis_gui/gui_windows", "oxidant/gui_windows"]
+gui_unix = ["kataglyphis_gui/gui_unix", "oxidant/gui_unix"]
+onnx_tract = ["oxidant/onnx_tract"]
+onnxruntime_directml = ["oxidant/onnxruntime_directml"]
+onnxruntime_cuda = ["oxidant/onnxruntime_cuda"]
+burn_demos = ["oxidant/burn_demos"]
 
 [[bin]]
 name = "kataglyphis_cli"

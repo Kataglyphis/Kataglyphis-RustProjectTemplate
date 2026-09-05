@@ -4,14 +4,14 @@ Guidance for AI agents (and humans) working in this repository.
 
 ## Project layout
 
-Cargo workspace (`Cargo.toml` at the root is both the workspace and the root package `kataglyphis_rustprojecttemplate` — a lib with `cdylib`/`staticlib`/`rlib` crate types plus the feature-gated `burn-demos` bin):
+Cargo workspace (`Cargo.toml` at the root is both the workspace and the root package `oxidant` — a lib with `cdylib`/`staticlib`/`rlib` crate types plus the feature-gated `burn-demos` bin):
 
 - `crates/core` — core config/detection/logging (`kataglyphis_core`)
 - `crates/telemetry` — resource monitoring (`kataglyphis_telemetry`; has the unit tests)
 - `crates/inference` — ONNX backends, feature-gated (`onnx_tract`, `onnxruntime`, `onnxruntime_directml`, `onnxruntime_cuda`)
 - `crates/gui` — feature-gated GUI (`gui_windows`, `gui_linux`, `gui_wgpu`, `gui_unix`)
 - `crates/webgpu_renderer` - WebGPU (wgpu) glTF renderer, native + wasm32/browser (`kataglyphis_webgpu_renderer`): PBR, cascaded shadows, SSAO, bloom, skinning, animations, LOD
-- `crates/cli` — the CLI binary; its bin target is named `kataglyphis_cli` (read/stats/gui subcommands; `stats --path <file>`). It was renamed from `kataglyphis_rustprojecttemplate` on 2026-08-07 — see the pdb note below.
+- `crates/cli` — the CLI binary; its bin target is named `kataglyphis_cli` (read/stats/gui subcommands; `stats --path <file>`). It was renamed from `oxidant` on 2026-08-07 — see the pdb note below.
 - `tests/` — root-package integration tests (`integration.rs`) and proptest fuzz tests (`fuzz_test.rs`)
 - `third_party/ContainerHub` — git submodule and **the ground truth for every container and PowerShell concern**. See the section below before writing any helper.
 
@@ -113,9 +113,9 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 
 Default features are empty — GUI and ONNX code only compiles with explicit `--features` (see README "Run"). "Fuzz" testing = proptest in `tests/fuzz_test.rs`; there is no cargo-fuzz/libFuzzer target.
 
-**The pdb collision is fixed — do not undo it by renaming the bin back.** Cargo used to warn that the root **lib** and the CLI **bin**, both named `kataglyphis_rustprojecttemplate`, wrote the same `kataglyphis_rustprojecttemplate.pdb` (it comes from the lib's `cdylib` crate type, not the rlib), and that this *"may become a hard error in the future"* — [rust-lang/cargo#6313](https://github.com/rust-lang/cargo/issues/6313).
+**The pdb collision is fixed — do not undo it by renaming the bin back.** Cargo used to warn that the root **lib** and the CLI **bin**, both named `oxidant`, wrote the same `oxidant.pdb` (it comes from the lib's `cdylib` crate type, not the rlib), and that this *"may become a hard error in the future"* — [rust-lang/cargo#6313](https://github.com/rust-lang/cargo/issues/6313).
 
-The **bin** was renamed to `kataglyphis_cli`, not the lib, and that direction is deliberate: the C++ Vulkan engine imports the lib through Corrosion/cxxbridge as `kataglyphis_rustprojecttemplate` (see the generated `kataglyphis_rustprojecttemplate_bridge` target in the parent repo's CMake). Renaming `[lib] name` would change the produced DLL/LIB names and break that build from outside this repo. The package name and `[lib] name` therefore stay as they are.
+The **bin** was renamed to `kataglyphis_cli`, not the lib, and that direction is deliberate: the C++ Vulkan engine imports the lib through Corrosion/cxxbridge as `oxidant` (see the generated `oxidant_bridge` target in the parent repo's CMake). Renaming `[lib] name` would change the produced DLL/LIB names and break that build from outside this repo. The package name and `[lib] name` therefore stay as they are.
 
 What moved with the bin: `Msix.Binary` and `Msi.OutputName` in `scripts/windows/Build-Windows.config.psd1`, `File Name=` in `wix/main.wxs`, `BINARY_FILE` in the Ubuntu workflow and `BINARY` in the Windows one, the `-Binary` default in `Run-AppProfiles.ps1`, and `--bin` in `scripts/linux/run-person-detection.sh`. Note the Ubuntu workflow's `BINARY` (hyphenated, `kataglyphis-rustprojecttemplate`) is the *distribution package* name and was correctly left alone — only `BINARY_FILE` is the executable.
 

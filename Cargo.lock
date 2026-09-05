@@ -4446,7 +4446,7 @@ dependencies = [
  "assert_cmd",
  "clap",
  "kataglyphis_gui",
- "kataglyphis_rustprojecttemplate",
+ "oxidant",
  "log",
  "predicates",
  "tempfile",
@@ -4510,7 +4510,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "kataglyphis_rustprojecttemplate"
+name = "oxidant"
 version = "0.1.0"
 dependencies = [
  "anyhow",

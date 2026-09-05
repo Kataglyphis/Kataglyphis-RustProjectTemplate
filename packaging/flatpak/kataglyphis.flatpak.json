@@ -4,7 +4,7 @@
   "runtime": "org.freedesktop.Platform",
   "runtime-version": "24.08",
   "sdk": "org.freedesktop.Sdk",
-  "command": "kataglyphis_rustprojecttemplate",
+  "command": "oxidant",
   "finish-args": [
     "--share=network",
     "--share=ipc",
@@ -23,7 +23,7 @@
       "sources": [
         {
           "type": "file",
-          "path": "../../target/release/kataglyphis_rustprojecttemplate",
+          "path": "../../target/release/oxidant",
           "dest": "files/bin"
         },
         {

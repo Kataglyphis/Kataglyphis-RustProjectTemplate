@@ -40,7 +40,7 @@ flutter_rust_bridge = "=2.12.0"
 wmi = "0.18"
 
 [package]
-name = "kataglyphis_rustprojecttemplate"
+name = "oxidant"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -50,7 +50,7 @@ readme = "README.md"
 rust-version.workspace = true
 
 [lib]
-name = "kataglyphis_rustprojecttemplate"
+name = "oxidant"
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [features]

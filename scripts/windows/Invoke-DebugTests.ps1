@@ -1,7 +1,7 @@
 param(
 #requires -Version 7.0
 
-  [string]$Package = 'kataglyphis_rustprojecttemplate'
+  [string]$Package = 'oxidant'
 )
 
 $ErrorActionPreference = 'Stop'

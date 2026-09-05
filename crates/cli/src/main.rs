@@ -10,7 +10,7 @@ use log::info;
 mod cli;
 
 use cli::{Cli, Commands};
-use kataglyphis_rustprojecttemplate::{logging, resource_monitor, utils};
+use oxidant::{logging, resource_monitor, utils};
 
 #[cfg_attr(not(target_arch = "wasm32"), tokio::main)]
 #[cfg_attr(target_arch = "wasm32", tokio::main(flavor = "current_thread"))]
