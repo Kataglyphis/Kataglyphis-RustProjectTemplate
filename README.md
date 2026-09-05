@@ -14,9 +14,9 @@
   </a>
 </div>
 
-[![Rust workflow on Ubuntu-24.04](https://github.com/Kataglyphis/Kataglyphis-RustProjectTemplate/actions/workflows/rust_ubuntu24_04.yml/badge.svg)](https://github.com/Kataglyphis/Kataglyphis-RustProjectTemplate/actions/workflows/rust_ubuntu24_04.yml)
-[![Rust workflow on Windows 2025](https://github.com/Kataglyphis/Kataglyphis-RustProjectTemplate/actions/workflows/rust_windows2025.yml/badge.svg)](https://github.com/Kataglyphis/Kataglyphis-RustProjectTemplate/actions/workflows/rust_windows2025.yml)
-[![CodeQL](https://github.com/Kataglyphis/Kataglyphis-RustProjectTemplate/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/Kataglyphis/Kataglyphis-RustProjectTemplate/actions/workflows/github-code-scanning/codeql)
+[![Rust workflow on Ubuntu-24.04](https://github.com/Kataglyphis/RustProjectTemplate/actions/workflows/rust_ubuntu24_04.yml/badge.svg)](https://github.com/Kataglyphis/RustProjectTemplate/actions/workflows/rust_ubuntu24_04.yml)
+[![Rust workflow on Windows 2025](https://github.com/Kataglyphis/RustProjectTemplate/actions/workflows/rust_windows2025.yml/badge.svg)](https://github.com/Kataglyphis/RustProjectTemplate/actions/workflows/rust_windows2025.yml)
+[![CodeQL](https://github.com/Kataglyphis/RustProjectTemplate/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/Kataglyphis/RustProjectTemplate/actions/workflows/github-code-scanning/codeql)
 
 For **__official docs__** follow this [link](https://rust.jonasheinle.de).
 
@@ -25,7 +25,7 @@ For **__official docs__** follow this [link](https://rust.jonasheinle.de).
 <!-- [![Linux build](https://github.com/Kataglyphis/GraphicsEngineVulkan/actions/workflows/Linux.yml/badge.svg)](https://github.com/Kataglyphis/GraphicsEngineVulkan/actions/workflows/Linux.yml)
 [![Windows build](https://github.com/Kataglyphis/GraphicsEngineVulkan/actions/workflows/Windows.yml/badge.svg)](https://github.com/Kataglyphis/GraphicsEngineVulkan/actions/workflows/Windows.yml)
 -->
-[![TopLang](https://img.shields.io/github/languages/top/Kataglyphis/Kataglyphis-RustProjectTemplate)]() 
+[![TopLang](https://img.shields.io/github/languages/top/Kataglyphis/RustProjectTemplate)]() 
 [![Donate](https://img.shields.io/badge/Donate-PayPal-green.svg)](https://www.paypal.com/paypalme/JonasHeinle)
 [![Twitter](https://img.shields.io/twitter/follow/Cataglyphis_?style=social)](https://twitter.com/Cataglyphis_)
  
@@ -116,7 +116,7 @@ cargo upgrade --incompatible
 
 1. Clone the repo
    ```bash
-   git clone --recurse-submodules git@github.com:Kataglyphis/Kataglyphis-RustProjectTemplate.git
+   git clone --recurse-submodules git@github.com:Kataglyphis/RustProjectTemplate.git
    ```
  
 ## Tests

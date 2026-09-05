@@ -110,7 +110,7 @@
         <Property Id='ARPPRODUCTICON' Value='ProductICO' />
         -->
 
-        <Property Id='ARPHELPLINK' Value='https://github.com/Kataglyphis/Kataglyphis-RustProjectTemplate'/>
+        <Property Id='ARPHELPLINK' Value='https://github.com/Kataglyphis/RustProjectTemplate'/>
 
         <!--
           Requires `-ext WixToolset.UI.wixext` on the wix build command line.

@@ -53,7 +53,7 @@ jobs:
       # dann landet.
       - name: Prepare Windows container host
         id: prep
-        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/prepare-windows-container-host@main
+        uses: Kataglyphis/ContainerHub/.github/actions/prepare-windows-container-host@main
         with:
           image: ${{ env.WINDOWS_CONTAINER_IMAGE }}
           registry-password: ${{ secrets.GHCR_PAT }}
@@ -76,7 +76,7 @@ jobs:
       # "a script plus an argument vector": under -File every file-args line is
       # one literal argv element, with no PowerShell parsing of its value.
       - name: Run debug unit, integration, and fuzz tests
-        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/run-in-windows-container@main
+        uses: Kataglyphis/ContainerHub/.github/actions/run-in-windows-container@main
         with:
           image: ${{ env.WINDOWS_CONTAINER_IMAGE }}
           cpus: ${{ env.WINDOWS_DOCKER_CPUS }}
@@ -89,7 +89,7 @@ jobs:
             CARGO_BUILD_JOBS=${{ env.WINDOWS_DOCKER_CPUS }}
 
       - name: Build and run all Windows app configs
-        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/run-in-windows-container@main
+        uses: Kataglyphis/ContainerHub/.github/actions/run-in-windows-container@main
         with:
           image: ${{ env.WINDOWS_CONTAINER_IMAGE }}
           cpus: ${{ env.WINDOWS_DOCKER_CPUS }}
@@ -104,7 +104,7 @@ jobs:
       # VERSION deliberately carries MSIX_VERSION (the four-component form)
       # here, as it did before: this step is the one that stamps the package.
       - name: Build, lint, and package MSIX/MSI
-        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/run-in-windows-container@main
+        uses: Kataglyphis/ContainerHub/.github/actions/run-in-windows-container@main
         with:
           image: ${{ env.WINDOWS_CONTAINER_IMAGE }}
           cpus: ${{ env.WINDOWS_DOCKER_CPUS }}
@@ -146,7 +146,7 @@ jobs:
           echo "version=$ver" >> $env:GITHUB_OUTPUT
 
       - name: Create archive
-        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/run-in-windows-container@main
+        uses: Kataglyphis/ContainerHub/.github/actions/run-in-windows-container@main
         with:
           image: ${{ env.WINDOWS_CONTAINER_IMAGE }}
           cpus: ${{ env.WINDOWS_DOCKER_CPUS }}

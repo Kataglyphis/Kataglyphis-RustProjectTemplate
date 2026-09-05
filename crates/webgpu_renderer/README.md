@@ -4,7 +4,7 @@ A WebGPU (wgpu) renderer with glTF loading, written in Rust. The same code
 runs natively on Vulkan/DX12/Metal and in the browser on the WebGPU API.
 
 Companion to the C++ Vulkan engine in
-[Kataglyphis-BeschleunigerBallett](https://github.com/Kataglyphis/Kataglyphis-BeschleunigerBallett);
+[Kataglyphis-BeschleunigerBallett](https://github.com/Kataglyphis/BeschleunigerBallett);
 its `docs/` hold the [roadmap](../../../../docs/webgpu-renderer-roadmap.md),
 the [sRGB audit](../../../../docs/webgpu-srgb-audit.md), and the
 [shader-sharing guide](../../../../docs/shader-sharing.md).

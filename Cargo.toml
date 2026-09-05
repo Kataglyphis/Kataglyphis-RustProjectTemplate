@@ -14,7 +14,7 @@ members = [
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/Kataglyphis/Kataglyphis-RustProjectTemplate"
+repository = "https://github.com/Kataglyphis/RustProjectTemplate"
 rust-version = "1.92.0"
 
 [workspace.dependencies]

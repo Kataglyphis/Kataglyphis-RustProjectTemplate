@@ -96,7 +96,7 @@ jobs:
       # pull - four steps that used to be ~35 hand-maintained lines here, and
       # drifted from the sibling Windows lane. Now one shared action.
       - name: Prepare the CI host
-        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/prepare-linux-ci-host@main
+        uses: Kataglyphis/ContainerHub/.github/actions/prepare-linux-ci-host@main
         with:
           image: ${{ env.CONTAINER_IMAGE }}
           registry-username: ${{ github.actor }}
@@ -108,7 +108,7 @@ jobs:
         run: bash scripts/compute-version.sh
 
       - name: Debug build
-        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/run-in-linux-container@main
+        uses: Kataglyphis/ContainerHub/.github/actions/run-in-linux-container@main
         with:
           image: ${{ env.CONTAINER_IMAGE }}
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
@@ -118,7 +118,7 @@ jobs:
             bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_debug.sh'
 
       - name: Security checks (cargo audit + cargo deny)
-        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/run-in-linux-container@main
+        uses: Kataglyphis/ContainerHub/.github/actions/run-in-linux-container@main
         with:
           image: ${{ env.CONTAINER_IMAGE }}
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
@@ -148,7 +148,7 @@ jobs:
       # container has and neither of which uid 1001 can apt-install. A lint
       # gate that cannot run is worse than a narrower one that does.
       - name: Check formatting and clippy
-        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/run-in-linux-container@main
+        uses: Kataglyphis/ContainerHub/.github/actions/run-in-linux-container@main
         with:
           image: ${{ env.CONTAINER_IMAGE }}
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
@@ -159,7 +159,7 @@ jobs:
             cargo clippy --workspace --all-targets --locked -- -D warnings'
 
       - name: Run unit, integration, and doc tests
-        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/run-in-linux-container@main
+        uses: Kataglyphis/ContainerHub/.github/actions/run-in-linux-container@main
         with:
           image: ${{ env.CONTAINER_IMAGE }}
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
@@ -169,7 +169,7 @@ jobs:
             bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_test.sh'
 
       - name: Run coverage
-        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/run-in-linux-container@main
+        uses: Kataglyphis/ContainerHub/.github/actions/run-in-linux-container@main
         with:
           image: ${{ env.CONTAINER_IMAGE }}
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
@@ -179,7 +179,7 @@ jobs:
             bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_coverage.sh'
 
       - name: Run benchmarks
-        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/run-in-linux-container@main
+        uses: Kataglyphis/ContainerHub/.github/actions/run-in-linux-container@main
         with:
           image: ${{ env.CONTAINER_IMAGE }}
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
@@ -189,7 +189,7 @@ jobs:
             bash ExternalLib/Kataglyphis-ContainerHub/linux/scripts/02-toolchain/rust/cargo_bench.sh'
 
       - name: 🛠️ Build release binary
-        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/run-in-linux-container@main
+        uses: Kataglyphis/ContainerHub/.github/actions/run-in-linux-container@main
         with:
           image: ${{ env.CONTAINER_IMAGE }}
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
@@ -203,7 +203,7 @@ jobs:
       # wants the mount capability; extract-and-run avoids FUSE entirely and
       # is the better long-term fix.
       - name: 📦 Create archive (tar, deb, AppImage, Flatpak)
-        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/run-in-linux-container@main
+        uses: Kataglyphis/ContainerHub/.github/actions/run-in-linux-container@main
         with:
           image: ${{ env.CONTAINER_IMAGE }}
           extra-args: >-
@@ -244,7 +244,7 @@ jobs:
 
       - name: Create docs
         if: matrix.docs
-        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/run-in-linux-container@main
+        uses: Kataglyphis/ContainerHub/.github/actions/run-in-linux-container@main
         with:
           image: ${{ env.CONTAINER_IMAGE }}
           extra-args: --platform ${{ env.PLATFORM }} ${{ env.CONTAINER_ENV }}
@@ -311,7 +311,7 @@ jobs:
           - burn_demos
     steps:
       - name: Prepare the CI host
-        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/prepare-linux-ci-host@main
+        uses: Kataglyphis/ContainerHub/.github/actions/prepare-linux-ci-host@main
         with:
           image: ${{ env.CONTAINER_IMAGE }}
           registry-username: ${{ github.actor }}
@@ -319,7 +319,7 @@ jobs:
           fetch-depth: '1'
 
       - name: cargo check --features ${{ matrix.features }}
-        uses: Kataglyphis/Kataglyphis-ContainerHub/.github/actions/run-in-linux-container@main
+        uses: Kataglyphis/ContainerHub/.github/actions/run-in-linux-container@main
         with:
           image: ${{ env.CONTAINER_IMAGE }}
           extra-args: ${{ env.CONTAINER_ENV }}
